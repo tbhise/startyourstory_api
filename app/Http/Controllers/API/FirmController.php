@@ -7,46 +7,49 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class UserController extends Controller
+class FirmController extends Controller
 {
-    public function registerStudent(Request $request)
+    public function registerFirm(Request $request)
     {
         DB::beginTransaction();
         try {
+            // Log::info($request->all());
             $request->validate([
-                'name' => 'required',
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required',
                 'password' => 'required|min:6|max:10',
+                'firmName' => 'required',
+                'city' => 'required',
             ]);
             // create user
             $userId = DB::table('users')->insertGetId([
-                'name' => $request->name,
+                'name' => $request->firmName,
                 'email' => $request->email,
                 'mobile' => $request->mobile,
                 'password' => bcrypt($request->password),
-                'role' => 'student',
+                'role' => 'firm',
                 'created_at' => now(),
                 'updated_at' => now()
             ]);
             // create profile
-            DB::table('student_profiles')->insert([
+            DB::table('firm_profiles')->insert([
                 'user_id' => $userId,
-                'looking_for' => $request->looking_for,
+                'firm_name' => $request->firmName,
+                'city' => $request->city,
                 'created_at' => now(),
                 'updated_at' => now()
             ]);
             DB::commit();
             return response()->json([
                 'status' => true,
-                'message' => 'Candidate Registration successfull..!'
+                'message' => 'Firm Registration successfull..!'
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Candidate Registration Error: ' . $e->getMessage());
+            Log::error('Firm Registration Error: ' . $e->getMessage());
             return response()->json([
                 'status' => false,
-                'message' => 'Candidate Registration failed: Server error'
+                'message' => 'Firm Registration failed: Server error'
             ]);
         }
     }

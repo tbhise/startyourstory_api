@@ -8,16 +8,25 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-
+use Illuminate\Support\Facades\Validator;
 class AuthController extends Controller
 {
     public function login(Request $request)
     {
         try {
-            $request->validate([
+            $validator = Validator::make($request->all(), [
+
                 'email' => 'required|email',
-                'password' => 'required'
+
+                'password' => 'required',
             ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
             $user = DB::table('users')
                 ->where('email', $request->email)
                 ->where('is_deleted', false)
@@ -46,6 +55,7 @@ class AuthController extends Controller
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
+                    'mobile' => $user->mobile,
                     'role' => $user->role,
                     'token' => $token
                 ]

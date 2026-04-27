@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class FirmController extends Controller
 {
@@ -14,13 +15,26 @@ class FirmController extends Controller
         DB::beginTransaction();
         try {
             // Log::info($request->all());
-            $request->validate([
+
+
+            $validator = Validator::make($request->all(), [
                 'email' => 'required|email|unique:users,email',
-                'mobile' => 'required',
+                'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:10',
                 'firmName' => 'required',
                 'city' => 'required',
             ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'errors' => $validator->errors()->first()
+                ]);
+            }
+
+
+
+
             // create user
             $userId = DB::table('users')->insertGetId([
                 'name' => $request->firmName,

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
 
 class UserController extends Controller
 {
@@ -13,12 +14,20 @@ class UserController extends Controller
     {
         DB::beginTransaction();
         try {
-            $request->validate([
+            $validator = Validator::make($request->all(), [
                 'name' => 'required',
                 'email' => 'required|email|unique:users,email',
-                'mobile' => 'required',
+                'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:10',
             ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
+
             // create user
             $userId = DB::table('users')->insertGetId([
                 'name' => $request->name,

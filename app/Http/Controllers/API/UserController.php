@@ -59,4 +59,28 @@ class UserController extends Controller
             ]);
         }
     }
+
+
+  public function updateProfile(Request $request)
+    {
+        try {
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Profile updated successfully',
+            'data' => $request->all()
+        ]);
+
+        dd($request->all());
+
+        } catch (\Exception $e) {
+            Log::error('Profile Update Error: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'Profile update failed: Server error'
+            ]);
+        }
+    }
+
+
 }

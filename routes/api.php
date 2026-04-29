@@ -14,4 +14,6 @@ Route::get('/user', function (Request $request) {
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
-Route::post('/login',       [AuthController::class, 'login']);
+Route::post('/login',           [AuthController::class, 'login']);
+
+Route::post('/updateProfile',    [UserController::class, 'updateProfile']);

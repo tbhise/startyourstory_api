@@ -17,3 +17,4 @@ Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::post('/login',           [AuthController::class, 'login']);
 
 Route::post('/updateProfile',    [UserController::class, 'updateProfile']);
+Route::post('/getProfile',       [UserController::class, 'getProfile']);

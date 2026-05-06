@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
+
 class AuthController extends Controller
 {
     public function login(Request $request)
@@ -57,7 +58,8 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'mobile' => $user->mobile,
                     'role' => $user->role,
-                    'token' => $token
+                    'profile_completed' => $user->profile_completed,
+                    'token' => $token,
                 ]
             ]);
         } catch (\Exception $e) {

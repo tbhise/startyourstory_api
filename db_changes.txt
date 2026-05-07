@@ -5,3 +5,4 @@ ALTER TABLE users ADD COLUMN api_token VARCHAR(80) NULL;
 
 ALTER TABLE `startyourstory`.`student_profiles`
 CHANGE COLUMN `exposure_type` `exposure_type` JSON NULL DEFAULT NULL ;
+---------------------

@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\FirmController;
+use App\Http\Controllers\API\FirmDashboardController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\UserController;
@@ -18,3 +19,7 @@ Route::post('/login',           [AuthController::class, 'login']);
 
 Route::post('/updateProfile',    [UserController::class, 'updateProfile']);
 Route::post('/getProfile',       [UserController::class, 'getProfile']);
+
+Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
+Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
+Route::post('/downloadFile',   [FirmDashboardController::class, 'downloadFile']);

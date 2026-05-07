@@ -79,7 +79,7 @@ class FirmDashboardController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => 'File path required'
-                ], 400);
+                ]);
             }
 
             $fullPath = storage_path('app/public/' . $path);
@@ -89,7 +89,7 @@ class FirmDashboardController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => 'File not found'
-                ], 404);
+                ]);
             }
 
             return response()->download($fullPath);
@@ -100,7 +100,7 @@ class FirmDashboardController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Something went wrong'
-            ], 500);
+            ]);
         }
     }
 

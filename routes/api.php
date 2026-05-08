@@ -22,4 +22,10 @@ Route::post('/getProfile',       [UserController::class, 'getProfile']);
 
 Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
 Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
-Route::post('/downloadFile',   [FirmDashboardController::class, 'downloadFile']);
+Route::post('/downloadFile',     [FirmDashboardController::class, 'downloadFile']);
+
+
+Route::post('/firm_profile_update',     [FirmController::class, 'firm_profile_update']);
+
+
+

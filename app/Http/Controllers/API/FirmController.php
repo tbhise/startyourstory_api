@@ -67,4 +67,27 @@ class FirmController extends Controller
             ]);
         }
     }
+    public function firm_profile_update(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            Log::info($request->all());
+
+
+
+
+            // DB::commit();
+            return response()->json([
+                'status' => true,
+                'message' => 'Firm Registration successfull..!'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Firm Registration Error: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'Firm Registration failed: Server error'
+            ]);
+        }
+    }
 }

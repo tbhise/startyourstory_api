@@ -26,6 +26,7 @@ Route::post('/downloadFile',     [FirmDashboardController::class, 'downloadFile'
 
 
 Route::post('/firm_profile_update',     [FirmController::class, 'firm_profile_update']);
+Route::post('/getFirmProfileDetails',     [FirmController::class, 'getFirmProfileDetails']);
 
 
 

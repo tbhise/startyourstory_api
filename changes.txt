@@ -1,11 +1,5 @@
 1. Change city to address in form UI
 2. If doing articleship -> then which firm
-3. Firm Profile -> Save next and save entire content at once
 
-
-
---------------
-
-Exposure & Opportunities   & Upload sections == prefill issue
 
 

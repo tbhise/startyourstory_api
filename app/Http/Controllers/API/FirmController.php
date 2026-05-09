@@ -138,6 +138,7 @@ class FirmController extends Controller
                 'work_modes' => $request->work_modes,
                 'training_details' => $request->training_details,
                 'stipend_details' => $request->stipend_details,
+                'additional_contacts' => $request->additional_contacts,
 
                 'updated_at' => now(),
             ];
@@ -286,10 +287,10 @@ class FirmController extends Controller
 
             DB::rollBack();
 
-            Log::error('Firm Registration Error: ' . $e->getMessage());
+            Log::error('Firm profile update: ' . $e->getMessage());
             return response()->json([
                 'status' => false,
-                'message' => 'Firm Registration failed: Server error'
+                'message' => 'Firm profile update failed: Server error'
             ]);
         }
     }
@@ -420,6 +421,7 @@ class FirmController extends Controller
                 'stipend_details' =>
                 $firmProfile->stipend_details,
 
+                'additional_contacts' => json_decode($firmProfile->additional_contacts ?? '[]', true),
                 /*
             |--------------------------------------------------------------------------
             | Online Presence

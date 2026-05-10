@@ -37,7 +37,7 @@ class UserController extends Controller
                 'updated_at' => now()
             ]);
             // create profile
-            DB::table('student_profiless')->insert([
+            DB::table('student_profiles')->insert([
                 'user_id' => $userId,
                 'looking_for' => $request->looking_for,
                 'created_at' => now(),
@@ -114,8 +114,10 @@ class UserController extends Controller
             // ===================================
             // PREPARE DATA
             // ===================================
+            $user = $request->attributes->get('auth_user');
+            $userId = $user->id;
             $profileData = [
-                'user_id' => $request->userId,
+                'user_id' => $userId,
                 'looking_for' => $request->looking_for,
                 'srn' => $request->srn,
                 'address' => $request->address,
@@ -148,14 +150,14 @@ class UserController extends Controller
             // CHECK PROFILE EXISTS
             // ===================================
             $existingProfile = DB::table('student_profiles')
-                ->where('user_id', $request->userId)
+                ->where('user_id', $userId)
                 ->first();
             // ===================================
             // UPDATE OR INSERT
             // ===================================
             if ($existingProfile) {
                 DB::table('student_profiles')
-                    ->where('user_id', $request->userId)
+                    ->where('user_id', $userId)
                     ->update($profileData);
             } else {
                 $profileData['created_at'] = now();
@@ -185,7 +187,7 @@ class UserController extends Controller
                     !empty($existingProfile->marksheet_path ?? null)
                 );
             DB::table('users')
-                ->where('id', $request->userId)
+                ->where('id', $userId)
                 ->update([
                     'profile_completed' => $isProfileComplete ? 1 : 0,
                     'updated_at' => now()
@@ -208,24 +210,24 @@ class UserController extends Controller
             ]);
         }
     }
-
-
     public function getProfile(Request $request)
     {
         try {
-            if (!$request->userId) {
+            $user = $request->attributes->get('auth_user');
+            if (!$user) {
                 return response()->json([
                     'status' => false,
                     'message' => 'Unauthorized'
-                ]);
+                ], 401);
             }
+            $userId = $user->id;
             $profile = DB::table('student_profiles')
-                ->where('user_id', $request->userId)
+                ->where('user_id', $userId)
                 ->first();
             return response()->json([
                 'status' => true,
                 'data' => [
-                    'user' => $request->userId,
+                    'user' => $userId,
                     'profile' => $profile
                 ]
             ]);
@@ -237,6 +239,43 @@ class UserController extends Controller
             ]);
         }
     }
-
-    
+    public function updateProfileImage(Request $request)
+    {
+        try {
+            $user = $request->attributes->get('auth_user');
+            $userId = $user->id;
+            $request->validate([
+                'profile_image' => 'required|image',
+            ]);
+            $imagePath = null;
+            if ($request->hasFile('profile_image')) {
+                $file = $request->file('profile_image');
+                $filename =
+                    time() . '_profile.' .
+                    $file->getClientOriginalExtension();
+                $file->move(
+                    public_path('storage/profile'),
+                    $filename
+                );
+                $imagePath =
+                    url('storage/profile/' . $filename);
+                DB::table('users')
+                    ->where('id', $userId)
+                    ->update([
+                        'profile_image' => $imagePath,
+                        'updated_at' => now(),
+                    ]);
+            }
+            return response()->json([
+                'status' => true,
+                'message' => 'Profile image updated successfully',
+                'profile_image' => $imagePath,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
 }

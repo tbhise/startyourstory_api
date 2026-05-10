@@ -76,24 +76,9 @@ class FirmController extends Controller
         DB::beginTransaction();
 
         try {
+            $user = $request->attributes->get('auth_user');
+            $userId = $user->id;
 
-            $userId = $request->userId;
-
-            /*
-        |--------------------------------------------------------------------------
-        | Update Users Table
-        |--------------------------------------------------------------------------
-        */
-
-            DB::table('users')
-                ->where('id', $userId)
-                ->update([
-                    'name' => $request->firm_name,
-                    'email' => $request->email,
-                    'mobile' => $request->mobile,
-                    'profile_completed' => 1,
-                    'updated_at' => now(),
-                ]);
 
             /*
         |--------------------------------------------------------------------------
@@ -143,6 +128,15 @@ class FirmController extends Controller
                 'updated_at' => now(),
             ];
 
+
+            $userUpdateData = [
+                'name' => $request->firm_name,
+                'email' => $request->email,
+                'mobile' => $request->mobile,
+                'profile_completed' => 1,
+                'updated_at' => now(),
+            ];
+
             /*
         |--------------------------------------------------------------------------
         | Logo Upload
@@ -163,6 +157,7 @@ class FirmController extends Controller
                 );
 
                 $updateData['logo_path'] = $logoPath;
+                $userUpdateData['profile_image'] = $logoPath;
             }
 
             /*
@@ -205,6 +200,17 @@ class FirmController extends Controller
                     ->update($updateData);
 
                 $firmId = $firmProfile->id;
+
+
+                /*
+        |--------------------------------------------------------------------------
+        | Update Users Table
+        |--------------------------------------------------------------------------
+        */
+
+                DB::table('users')
+                    ->where('id', $userId)
+                    ->update($userUpdateData);
             } else {
 
                 $updateData['created_at'] = now();
@@ -282,6 +288,9 @@ class FirmController extends Controller
                 'status' => true,
                 'message' => 'Firm profile updated successfully',
                 'firm_id' => $firmId,
+                'profile_image' => isset($userUpdateData['profile_image'])
+                    ? asset('storage/' . $userUpdateData['profile_image'])
+                    : null,
             ]);
         } catch (\Exception $e) {
 
@@ -299,8 +308,8 @@ class FirmController extends Controller
     public function getFirmProfileDetails(Request $request)
     {
         try {
-
-            $userId = $request->userId;
+            $user = $request->attributes->get('auth_user');
+            $userId = $user->id;
 
             /*
         |--------------------------------------------------------------------------

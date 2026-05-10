@@ -16,9 +16,7 @@ class AuthController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-
                 'email' => 'required|email',
-
                 'password' => 'required',
             ]);
 
@@ -30,6 +28,7 @@ class AuthController extends Controller
             }
             $user = DB::table('users')
                 ->where('email', $request->email)
+                ->where('role', $request->role)
                 ->where('is_deleted', false)
                 ->first();
             if (!$user) {
@@ -44,11 +43,15 @@ class AuthController extends Controller
                     'message' => 'Invalid password'
                 ]);
             }
-            // OPTIONAL: generate token (recommended)
+
             $token = base64_encode(Str::random(40));
             DB::table('users')
                 ->where('id', $user->id)
-                ->update(['api_token' => $token]);
+                ->update([
+                    'api_token' => $token,
+                    'token_expires_at' => now()->addDays(7),
+                    'updated_at' => now()
+                ]);
             return response()->json([
                 'status' => true,
                 'message' => 'Login successful',
@@ -59,6 +62,9 @@ class AuthController extends Controller
                     'mobile' => $user->mobile,
                     'role' => $user->role,
                     'profile_completed' => $user->profile_completed,
+                    'profile_image' => $user->profile_image
+                        ? asset('storage/' . $user->profile_image)
+                        : null,
                     'token' => $token,
                 ]
             ]);

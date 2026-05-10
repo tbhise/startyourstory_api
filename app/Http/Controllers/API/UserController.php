@@ -258,11 +258,11 @@ class UserController extends Controller
                     $filename
                 );
                 $imagePath =
-                    url('storage/profile/' . $filename);
+                    asset('storage/profile/' . $filename);
                 DB::table('users')
                     ->where('id', $userId)
                     ->update([
-                        'profile_image' => $imagePath,
+                        'profile_image' => 'profile/' . $filename,
                         'updated_at' => now(),
                     ]);
             }

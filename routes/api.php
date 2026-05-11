@@ -23,4 +23,6 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     Route::post('/firm_profile_update',     [FirmController::class, 'firm_profile_update']);
     Route::post('/getFirmProfileDetails',     [FirmController::class, 'getFirmProfileDetails']);
+    Route::post('/getCompanies',              [FirmController::class, 'getCompanies']);
+    Route::post('/getCompanyDetails/{id}',    [FirmController::class, 'getCompanyDetails']);
 });

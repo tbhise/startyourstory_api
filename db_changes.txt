@@ -15,3 +15,16 @@ ADD INDEX `index` (`id` ASC, `is_deleted` ASC, `token_expires_at` ASC, `api_toke
 
 ALTER TABLE `startyourstory`.`firm_profiles`
 CHANGE COLUMN `exposure_type` `exposure_type` VARCHAR(500) NULL DEFAULT NULL ;
+------------------------updated till 11/05/2026
+
+
+ALTER TABLE jobs
+ADD COLUMN department VARCHAR(255) NULL AFTER type,
+ADD COLUMN work_mode VARCHAR(100) NULL AFTER department,
+ADD COLUMN experience_level VARCHAR(100) NULL AFTER work_mode,
+ADD COLUMN openings INT NULL AFTER experience_level,
+ADD COLUMN required_skills TEXT NULL AFTER openings,
+ADD COLUMN benefits TEXT NULL AFTER required_skills,
+ADD COLUMN required_qualification TEXT NULL AFTER benefits,
+ADD COLUMN application_deadline DATE NULL AFTER required_qualification,
+ADD COLUMN status ENUM('draft','active','closed') DEFAULT 'active' AFTER is_active;

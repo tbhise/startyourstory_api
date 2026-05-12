@@ -25,7 +25,7 @@ class FirmController extends Controller
             if ($validator->fails()) {
                 return response()->json([
                     'status' => false,
-                    'errors' => $validator->errors()->first()
+                    'message' => $validator->errors()->first()
                 ]);
             }
             // create user
@@ -992,27 +992,20 @@ class FirmController extends Controller
             ]);
             return response()->json([
                 'status' => false,
-                'errors' => 'Server error',
+                'message' => 'Server error',
             ]);
         }
     }
+
     public function getFirmJobs(Request $request)
     {
         try {
-            /*
-        |--------------------------------------------------------------------------
-        | Auth User
-        |--------------------------------------------------------------------------
-        */
+
             $user = $request->attributes->get('auth_user');
-            $userId = $user->id;
-            /*
-        |--------------------------------------------------------------------------
-        | Firm Profile
-        |--------------------------------------------------------------------------
-        */
+
+
             $firm = DB::table('firm_profiles')
-                ->where('user_id', $userId)
+                ->where('user_id', $user->id)
                 ->first();
             if (!$firm) {
                 return response()->json([
@@ -1020,98 +1013,53 @@ class FirmController extends Controller
                     'message' => 'Firm profile not found',
                 ]);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Filters
-        |--------------------------------------------------------------------------
-        */
-            $query = DB::table('jobs')
-                ->where('firm_id', $firm->id);
-            /*
-        |--------------------------------------------------------------------------
-        | Search
-        |--------------------------------------------------------------------------
-        */
+
+            $query = DB::table('jobs')->where('firm_id', $firm->id);
+
             if (!empty($request->search)) {
+               
+
                 $query->where(function ($q) use ($request) {
+
+                    $search =
+                        '%' . $request->search . '%';
+
                     $q->where(
                         'title',
                         'LIKE',
-                        '%' . $request->search . '%'
+                        $search
                     )
                         ->orWhere(
                             'location',
                             'LIKE',
-                            '%' . $request->search . '%'
+                            $search
                         )
                         ->orWhere(
                             'department',
                             'LIKE',
-                            '%' . $request->search . '%'
+                            $search
                         );
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Status Filter
-        |--------------------------------------------------------------------------
-        */
+
             if (
-                !empty($request->status) &&
-                is_array($request->status)
+                !empty($request->status) && is_array($request->status)
             ) {
-                $query->whereIn(
-                    'status',
-                    $request->status
-                );
+                $query->whereIn('status', $request->status);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Job Type Filter
-        |--------------------------------------------------------------------------
-        */
-            if (
-                !empty($request->type) &&
-                is_array($request->type)
-            ) {
-                $query->whereIn(
-                    'type',
-                    $request->type
-                );
+
+            if (!empty($request->type) && is_array($request->type)) {
+                $query->whereIn('type', $request->type);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Department Filter
-        |--------------------------------------------------------------------------
-        */
-            if (
-                !empty($request->department) &&
-                is_array($request->department)
-            ) {
-                $query->whereIn(
-                    'department',
-                    $request->department
-                );
+
+            if (!empty($request->department) && is_array($request->department)) {
+                $query->whereIn('department', $request->department);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Work Mode Filter
-        |--------------------------------------------------------------------------
-        */
-            if (
-                !empty($request->work_mode) &&
-                is_array($request->work_mode)
-            ) {
-                $query->whereIn(
-                    'work_mode',
-                    $request->work_mode
-                );
+
+            if (!empty($request->work_mode) && is_array($request->work_mode)) {
+                $query->whereIn('work_mode', $request->work_mode);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Sorting
-        |--------------------------------------------------------------------------
-        */
+
             if ($request->sort === 'oldest') {
                 $query->orderBy('created_at', 'asc');
             } else if ($request->sort === 'active') {
@@ -1119,17 +1067,9 @@ class FirmController extends Controller
             } else {
                 $query->orderBy('created_at', 'desc');
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Pagination
-        |--------------------------------------------------------------------------
-        */
-            $jobs = $query->paginate(10);
-            /*
-        |--------------------------------------------------------------------------
-        | Response Data
-        |--------------------------------------------------------------------------
-        */
+
+            $jobs = $query->paginate(2);
+
             $data = collect($jobs->items())->map(function ($job) {
                 return [
                     'id' => $job->id,
@@ -1144,11 +1084,7 @@ class FirmController extends Controller
                     'experience_level' =>
                     $job->experience_level,
                     'openings' => $job->openings,
-                    'required_skills' =>
-                    json_decode(
-                        $job->required_skills,
-                        true
-                    ) ?? [],
+                    'required_skills' => json_decode($job->required_skills, true) ?? [],
                     'benefits' => $job->benefits,
                     'required_qualification' =>
                     $job->required_qualification,
@@ -1159,28 +1095,18 @@ class FirmController extends Controller
                     'created_at' => $job->created_at ? date('d M Y g:i A', strtotime($job->created_at)) : null,
                 ];
             });
-            /*
-        |--------------------------------------------------------------------------
-        | Response
-        |--------------------------------------------------------------------------
-        */
+
             return response()->json([
                 'status' => true,
                 'message' => 'Firm jobs fetched successfully',
                 'data' => [
                     'jobs' => $data,
-                    'current_page' =>
-                    $jobs->currentPage(),
-                    'last_page' =>
-                    $jobs->lastPage(),
-                    'per_page' =>
-                    $jobs->perPage(),
-                    'total' =>
-                    $jobs->total(),
-                    'next_page_url' =>
-                    $jobs->nextPageUrl(),
-                    'prev_page_url' =>
-                    $jobs->previousPageUrl(),
+                    'current_page' => $jobs->currentPage(),
+                    'last_page' => $jobs->lastPage(),
+                    'per_page' => $jobs->perPage(),
+                    'total' => $jobs->total(),
+                    'next_page_url' => $jobs->nextPageUrl(),
+                    'prev_page_url' => $jobs->previousPageUrl(),
                 ]
             ]);
         } catch (\Exception $e) {
@@ -1191,404 +1117,263 @@ class FirmController extends Controller
             ]);
             return response()->json([
                 'status' => false,
-                'message' => 'Server Error.',
+                'message' => 'Unexpected server error while fetching job list.',
             ]);
         }
     }
+
 
 
     public function getFirmJobDetails(Request $request, $id = null)
     {
         try {
-
-            /*
-        |--------------------------------------------------------------------------
-        | Auth User
-        |--------------------------------------------------------------------------
-        */
-
             $user = $request->attributes->get('auth_user');
-
-            $userId = $user->id;
-
-            /*
-        |--------------------------------------------------------------------------
-        | Firm Profile
-        |--------------------------------------------------------------------------
-        */
-
             $firm = DB::table('firm_profiles')
-                ->where('user_id', $userId)
+                ->where('user_id', $user->id)
                 ->first();
-
             if (!$firm) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Firm profile not found',
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Job Details
-        |--------------------------------------------------------------------------
-        */
-
             $job = DB::table('jobs')
                 ->where('firm_id', $firm->id)
                 ->where('id', $id)
                 ->first();
-
             if (!$job) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Job not found',
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Response
-        |--------------------------------------------------------------------------
-        */
-
+            $formatDate = fn($date) =>
+            $date
+                ? date(
+                    'd M Y g:i A',
+                    strtotime($date)
+                )
+                : null;
             return response()->json([
-
                 'status' => true,
-
                 'message' => 'Job details fetched successfully',
-
                 'data' => [
-
                     'id' => $job->id,
-
                     'firm_id' => $job->firm_id,
-
                     'title' => $job->title,
-
                     'location' => $job->location,
-
                     'type' => $job->type,
-
                     'salary' => $job->salary,
-
                     'description' => $job->description,
-
                     'department' => $job->department,
-
                     'work_mode' => $job->work_mode,
-
-                    'experience_level' =>
-                    $job->experience_level,
-
+                    'experience_level' => $job->experience_level,
                     'openings' => $job->openings,
-
-                    'required_skills' =>
-                    json_decode(
-                        $job->required_skills,
-                        true
-                    ) ?? [],
-
+                    'required_skills' => json_decode($job->required_skills, true) ?? [],
                     'benefits' => $job->benefits,
-
                     'required_qualification' =>
                     $job->required_qualification,
-
                     'application_deadline' =>
                     $job->application_deadline,
-
                     'status' => $job->status,
-
                     'is_active' => $job->is_active,
-
-                    'created_at' => $job->created_at ? date('d M Y g:i A', strtotime($job->created_at)) : null,
-
-                    'updated_at' => $job->updated_at ? date('d M Y g:i A', strtotime($job->updated_at)) : null,
+                    'created_at' =>  $formatDate($job->created_at),
+                    'updated_at' =>  $formatDate($job->updated_at),
                 ]
             ]);
         } catch (\Exception $e) {
-
             Log::error('Get Firm Job Details API Error', [
-
                 'message' => $e->getMessage(),
-
                 'line' => $e->getLine(),
-
                 'file' => $e->getFile(),
             ]);
-
             return response()->json([
-
                 'status' => false,
-
-                'message' => $e->getMessage(),
+                'message' => 'Unexpected error while fetching details.',
             ]);
         }
     }
-
-
     public function updateJobStatus(Request $request, $id = null)
     {
         DB::beginTransaction();
-
         try {
-
-            /*
-        |--------------------------------------------------------------------------
-        | Validation
-        |--------------------------------------------------------------------------
-        */
-
             $validator = Validator::make($request->all(), [
-
                 'status' => 'required|in:Draft,Active,Closed',
             ]);
-
             if ($validator->fails()) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => $validator->errors()->first()
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Auth User
-        |--------------------------------------------------------------------------
-        */
-
             $user = $request->attributes->get('auth_user');
-
-            $userId = $user->id;
-
-            /*
-        |--------------------------------------------------------------------------
-        | Firm Profile
-        |--------------------------------------------------------------------------
-        */
-
             $firm = DB::table('firm_profiles')
-                ->where('user_id', $userId)
+                ->where('user_id', $user->id)
                 ->first();
-
             if (!$firm) {
-
                 return response()->json([
-
                     'status' => false,
-
-                    'errors' => 'Firm profile not found'
+                    'message' => 'Firm profile not found'
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Check Job
-        |--------------------------------------------------------------------------
-        */
-
-            $job = DB::table('jobs')
+            $updated = DB::table('jobs')
                 ->where('id', $id)
                 ->where('firm_id', $firm->id)
-                ->first();
-
-            if (!$job) {
-
-                return response()->json([
-
-                    'status' => false,
-
-                    'errors' => 'Job not found'
-                ]);
-            }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Update Status
-        |--------------------------------------------------------------------------
-        */
-
-            DB::table('jobs')
-                ->where('id', $id)
                 ->update([
-
                     'status' => $request->status,
-
-                    'is_active' =>
-                    strtolower($request->status) === 'Closed'
-                        ? 0
-                        : 1,
-
+                    'is_active' => strtolower($request->status) === 'closed' ? 0 : 1,
                     'updated_at' => now(),
                 ]);
-
-            /*
-        |--------------------------------------------------------------------------
-        | Fetch Updated Job
-        |--------------------------------------------------------------------------
-        */
-
-            $updatedJob = DB::table('jobs')
-                ->where('id', $id)
-                ->first();
-
+            if (!$updated) {
+                DB::rollBack();
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Job not found'
+                ]);
+            }
             DB::commit();
-
-            /*
-        |--------------------------------------------------------------------------
-        | Response
-        |--------------------------------------------------------------------------
-        */
-
             return response()->json([
-
                 'status' => true,
-
                 'message' => 'Job status updated successfully',
-
-                'data' => [
-
-                    'id' => $updatedJob->id,
-
-                    'status' => $updatedJob->status,
-
-                    'is_active' => $updatedJob->is_active,
-
-                    'updated_at' => $updatedJob->updated_at,
-                ]
             ]);
         } catch (\Exception $e) {
-
             DB::rollBack();
-
             Log::error('Update Job Status API Error', [
-
                 'message' => $e->getMessage(),
-
                 'line' => $e->getLine(),
-
                 'file' => $e->getFile(),
             ]);
-
             return response()->json([
-
                 'status' => false,
-
-                'errors' => $e->getMessage(),
+                'message' => 'Unexpected error while updating job status.',
             ]);
         }
     }
-
-
-
     public function deleteFirmJob(Request $request, $id = null)
     {
         DB::beginTransaction();
-
         try {
-
-            /*
-        |--------------------------------------------------------------------------
-        | Auth User
-        |--------------------------------------------------------------------------
-        */
-
             $user = $request->attributes->get('auth_user');
-
-            $userId = $user->id;
-
-            /*
-        |--------------------------------------------------------------------------
-        | Firm Profile
-        |--------------------------------------------------------------------------
-        */
-
-            $firm = DB::table('firm_profiles')
-                ->where('user_id', $userId)
-                ->first();
-
+            $firm = DB::table('firm_profiles')->where('user_id', $user->id)->first();
             if (!$firm) {
-
                 return response()->json([
-
                     'status' => false,
-
-                    'errors' => 'Firm profile not found'
+                    'message' => 'Firm profile not found'
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Check Job
-        |--------------------------------------------------------------------------
-        */
-
+            $deleted = DB::table('jobs')
+                ->where('id', $id)
+                ->where('firm_id', $firm->id)
+                ->delete();
+            if (!$deleted) {
+                DB::rollBack();
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Job not found'
+                ]);
+            }
+            DB::commit();
+            return response()->json([
+                'status' => true,
+                'message' => 'Job deleted successfully',
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Delete Firm Job API Error', [
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Unexpected error while deleting job.',
+            ]);
+        }
+    }
+    public function updateJob(Request $request, $id = NULL)
+    {
+        DB::beginTransaction();
+        try {
+            $validator = Validator::make($request->all(), [
+                'title' => 'required|string|max:255',
+                'location' => 'required|string|max:255',
+                'type' => 'required|string|max:255',
+                'salary' => 'required|string|max:255',
+                'description' => 'required|string',
+                'required_qualification' => 'required|string',
+                'department' => 'nullable|string|max:255',
+                'work_mode' => 'nullable|string|max:100',
+                'experience_level' => 'nullable|string|max:100',
+                'openings' => 'nullable|integer',
+                'required_skills' => 'nullable|array',
+                'required_skills.*' => 'nullable|string|max:100',
+                'benefits' => 'nullable|string',
+                'application_deadline' => 'nullable|date',
+                'status' => 'nullable|in:Draft,Active,Closed',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
+            $user = $request->attributes->get('auth_user');
+            $firm = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+            if (!$firm) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Firm profile not found'
+                ]);
+            }
             $job = DB::table('jobs')
                 ->where('id', $id)
                 ->where('firm_id', $firm->id)
                 ->first();
-
             if (!$job) {
-
                 return response()->json([
-
                     'status' => false,
-
-                    'errors' => 'Job not found'
+                    'message' => 'Job not found'
                 ]);
             }
-
-            /*
-        |--------------------------------------------------------------------------
-        | Delete Job
-        |--------------------------------------------------------------------------
-        */
-
+            $status = $request->status ?? $job->status;
             DB::table('jobs')
                 ->where('id', $id)
-                ->delete();
-
+                ->update([
+                    'title' => $request->title,
+                    'location' => $request->location,
+                    'type' => $request->type,
+                    'salary' => $request->salary,
+                    'description' => $request->description,
+                    'department' => $request->department,
+                    'work_mode' => $request->work_mode,
+                    'experience_level' => $request->experience_level,
+                    'openings' => $request->openings,
+                    'required_skills' => !empty($request->required_skills) ? json_encode($request->required_skills) : null,
+                    'benefits' => $request->benefits,
+                    'required_qualification' => $request->required_qualification,
+                    'application_deadline' => $request->application_deadline,
+                    'status' => $status,
+                    'is_active' => strtolower($status) === 'closed' ? 0 : 1,
+                    'updated_at' => now(),
+                ]);
             DB::commit();
-
-            /*
-        |--------------------------------------------------------------------------
-        | Response
-        |--------------------------------------------------------------------------
-        */
-
             return response()->json([
-
                 'status' => true,
-
-                'message' => 'Job deleted successfully',
+                'message' => 'Job updated successfully',
             ]);
         } catch (\Exception $e) {
-
             DB::rollBack();
-
-            Log::error('Delete Firm Job API Error', [
-
-                'message' => $e->getMessage(),
-
-                'line' => $e->getLine(),
-
-                'file' => $e->getFile(),
-            ]);
-
+            Log::error(
+                'Update Job API Error',
+                [
+                    'message' => $e->getMessage(),
+                    'line' => $e->getLine(),
+                    'file' => $e->getFile(),
+                ]
+            );
             return response()->json([
-
                 'status' => false,
-
-                'errors' => $e->getMessage(),
+                'message' => 'Unexpected error while updating job.',
             ]);
         }
     }

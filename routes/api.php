@@ -30,4 +30,5 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getFirmJobDetails/{id}',    [FirmController::class, 'getFirmJobDetails']);
     Route::post('/updateJobStatus/{id}',      [FirmController::class, 'updateJobStatus']);
     Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
+    Route::post('/updateJob/{id}',            [FirmController::class, 'updateJob']);
 });

@@ -1,8 +1,3 @@
-1. Change city to address in form UI
-2. If doing articleship -> then which firm
-
-
-
 
 Primary Mobile -> after this add Address field in Basic info firm profile
 ----
@@ -11,4 +6,4 @@ Primary Mobile -> after this add Address field in Basic info firm profile
 
 
 
-Firm Jobs Page Pagination issue 
+Firm Jobs Page Pagination issue

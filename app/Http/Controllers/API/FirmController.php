@@ -1017,7 +1017,7 @@ class FirmController extends Controller
             $query = DB::table('jobs')->where('firm_id', $firm->id);
 
             if (!empty($request->search)) {
-               
+
 
                 $query->where(function ($q) use ($request) {
 
@@ -1068,7 +1068,7 @@ class FirmController extends Controller
                 $query->orderBy('created_at', 'desc');
             }
 
-            $jobs = $query->paginate(2);
+            $jobs = $query->paginate(10);
 
             $data = collect($jobs->items())->map(function ($job) {
                 return [

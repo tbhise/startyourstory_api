@@ -28,3 +28,11 @@ ADD COLUMN benefits TEXT NULL AFTER required_skills,
 ADD COLUMN required_qualification TEXT NULL AFTER benefits,
 ADD COLUMN application_deadline DATE NULL AFTER required_qualification,
 ADD COLUMN status ENUM('draft','active','closed') DEFAULT 'active' AFTER is_active;
+
+
+
+
+
+
+ALTER TABLE `startyourstory`.`jobs`
+CHANGE COLUMN `status` `status` VARCHAR(25) NULL DEFAULT NULL ;

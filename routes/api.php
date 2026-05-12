@@ -21,8 +21,13 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
     Route::post('/downloadFile',     [FirmDashboardController::class, 'downloadFile']);
 
-    Route::post('/firm_profile_update',     [FirmController::class, 'firm_profile_update']);
+    Route::post('/firm_profile_update',       [FirmController::class, 'firm_profile_update']);
     Route::post('/getFirmProfileDetails',     [FirmController::class, 'getFirmProfileDetails']);
     Route::post('/getCompanies',              [FirmController::class, 'getCompanies']);
     Route::post('/getCompanyDetails/{id}',    [FirmController::class, 'getCompanyDetails']);
+    Route::post('/createJob',                 [FirmController::class, 'createJob']);
+    Route::post('/getFirmJobs',               [FirmController::class, 'getFirmJobs']);
+    Route::post('/getFirmJobDetails/{id}',    [FirmController::class, 'getFirmJobDetails']);
+    Route::post('/updateJobStatus/{id}',      [FirmController::class, 'updateJobStatus']);
+    Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
 });

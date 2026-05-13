@@ -18,11 +18,17 @@ class FirmDashboardController extends Controller
                 ->leftJoin('student_profiles', 'users.id', 'student_profiles.user_id')
                 ->where('users.is_deleted', false)
                 ->where('users.role', 'student')
-                ->get();
+                ->paginate(12);
 
             return response()->json([
                 'status' => true,
-                'data' =>  $users
+                'data' => [
+                    'students' => $users->items(),
+                    'current_page' => $users->currentPage(),
+                    'last_page' => $users->lastPage(),
+                    'next_page_url' => $users->nextPageUrl(),
+                    'total' => $users->total(),
+                ]
             ]);
         } catch (\Exception $e) {
             Log::error('Get Candidates Error: ' . $e->getMessage());

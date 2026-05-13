@@ -84,6 +84,7 @@ class FirmController extends Controller
                 'firm_name' => $request->firm_name,
                 'frn' => $request->frn,
                 'hr_name' => $request->hr_name,
+                'address' => $request->address,
                 'firm_type' => $request->firm_type,
                 'about' => $request->about,
                 'establishment_year' => $request->establishment_year,
@@ -104,11 +105,25 @@ class FirmController extends Controller
                 'additional_contacts' => $request->additional_contacts,
                 'updated_at' => now(),
             ];
+
+
+            $isProfileCompleted =
+                !empty($request->firm_name) &&
+                !empty($request->hr_name) &&
+                !empty($request->address) &&
+                !empty($request->frn) &&
+                !empty($request->firm_type) &&
+                !empty($request->about) &&
+                !empty($request->mobile) &&
+                !empty($request->exposure_type) &&
+                !empty($request->email);
+
+
             $userUpdateData = [
                 'name' => $request->firm_name,
                 'email' => $request->email,
                 'mobile' => $request->mobile,
-                'profile_completed' => 1,
+                'profile_completed' => $isProfileCompleted ? 1 : 0,
                 'updated_at' => now(),
             ];
             /*
@@ -237,6 +252,8 @@ class FirmController extends Controller
             ]);
         }
     }
+
+
     public function getFirmProfileDetails(Request $request)
     {
         try {
@@ -297,6 +314,7 @@ class FirmController extends Controller
                 'hr_name' => $firmProfile->hr_name,
                 'email' => $user->email ?? null,
                 'mobile' => $user->mobile ?? null,
+                'address' => $firmProfile->address ?? null,
                 /*
             |--------------------------------------------------------------------------
             | Firm Details
@@ -1121,7 +1139,10 @@ class FirmController extends Controller
             ]);
         }
     }
-
+    /**
+     *
+     *
+     */
 
 
     public function getFirmJobDetails(Request $request, $id = null)

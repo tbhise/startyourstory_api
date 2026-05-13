@@ -1,18 +1,104 @@
-on route /firm-dashboard
-i show students in card view
+Modification and Changes in current flow :
 
-on that page i want to apply filters in left sidebar like /firm-jobs (Flikcart ,Myntra , Amazon style)
+1. Student Registration form | route -> register?type=student
 
-use filter like
-City
-Gender
-Registration Type - Provisional / Confirm
-Departments
-Registered For - Acticleship / Semi Qualified Jobs / Qualified Jobs / Creator or Freelancer
-if registered for selected as Articleship then only show Passing Month
-Passing Month - show options like Sep 2025, Jan 2026 , May 2026   -- last 6
+  Give Dropdown for  What are you looking for? -> change current selection
+  In dropdown give two options -> 1. Job Seeker 2. Creator / Freelancer
+
+  If Selected
+  Job Seeker then give radio button selection like current given options -> CA articleship , Semi Qualified CA , Qualified CA , Already doing articleship
+
+  If selected creator then pass value as creator
+
+  these changed values save as existing variable name = looking_for
+
+2. Student Profile Section | route -> profile
+
+   1. Replace Positioning of Basic Info Section and Proffessional Status -> Proff. Status before Basic Info
+   2. In Proffessional Status
+      - if choosen as Inter both group passed
+        i. then Consider it as Confirm registration (Pass registration type val to backgroud)
+       ii. Show preferences section -> Preffered Location show multiselect dropdown -> fetch cities from city_master as we used in firm dashboard
+      iii. Show Basic Info Section -> Change Lable Address to City -> show single select dropdwon , Passing months as told like 6 select options
+       iv. Show and Place Inter Markshit before Resume Upload section
+        v. Show Exposure Preferences keep this as it is . The department listed there move it to a File so we can resuse them ignore if already moved.
+       vi. Show Core department section
+      vii. Show attempts , Resume Upload, Links section
+
+      - if choosen Doing Articleship then
+        i. Show basic info section -> remove passing month field, other changes for address field in basic info section like mentioned above
+       ii. Then add new Experience section for Working in which firm ? -> here fetch list of registered firms in our portal if there is none then give free text to enter firm name
+
+   3. While Filling registration form if student has selected (looking_for) Semi Qualified CA then
+      i. Remove Proffessional status section
+     ii. Show basic info section -> remove passing month field, other changes for address field in basic info section like mentioned above
+    iii. Show preferences section ,Exposure Preferences section , Core Departments section , Inter Markshit section,  resume upload section , links section , and add new section of Experience and CTC
+      In Experience section give fields -> 1. Experience Years 2. Industry worked in 3. Department of Experience 4.One input text for random comment - like Why should a firm choose you ?
+      In CTC section -> 1. Last/current CTC 2.Expected CTC
+
+   4. While Filling registration form if student has selected (looking_for) Qualified CA then
+     i. Remove Proffessional status section and Inter Markshit section
+    ii. Show basic info section -> remove passing month field, other changes for address field in basic info section like mentioned above
+   iii. Show preferences section ,Exposure Preferences section , Core Departments section , Inter Markshit section, resume upload section , links section , and add new section of Experience and CTC
+      In Experience section give fields -> 1. Experience Years 2. Industry worked in 3. Department of Experience 4. One input text for random comment - like Why should a firm choose you ?
+      In CTC section -> 1. Last/current CTC 2.Expected CTC
 
 
 
+----------------------------------------------------
+Filters :
+
+1. Filters for firm  | route -> firm-dashboard
+
+  i. Give main option in top Lookin for and give options CA articleship , Semi Qualified CA jobs . Qualified CA jobs , Creator/Freelancer
+
+  - if choosen as CA  articleship then show below filters
+    a. Preffered location - cities dropdown
+    b. IT/OC complete
+    c. Exposure Preferences
+    d. Core department / Interest
+    e. attempts
+    f. Gemder
+    g. PAssing month - dropdown lik eearlier discussed
+
+ - if choosen as Semi Qualified / Qualified CA Jobs then show below filters
+    a. Gender
+    b. Preffered Location
+    c. Exposure Preferences
+    d. Articleship Exposure / worked in which department -> Overall or Department wise
+
+2. Filters for students | route -> companies
+   Show below filters
+   a. City
+   b. Number of Employees
+   c. Exposure / Department
+   d. Stifund
 
 
+
+----
+
+Create a Lovable prompt for these changes . UI should be seo friendly , Mobile responsive. Create form fields for required changes and pass them in backend via apis. Try to make these changes using current code references especially for PAssing month , Cities and Role based systems.
+
+
+Instruction for You - Modify database table fields - You can give me what modified fields are needed and give them. 
+
+
+
+========================================================= Future Updates ====================================================================
+
+If a firm has many branches then prevent login credentials sharing pass on   -- imp
+
+---
+For students
+Show recruiter action on navbar after My Jobs
+Mail to student regarding same - mandatory to take action like approve , reject within 2 days
+if rejected then ask for rejection request
+Remove all request older than 5 days
+
+
+---
+On Registration form
+
+Ask for referral - for both student and firm
+if any student convince their firm to purchase premium of sys - give 2k

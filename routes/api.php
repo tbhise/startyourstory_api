@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\UserController;
 use App\Http\Middleware\ApiAuthMiddleware;
+use App\Http\Controllers\API\MasterController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -31,4 +32,8 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateJobStatus/{id}',      [FirmController::class, 'updateJobStatus']);
     Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
     Route::post('/updateJob/{id}',            [FirmController::class, 'updateJob']);
+
+
+
+    Route::post('/master/cities', [MasterController::class, 'getCities']);
 });

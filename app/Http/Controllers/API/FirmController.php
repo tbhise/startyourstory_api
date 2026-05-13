@@ -1086,7 +1086,7 @@ class FirmController extends Controller
                 $query->orderBy('created_at', 'desc');
             }
 
-            $jobs = $query->paginate(10);
+            $jobs = $query->paginate(12);
 
             $data = collect($jobs->items())->map(function ($job) {
                 return [
@@ -1125,6 +1125,11 @@ class FirmController extends Controller
                     'total' => $jobs->total(),
                     'next_page_url' => $jobs->nextPageUrl(),
                     'prev_page_url' => $jobs->previousPageUrl(),
+
+
+
+
+
                 ]
             ]);
         } catch (\Exception $e) {

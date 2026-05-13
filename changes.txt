@@ -1,9 +1,18 @@
+on route /firm-dashboard
+i show students in card view
 
-Primary Mobile -> after this add Address field in Basic info firm profile
-----
+on that page i want to apply filters in left sidebar like /firm-jobs (Flikcart ,Myntra , Amazon style)
+
+use filter like
+City
+Gender
+Registration Type - Provisional / Confirm
+Departments
+Registered For - Acticleship / Semi Qualified Jobs / Qualified Jobs / Creator or Freelancer
+if registered for selected as Articleship then only show Passing Month
+Passing Month - show options like Sep 2025, Jan 2026 , May 2026   -- last 6
 
 
 
 
 
-Firm Jobs Page Pagination issue

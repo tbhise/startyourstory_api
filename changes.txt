@@ -116,5 +116,9 @@ if any student convince their firm to purchase premium of sys - give 2k
    - Conpany Card Section -> show View Details button at bottom for all card irrespective of content above button so it must look in a linear way
    - Remove filter Firm Type
 6. Student Details Page - rouet -> /firm-students/{id}
-   - Retain existing shown studnet fields and also add newly added fields too fetch them from api api/candidate/11 -> if variable is not in api response then show dummy data for that field 
+   - Retain existing shown studnet fields and also add newly added fields too fetch them from api api/candidate/11 -> if variable is not in api response then show dummy data for that field
 
+
+
+-----------
+While post job - ask for target reach 

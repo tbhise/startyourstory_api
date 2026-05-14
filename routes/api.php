@@ -32,8 +32,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateJobStatus/{id}',      [FirmController::class, 'updateJobStatus']);
     Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
     Route::post('/updateJob/{id}',            [FirmController::class, 'updateJob']);
-
-
-
-    Route::post('/master/cities', [MasterController::class, 'getCities']);
+    Route::post('/searchFirms',               [FirmController::class, 'searchFirms']);
 });
+
+Route::post('/master/cities', [MasterController::class, 'getCities']);

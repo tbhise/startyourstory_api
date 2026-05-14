@@ -1144,6 +1144,71 @@ class FirmController extends Controller
             ]);
         }
     }
+
+
+
+    public function searchFirms(Request $request)
+    {
+        try {
+
+            $search = trim($request->search ?? '');
+
+            $query = DB::table('firm_profiles')
+                ->select(
+                    'firm_profiles.id',
+                    'firm_profiles.firm_name',
+                    'firm_profiles.city',
+                    'users.email',
+                    'users.mobile'
+                )
+                ->leftJoin('users', 'firm_profiles.user_id', '=', 'users.id')
+                ->where('users.is_deleted', false);
+
+            /*
+        |--------------------------------------------------------------------------
+        | Search
+        |--------------------------------------------------------------------------
+        */
+
+            if (!empty($search)) {
+
+                $query->where(function ($q) use ($search) {
+
+                    $q->where('firm_profiles.firm_name', 'like', "%{$search}%")
+                        ->orWhere('firm_profiles.city', 'like', "%{$search}%");
+                });
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | Fetch Firms
+        |--------------------------------------------------------------------------
+        */
+
+            $firms = $query
+                ->orderBy('firm_profiles.firm_name')
+                ->limit(20)
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => $firms
+            ]);
+        } catch (\Exception $e) {
+
+            Log::error('Search Firms Error: ' . $e->getMessage());
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to fetch firms'
+            ]);
+        }
+    }
+
+
+
+
+
     /**
      *
      *

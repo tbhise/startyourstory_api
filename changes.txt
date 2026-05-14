@@ -81,7 +81,7 @@ Filters :
 Create a Lovable prompt for these changes . UI should be seo friendly , Mobile responsive. Create form fields for required changes and pass them in backend via apis. Try to make these changes using current code references especially for PAssing month , Cities and Role based systems.
 
 
-Instruction for You - Modify database table fields - You can give me what modified fields are needed and give them. 
+Instruction for You - Modify database table fields - You can give me what modified fields are needed and give them.
 
 
 
@@ -102,3 +102,19 @@ On Registration form
 
 Ask for referral - for both student and firm
 if any student convince their firm to purchase premium of sys - give 2k
+
+
+========================================= Changes In Updated UI =============================================
+1. Student Registration Form - From Dropdown If select job seeker then only show Choose a track section
+2. While student registration if student selects for CA articleship (looking_for=articleship) and then in Proffessional status
+   - if user selects anything other than "Inter both group passed" then  show only Basic Info Section
+   - if user selects Doing articleship then only ask for working in which firm (Experience) section
+3. Change regarding basic info section -> if looking_for = Qualified or Semi Qualified then only remove passing month field otherwise show it.
+4. In Firm registration form -> at city option give cities dropdown instead of input --> show city like City, State
+5. All Companies page route -> companies
+   - For city filter use cities dropdwon -> like shown in firm-dashboard page
+   - Conpany Card Section -> show View Details button at bottom for all card irrespective of content above button so it must look in a linear way
+   - Remove filter Firm Type
+6. Student Details Page - rouet -> /firm-students/{id}
+   - Retain existing shown studnet fields and also add newly added fields too fetch them from api api/candidate/11 -> if variable is not in api response then show dummy data for that field 
+

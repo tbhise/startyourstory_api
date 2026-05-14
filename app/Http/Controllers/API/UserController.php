@@ -59,7 +59,7 @@ class UserController extends Controller
     }
     public function updateProfile(Request $request)
     {
-        // Log::info($request->all());
+        Log::info($request->all());
         DB::beginTransaction();
         try {
             $validator = Validator::make($request->all(), [
@@ -134,6 +134,19 @@ class UserController extends Controller
                     explode(',', $request->exposure_type)
                 ),
                 'core_department' => $request->core_department,
+                'current_firm_id' => $request->current_firm_id,
+                'current_firm_name' => $request->current_firm_name,
+                'experience_years' => $request->experience_years,
+                'industry_worked_in' => $request->industry_worked_in,
+                'experience_department' => $request->experience_department,
+                'why_should_hire_you' => $request->why_should_hire_you,
+                'current_ctc' => $request->current_ctc,
+                'expected_ctc' => $request->expected_ctc,
+
+
+
+
+
                 'attempts' => $request->attempts,
                 'linkedin_url' => $request->linkedin_url,
                 'portfolio_url' => $request->portfolio_url,

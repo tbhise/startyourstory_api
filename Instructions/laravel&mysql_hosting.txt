@@ -1,0 +1,309 @@
+
+# =========================================
+# CONNECT TO VPS
+# =========================================
+
+ssh root@YOUR_SERVER_IP
+
+
+# =========================================
+# INSTALL PHP + MYSQL + NGINX
+# =========================================
+
+apt update && apt upgrade -y
+
+apt install -y \
+php8.3 \
+php8.3-fpm \
+php8.3-mysql \
+php8.3-cli \
+php8.3-curl \
+php8.3-mbstring \
+php8.3-xml \
+php8.3-zip \
+php8.3-bcmath \
+mysql-server \
+nginx \
+unzip
+
+
+# =========================================
+# INSTALL COMPOSER
+# =========================================
+
+curl -sS https://getcomposer.org/installer | php
+
+mv composer.phar /usr/local/bin/composer
+
+composer --version
+
+
+# =========================================
+# CREATE PROJECT FOLDER
+# =========================================
+
+mkdir -p /var/www/sys_api
+
+cd /var/www/sys_api
+
+
+# =========================================
+# IMPORTANT
+# UPLOAD YOUR LARAVEL PROJECT
+# USING FILEZILLA TO:
+#
+# /var/www/sys_api
+#
+# FINAL STRUCTURE:
+#
+# /var/www/sys_api/artisan
+# /var/www/sys_api/public
+# /var/www/sys_api/routes
+# =========================================
+
+
+# =========================================
+# INSTALL LARAVEL DEPENDENCIES
+# =========================================
+
+cd /var/www/sys_api
+
+composer install
+
+
+# =========================================
+# CREATE .ENV FILE
+# =========================================
+
+cp .env.example .env
+
+
+# =========================================
+# GENERATE APP KEY
+# =========================================
+
+php artisan key:generate
+
+
+
+# =========================================
+# LOGIN TO MYSQL
+# =========================================
+
+mysql
+
+
+# =========================================
+# CREATE DATABASE
+# =========================================
+
+CREATE DATABASE startyourstory;
+
+
+# =========================================
+# CREATE MYSQL USER
+# =========================================
+
+CREATE USER 'laravel_user'@'127.0.0.1'
+IDENTIFIED BY 'LaravelPass123!';
+
+
+# =========================================
+# GRANT DATABASE ACCESS
+# =========================================
+
+GRANT ALL PRIVILEGES
+ON startyourstory.*
+TO 'laravel_user'@'127.0.0.1';
+
+
+# =========================================
+# APPLY CHANGES
+# =========================================
+
+FLUSH PRIVILEGES;
+
+
+# =========================================
+# VERIFY USER
+# =========================================
+
+SELECT user, host FROM mysql.user;
+
+
+# =========================================
+# EXIT MYSQL
+# =========================================
+
+EXIT;
+
+
+
+
+
+# =========================================
+# EDIT LARAVEL ENV
+# =========================================
+
+nano /var/www/sys_api/.env
+
+
+# =========================================
+# SET THESE VALUES
+# =========================================
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=startyourstory
+DB_USERNAME=laravel_user
+DB_PASSWORD=LaravelPass123!
+
+
+# =========================================
+# SAVE FILE:
+# CTRL + X
+# Y
+# ENTER
+# =========================================
+
+
+# =========================================
+# CLEAR LARAVEL CACHE
+# =========================================
+
+cd /var/www/sys_api
+
+rm -rf bootstrap/cache/*.php
+
+php artisan optimize:clear
+
+
+# =========================================
+# IMPORTANT
+# UPLOAD YOUR DATABASE.SQL FILE TO:
+#
+# /var/www/database.sql
+# =========================================
+
+
+# =========================================
+# IMPORT DATABASE
+# =========================================
+
+mysql -u laravel_user -p -h 127.0.0.1 startyourstory < /var/www/database.sql
+
+
+# =========================================
+# FIX LARAVEL PERMISSIONS
+# =========================================
+
+chmod -R 775 storage
+
+chmod -R 775 bootstrap/cache
+
+chown -R www-data:www-data storage
+
+chown -R www-data:www-data bootstrap/cache
+
+
+# =========================================
+# CREATE TMP FOLDER
+# =========================================
+
+mkdir -p /tmp
+
+chmod 1777 /tmp
+
+
+# =========================================
+# CREATE NGINX CONFIG
+# =========================================
+
+nano /etc/nginx/sites-available/sys_api
+
+server {
+    listen 8000;
+
+    server_name YOUR_SERVER_IP;
+
+    root /var/www/sys_api/public;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    location ~ /\.ht {
+        deny all;
+    }
+}
+
+
+
+# =========================================
+# SAVE NGINX FILE:
+# CTRL + X
+# Y
+# ENTER
+# =========================================
+
+
+# =========================================
+# ENABLE NGINX CONFIG
+# =========================================
+
+ln -s /etc/nginx/sites-available/sys_api /etc/nginx/sites-enabled/
+
+
+# =========================================
+# TEST NGINX
+# =========================================
+
+nginx -t
+
+
+# =========================================
+# RESTART SERVICES
+# =========================================
+
+systemctl restart php8.3-fpm
+
+systemctl restart nginx
+
+
+# =========================================
+# VERIFY API
+# =========================================
+
+curl http://127.0.0.1:8000
+
+
+# =========================================
+# FINAL API URL
+# =========================================
+
+http://YOUR_SERVER_IP:8000/api
+
+
+# =========================================
+# USEFUL COMMANDS
+# =========================================
+
+tail -f /var/www/sys_api/storage/logs/laravel.log
+
+systemctl restart php8.3-fpm
+
+systemctl restart nginx
+
+php artisan optimize:clear
+

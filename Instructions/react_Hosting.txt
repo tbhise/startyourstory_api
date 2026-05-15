@@ -1,0 +1,176 @@
+```bash
+# =========================================
+# CONNECT TO VPS
+# =========================================
+
+ssh root@147.93.97.25
+
+
+# =========================================
+# CREATE PROJECT FOLDER
+# =========================================
+
+mkdir -p /var/www/sys_ui
+
+cd /var/www/sys_ui
+
+
+# =========================================
+# IMPORTANT
+# Upload your LOCAL dist folder here using FileZilla
+#
+# FINAL STRUCTURE SHOULD BE:
+#
+# /var/www/sys_ui/dist/client/index.html
+# =========================================
+
+
+# =========================================
+# INSTALL NODEJS
+# =========================================
+
+apt update && apt upgrade -y
+
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+
+apt install -y nodejs
+
+node -v
+npm -v
+
+
+# =========================================
+# INSTALL PM2 + SERVE
+# =========================================
+
+npm install -g pm2 serve
+
+
+# =========================================
+# START APP USING PM2
+# =========================================
+
+cd /var/www/sys_ui
+
+pm2 start "serve -s dist/client -l 3000" --name sys_ui
+
+
+# =========================================
+# VERIFY PM2
+# =========================================
+
+pm2 list
+
+
+# =========================================
+# TEST APP DIRECTLY
+# OPEN IN BROWSER:
+#
+# http://147.93.97.25:3000
+# =========================================
+
+
+# =========================================
+# INSTALL NGINX
+# =========================================
+
+apt install nginx -y
+
+
+# =========================================
+# CREATE NGINX CONFIG
+# =========================================
+
+nano /etc/nginx/sites-available/sys_ui
+
+
+server {
+    listen 80;
+
+    server_name 147.93.97.25;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+
+# SAVE NANO FILE:
+# CTRL + X
+# Y
+# ENTER
+
+
+# =========================================
+# ENABLE NGINX CONFIG
+# =========================================
+
+rm -f /etc/nginx/sites-enabled/default
+
+ln -s /etc/nginx/sites-available/sys_ui /etc/nginx/sites-enabled/
+
+
+# =========================================
+# TEST NGINX
+# =========================================
+
+nginx -t
+
+
+# =========================================
+# RESTART NGINX
+# =========================================
+
+systemctl restart nginx
+
+
+# =========================================
+# FINAL APP URL
+# =========================================
+
+# OPEN IN BROWSER:
+#
+# http://147.93.97.25
+
+
+# =========================================
+# MAKE PM2 PERMANENT
+# =========================================
+
+pm2 save
+
+pm2 startup
+
+
+# =========================================
+# RUN THE COMMAND PM2 GIVES
+# THEN RUN:
+# =========================================
+
+pm2 save
+
+
+# =========================================
+# USEFUL PM2 COMMANDS
+# =========================================
+
+pm2 list
+
+pm2 logs sys_ui
+
+pm2 restart sys_ui
+
+pm2 stop sys_ui
+
+pm2 delete sys_ui
+
+

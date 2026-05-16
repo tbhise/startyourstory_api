@@ -12,6 +12,8 @@ use App\Http\Controllers\API\MasterController;
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::post('/login',           [AuthController::class, 'login']);
+Route::get('/me',               [AuthController::class, 'me']);
+
 
 Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfile',    [UserController::class, 'updateProfile']);

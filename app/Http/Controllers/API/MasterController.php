@@ -19,7 +19,8 @@ class MasterController extends Controller
                 ->select(
                     'id',
                     'city_name',
-                    'state_name'
+                    'state_name',
+                    DB::raw("CONCAT(city_name, ', ', state_name) as label"),
                 )
                 ->where('is_active', true);
 
@@ -28,15 +29,20 @@ class MasterController extends Controller
                 $search = trim($request->search);
 
                 $query->where(function ($q) use ($search) {
+                    $q->Where('city_name', 'like', "%{$search}%");
+                });
+            }
+            if ($request->filled('state_name')) {
 
-                    $q->where('city_name', 'like', "%{$search}%")
-                        ->orWhere('state_name', 'like', "%{$search}%");
+                $search = trim($request->state_name);
+
+                $query->where(function ($q) use ($search) {
+                    $q->Where('state_name', 'like', "%{$search}%");
                 });
             }
 
             $cities = $query
                 ->orderBy('city_name')
-                ->limit(50)
                 ->get();
 
             return response()->json([

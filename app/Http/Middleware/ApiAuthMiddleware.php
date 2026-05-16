@@ -8,36 +8,10 @@ use Illuminate\Support\Facades\DB;
 
 class ApiAuthMiddleware
 {
-    // public function handle(Request $request, Closure $next)
-    // {
-    //     $token = $request->bearerToken();
-    //     if (!$token) {
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Token missing'
-    //         ], 401);
-    //     }
-    //     $user = DB::table('users')
-    //         ->where('api_token', $token)
-    //         ->first();
-    //     if (!$user) {
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Unauthorized'
-    //         ], 401);
-    //     }
-    //     /*
-    //     |--------------------------------------------------------------------------
-    //     | Store Logged In User
-    //     |--------------------------------------------------------------------------
-    //     */
-    //     $request->attributes->set('auth_user', $user);
-    //     return $next($request);
-    // }
-
+    
     public function handle(Request $request, Closure $next)
     {
-        $token = $request->bearerToken();
+        $token = $request->cookie('auth_token');
 
         if (!$token) {
 
@@ -49,6 +23,7 @@ class ApiAuthMiddleware
 
         $user = DB::table('users')
             ->where('api_token', $token)
+            ->where('is_deleted', false)
             ->first();
 
         if (!$user) {

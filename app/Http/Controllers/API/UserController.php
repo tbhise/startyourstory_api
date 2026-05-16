@@ -57,170 +57,10 @@ class UserController extends Controller
             ]);
         }
     }
-    // public function updateProfile(Request $request)
-    // {
-    //     Log::info($request->all());
-    //     DB::beginTransaction();
-    //     try {
-    //         $validator = Validator::make($request->all(), [
-    //             'looking_for' => 'nullable|string',
-    //             'srn' => 'nullable|string',
-    //             'address' => 'nullable|string',
-    //             'gender' => 'nullable|string',
-    //             'passing_month' => 'nullable|string',
-    //             'ca_status' => 'nullable|string',
-    //             'articleship_status' => 'nullable|string',
-    //             'preferred_location' => 'nullable|string',
-    //             'it_oc_status' => 'nullable|string',
-    //             'exposure_type' => 'nullable|string',
-    //             'core_department' => 'nullable|string',
-    //             'attempts' => 'nullable|string',
-    //             'linkedin_url' => 'nullable|string',
-    //             'portfolio_url' => 'nullable|string',
-    //             'resume_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
-    //             'marksheet_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
-    //         ]);
-    //         if ($validator->fails()) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => $validator->errors()->first()
-    //             ]);
-    //         }
-    //         // ===================================
-    //         // FILE UPLOADS
-    //         // ===================================
-    //         $resumePath = null;
-    //         $marksheetPath = null;
-    //         // Resume Upload
-    //         if ($request->hasFile('resume_path')) {
-    //             $resume = $request->file('resume_path');
-    //             $resumeName = time() . '_resume.' . $resume->getClientOriginalExtension();
-    //             $resumePath = $resume->storeAs(
-    //                 'resumes',
-    //                 $resumeName,
-    //                 'public'
-    //             );
-    //         }
-    //         // Marksheet Upload
-    //         if ($request->hasFile('marksheet_path')) {
-    //             $marksheet = $request->file('marksheet_path');
-    //             $marksheetName = time() . '_marksheet.' . $marksheet->getClientOriginalExtension();
-    //             $marksheetPath = $marksheet->storeAs(
-    //                 'marksheets',
-    //                 $marksheetName,
-    //                 'public'
-    //             );
-    //         }
-    //         // ===================================
-    //         // PREPARE DATA
-    //         // ===================================
-    //         $user = $request->attributes->get('auth_user');
-    //         $userId = $user->id;
-    //         $profileData = [
-    //             'user_id' => $userId,
-    //             'looking_for' => $request->looking_for,
-    //             'srn' => $request->srn,
-    //             'address' => $request->address,
-    //             'gender' => $request->gender,
-    //             'passing_month' => $request->passing_month,
-    //             'ca_status' => $request->ca_status,
-    //             'articleship_status' => $request->articleship_status,
-    //             'preferred_location' => json_encode(
-    //                 explode(',', $request->preferred_location)
-    //             ),
-    //             'it_oc_status' => $request->it_oc_status,
-    //             // 'exposure_type' => $request->exposure_type,
-    //             'exposure_type' => json_encode(
-    //                 explode(',', $request->exposure_type)
-    //             ),
-    //             'core_department' => $request->core_department,
-    //             'current_firm_id' => $request->current_firm_id,
-    //             'current_firm_name' => $request->current_firm_name,
-    //             'experience_years' => $request->experience_years,
-    //             'industry_worked_in' => $request->industry_worked_in,
-    //             'experience_department' => $request->experience_department,
-    //             'why_should_hire_you' => $request->why_should_hire_you,
-    //             'current_ctc' => $request->current_ctc,
-    //             'expected_ctc' => $request->expected_ctc,
-    //             'attempts' => $request->attempts,
-    //             'linkedin_url' => $request->linkedin_url,
-    //             'portfolio_url' => $request->portfolio_url,
-    //             'updated_at' => now(),
-    //         ];
-    //         // Add files only if uploaded
-    //         if ($resumePath) {
-    //             $profileData['resume_path'] = $resumePath;
-    //         }
-    //         if ($marksheetPath) {
-    //             $profileData['marksheet_path'] = $marksheetPath;
-    //         }
-    //         // ===================================
-    //         // CHECK PROFILE EXISTS
-    //         // ===================================
-    //         $existingProfile = DB::table('student_profiles')
-    //             ->where('user_id', $userId)
-    //             ->first();
-    //         // ===================================
-    //         // UPDATE OR INSERT
-    //         // ===================================
-    //         if ($existingProfile) {
-    //             DB::table('student_profiles')
-    //                 ->where('user_id', $userId)
-    //                 ->update($profileData);
-    //         } else {
-    //             $profileData['created_at'] = now();
-    //             DB::table('student_profiles')
-    //                 ->insert($profileData);
-    //         }
-    //         // ===================================
-    //         // UPDATE USERS TABLE
-    //         // ===================================
-    //         $isProfileComplete =
-    //             !empty($request->srn) &&
-    //             !empty($request->address) &&
-    //             !empty($request->gender) &&
-    //             !empty($request->passing_month) &&
-    //             !empty($request->ca_status) &&
-    //             !empty($request->preferred_location) &&
-    //             !empty($request->it_oc_status) &&
-    //             !empty($request->exposure_type) &&
-    //             !empty($request->core_department) &&
-    //             !empty($request->attempts) &&
-    //             (
-    //                 $resumePath ||
-    //                 !empty($existingProfile->resume_path ?? null)
-    //             ) &&
-    //             (
-    //                 $marksheetPath ||
-    //                 !empty($existingProfile->marksheet_path ?? null)
-    //             );
-    //         DB::table('users')
-    //             ->where('id', $userId)
-    //             ->update([
-    //                 'profile_completed' => $isProfileComplete ? 1 : 0,
-    //                 'updated_at' => now()
-    //             ]);
-    //         // ===================================
-    //         // RESPONSE
-    //         // ===================================
-    //         DB::commit();
-    //         return response()->json([
-    //             'status' => true,
-    //             'message' => 'Profile updated successfully',
-    //             'profile_completed' => $isProfileComplete ? 1 : 0,
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         DB::rollBack();
-    //         Log::error('Profile Update Error: ' . $e->getMessage());
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Profile update failed: Server error'
-    //         ]);
-    //     }
-    // }
+
     public function updateProfile(Request $request)
     {
-        Log::info($request->all());
+        // Log::info($request->all());
         DB::beginTransaction();
         try {
             /*
@@ -266,15 +106,33 @@ class UserController extends Controller
         | Auth User
         |--------------------------------------------------------------------------
         */
-            $user = $request->attributes->get('auth_user');
-            $userId = $user->id;
+            $token = $request->cookie('auth_token');
+
+            if (!$token) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthenticated'
+                ], 401);
+            }
+
+            $user = DB::table('users')
+                ->where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token'
+                ], 401);
+            }
             /*
         |--------------------------------------------------------------------------
         | Existing Profile
         |--------------------------------------------------------------------------
         */
             $existingProfile = DB::table('student_profiles')
-                ->where('user_id', $userId)
+                ->where('user_id', $user->id)
                 ->first();
             /*
         |--------------------------------------------------------------------------
@@ -373,7 +231,7 @@ class UserController extends Controller
         |--------------------------------------------------------------------------
         */
             $profileData = [
-                'user_id' => $userId,
+                'user_id' => $user->id,
                 'looking_for' => $request->looking_for,
                 'srn' => $request->srn,
                 /*
@@ -453,7 +311,7 @@ class UserController extends Controller
         */
             if ($existingProfile) {
                 DB::table('student_profiles')
-                    ->where('user_id', $userId)
+                    ->where('user_id', $user->id)
                     ->update($profileData);
             } else {
                 $profileData['created_at'] = now();
@@ -539,7 +397,7 @@ class UserController extends Controller
         |--------------------------------------------------------------------------
         */
             DB::table('users')
-                ->where('id', $userId)
+                ->where('id', $user->id)
                 ->update([
                     'profile_completed' => $isProfileComplete ? 1 : 0,
                     'updated_at' => now()
@@ -567,11 +425,21 @@ class UserController extends Controller
     public function getProfile(Request $request)
     {
         try {
-            $user = $request->attributes->get('auth_user');
-            if (!$user) {
+            $token = $request->cookie('auth_token');
+            if (!$token) {
                 return response()->json([
                     'status' => false,
                     'message' => 'Unauthorized'
+                ], 401);
+            }
+            $user = DB::table('users')
+                ->where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token'
                 ], 401);
             }
             $userId = $user->id;

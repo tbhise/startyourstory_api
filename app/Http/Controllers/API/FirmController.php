@@ -1145,6 +1145,129 @@ class FirmController extends Controller
         }
     }
 
+    public function getJobs(Request $request)
+    {
+        try {
+
+
+
+
+
+
+            $query = DB::table('jobs')
+                ->join('firm_profiles', 'jobs.firm_id', '=', 'firm_profiles.id')
+                ->select(
+                    'jobs.*',
+                    'firm_profiles.firm_name',
+                    'firm_profiles.logo_path'
+                );
+
+            if (!empty($request->search)) {
+
+
+                $query->where(function ($q) use ($request) {
+
+                    $search =
+                        '%' . $request->search . '%';
+
+                    $q->where(
+                        'title',
+                        'LIKE',
+                        $search
+                    )
+                        ->orWhere(
+                            'location',
+                            'LIKE',
+                            $search
+                        )
+                        ->orWhere(
+                            'department',
+                            'LIKE',
+                            $search
+                        );
+                });
+            }
+
+            if (
+                !empty($request->status) && is_array($request->status)
+            ) {
+                $query->whereIn('status', $request->status);
+            }
+
+            if (!empty($request->type) && is_array($request->type)) {
+                $query->whereIn('type', $request->type);
+            }
+
+            if (!empty($request->department) && is_array($request->department)) {
+                $query->whereIn('department', $request->department);
+            }
+
+            if (!empty($request->work_mode) && is_array($request->work_mode)) {
+                $query->whereIn('work_mode', $request->work_mode);
+            }
+
+            if ($request->sort === 'oldest') {
+                $query->orderBy('created_at', 'asc');
+            } else if ($request->sort === 'active') {
+                $query->orderBy('is_active');
+            } else {
+                $query->orderBy('created_at', 'desc');
+            }
+
+            $jobs = $query->paginate(12);
+
+            $data = collect($jobs->items())->map(function ($job) {
+                return [
+                    'id' => $job->id,
+                    'firm_id' => $job->firm_id,
+                    'title' => $job->title,
+                    'location' => $job->location,
+                    'type' => $job->type,
+                    'salary' => $job->salary,
+                    'description' => $job->description,
+                    'department' => $job->department,
+                    'work_mode' => $job->work_mode,
+                    'experience_level' =>
+                    $job->experience_level,
+                    'openings' => $job->openings,
+                    'required_skills' => json_decode($job->required_skills, true) ?? [],
+                    'benefits' => $job->benefits,
+                    'required_qualification' =>
+                    $job->required_qualification,
+                    'application_deadline' =>
+                    $job->application_deadline,
+                    'status' => $job->status,
+                    'is_active' => $job->is_active,
+                    'created_at' => $job->created_at ? date('d M Y g:i A', strtotime($job->created_at)) : null,
+                ];
+            });
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Firm jobs fetched successfully',
+                'data' => [
+                    'jobs' => $data,
+                    'current_page' => $jobs->currentPage(),
+                    'last_page' => $jobs->lastPage(),
+                    'per_page' => $jobs->perPage(),
+                    'total' => $jobs->total(),
+                    'next_page_url' => $jobs->nextPageUrl(),
+                    'prev_page_url' => $jobs->previousPageUrl(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get Jobs API Error', [
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Unexpected server error while fetching job list.',
+            ]);
+        }
+    }
+
 
 
     public function searchFirms(Request $request)

@@ -9,8 +9,6 @@ use Illuminate\Support\Facades\DB;
 class MasterController extends Controller
 {
 
-
-
     public function getCities(Request $request)
     {
         try {
@@ -54,6 +52,40 @@ class MasterController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Failed to fetch cities'
+            ]);
+        }
+    }
+
+    public function getCompanies(Request $request)
+    {
+        try {
+
+            $query = DB::table('firm_profiles')
+                ->select('id', 'firm_name')
+                ->where('is_active', true);
+
+            if ($request->filled('search')) {
+
+                $search = trim($request->search);
+
+                $query->where(function ($q) use ($search) {
+                    $q->Where('firm_name', 'like', "%{$search}%");
+                });
+            }
+
+            $companies = $query
+                ->orderBy('firm_name')
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => $companies
+            ]);
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Failed to fetch companies'
             ]);
         }
     }

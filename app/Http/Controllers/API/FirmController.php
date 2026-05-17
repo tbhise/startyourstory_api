@@ -1148,6 +1148,8 @@ class FirmController extends Controller
     public function getJobs(Request $request)
     {
         try {
+            $firmId = DB::table('firm_profiles')->where('firm_name', $request->company)->value('id');
+
 
             $query = DB::table('jobs')
                 ->join('firm_profiles', 'jobs.firm_id', '=', 'firm_profiles.id')
@@ -1179,37 +1181,25 @@ class FirmController extends Controller
                             'department',
                             'LIKE',
                             $search
+                        )
+                        ->orWhere(
+                            'description',
+                            'LIKE',
+                            $search
                         );
                 });
             }
-
-            if (
-                !empty($request->status) && is_array($request->status)
-            ) {
-                $query->whereIn('status', $request->status);
+            if (!empty($firmId)) {
+                $query->where('firm_id', $firmId);
             }
-
-            if (!empty($request->type) && is_array($request->type)) {
-                $query->whereIn('type', $request->type);
+            if (!empty($request->cities) && is_array($request->cities)) {
+                $query->whereIn('location', $request->cities);
             }
-
-            if (!empty($request->department) && is_array($request->department)) {
-                $query->whereIn('department', $request->department);
+            if (!empty($request->departments) && is_array($request->departments)) {
+                $query->whereIn('department', $request->departments);
             }
-
-            if (!empty($request->work_mode) && is_array($request->work_mode)) {
-                $query->whereIn('work_mode', $request->work_mode);
-            }
-
-            if ($request->sort === 'oldest') {
-                $query->orderBy('created_at', 'asc');
-            } else if ($request->sort === 'active') {
-                $query->orderBy('is_active');
-            } else {
-                $query->orderBy('created_at', 'desc');
-            }
-
-            $jobs = $query->paginate(12);
+            $query->orderBy('created_at', 'desc');
+            $jobs = $query->paginate(10);
 
             $data = collect($jobs->items())->map(function ($job) {
                 return [

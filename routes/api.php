@@ -30,7 +30,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getCompanyDetails/{id}',    [FirmController::class, 'getCompanyDetails']);
     Route::post('/createJob',                 [FirmController::class, 'createJob']);
     Route::post('/getFirmJobs',               [FirmController::class, 'getFirmJobs']);
-  //  Route::get('/getJobs',                   [FirmController::class, 'getJobs']);
+    Route::get('/getJobs',                   [FirmController::class, 'getJobs']);
 
 
 
@@ -42,4 +42,5 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 });
 
 Route::post('/master/cities', [MasterController::class, 'getCities']);
-    Route::get('/getJobs',                   [FirmController::class, 'getJobs']);
+Route::post('/master/companies', [MasterController::class, 'getCompanies']);
+

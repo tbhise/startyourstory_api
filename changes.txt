@@ -1,1 +1,2 @@
-1. in student dashboard - in filter section Show all companies list in dropdown 
+1. in student dashboard - in filter section Show all companies list in dropdown
+2. Multi selector and single selectore for comapny list 

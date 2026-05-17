@@ -1149,11 +1149,6 @@ class FirmController extends Controller
     {
         try {
 
-
-
-
-
-
             $query = DB::table('jobs')
                 ->join('firm_profiles', 'jobs.firm_id', '=', 'firm_profiles.id')
                 ->select(
@@ -1220,6 +1215,8 @@ class FirmController extends Controller
                 return [
                     'id' => $job->id,
                     'firm_id' => $job->firm_id,
+                    'firm_name' => $job->firm_name,
+                    'firm_logo_path' => asset('/storage/' . $job->logo_path),
                     'title' => $job->title,
                     'location' => $job->location,
                     'type' => $job->type,

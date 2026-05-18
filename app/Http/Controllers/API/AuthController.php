@@ -99,9 +99,9 @@ class AuthController extends Controller
     {
         try {
 
-        // Log::info($request->headers->all());
+            // Log::info($request->headers->all());
             $token = $request->cookie('auth_token');
-
+         
             if (!$token) {
                 return response()->json([
                     'status' => false,

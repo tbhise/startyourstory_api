@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\UserController;
 use App\Http\Middleware\ApiAuthMiddleware;
 use App\Http\Controllers\API\MasterController;
+use App\Http\Controllers\API\JobsController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -30,7 +31,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getCompanyDetails/{id}',    [FirmController::class, 'getCompanyDetails']);
     Route::post('/createJob',                 [FirmController::class, 'createJob']);
     Route::post('/getFirmJobs',               [FirmController::class, 'getFirmJobs']);
-    Route::get('/getJobs',                   [FirmController::class, 'getJobs']);
+    Route::get('/getJobs',                    [FirmController::class, 'getJobs']);
 
 
 
@@ -39,8 +40,21 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
     Route::post('/updateJob/{id}',            [FirmController::class, 'updateJob']);
     Route::post('/searchFirms',               [FirmController::class, 'searchFirms']);
+
+
+    // Jobs
+
+    Route::post('/jobs/{id}/apply',                     [JobsController::class, 'applyJob']);
+    Route::post('/jobs/{id}/save',                      [JobsController::class, 'saveJob']);
+    Route::delete('/jobs/{id}/save',                    [JobsController::class, 'saveJob']);
+    Route::post('/getAppliedJobs',                      [JobsController::class, 'getAppliedJobs']);
+    Route::post('/getSavedJobs',                        [JobsController::class, 'getSavedJobs']);
+    Route::post('/getApplications/{id}',                [JobsController::class, 'getApplications']);
+    Route::post('/applications/{id}/updateStatus',      [JobsController::class, 'updateApplicationStatus']);
+    Route::post('/applications/{id}/schedule-interview',     [JobsController::class, 'scheduleInterview']);
+    Route::post('/getRecruiterActions',                 [JobsController::class, 'getRecruiterActions']);
+    Route::post('//applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
 });
 
-Route::post('/master/cities', [MasterController::class, 'getCities']);
+Route::post('/master/cities',    [MasterController::class, 'getCities']);
 Route::post('/master/companies', [MasterController::class, 'getCompanies']);
-

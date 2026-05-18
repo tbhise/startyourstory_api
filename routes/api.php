@@ -20,6 +20,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfile',    [UserController::class, 'updateProfile']);
     Route::post('/getProfile',       [UserController::class, 'getProfile']);
     Route::post('/updateProfileImage',       [UserController::class, 'updateProfileImage']);
+    Route::post('/students/{id}/track-profile-view',       [UserController::class, 'trackProfileView']);
 
     Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
     Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
@@ -53,7 +54,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/applications/{id}/updateStatus',      [JobsController::class, 'updateApplicationStatus']);
     Route::post('/applications/{id}/schedule-interview',     [JobsController::class, 'scheduleInterview']);
     Route::post('/getRecruiterActions',                 [JobsController::class, 'getRecruiterActions']);
-    Route::post('//applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
+    Route::post('/applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
 });
 
 Route::post('/master/cities',    [MasterController::class, 'getCities']);

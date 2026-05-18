@@ -110,7 +110,7 @@ class FirmController extends Controller
             $isProfileCompleted =
                 !empty($request->firm_name) &&
                 !empty($request->hr_name) &&
-                !empty($request->address) &&
+
                 !empty($request->frn) &&
                 !empty($request->firm_type) &&
                 !empty($request->about) &&
@@ -126,6 +126,11 @@ class FirmController extends Controller
                 'profile_completed' => $isProfileCompleted ? 1 : 0,
                 'updated_at' => now(),
             ];
+
+
+
+
+
             /*
         |--------------------------------------------------------------------------
         | Logo Upload

@@ -1,12 +1,9 @@
 <?php
-
 namespace App\Http\Controllers\API;
-
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-
 class JobsController extends Controller
 {
     public function applyJob(Request $request, $id)
@@ -574,6 +571,213 @@ class JobsController extends Controller
             ], 500);
         }
     }
+    // public function getApplications(Request $request, $jobId = null)
+    // {
+    //     try {
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Authenticate Firm
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $token = $request->cookie('auth_token');
+    //         if (!$token) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Unauthorized'
+    //             ], 401);
+    //         }
+    //         $user = DB::table('users')
+    //             ->where('api_token', $token)
+    //             ->where('is_deleted', false)
+    //             ->first();
+    //         if (!$user) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Invalid token'
+    //             ], 401);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Get Firm Profile
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $firm = DB::table('firm_profiles')
+    //             ->where('user_id', $user->id)
+    //             ->first();
+    //         if (!$firm) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Firm profile not found'
+    //             ], 404);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Verify Job Ownership
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $job = DB::table('jobs')
+    //             ->where('id', $jobId)
+    //             ->where('firm_id', $firm->id)
+    //             ->first();
+    //         if (!$job) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Job not found or access denied'
+    //             ], 403);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Fetch Applications
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $applications = DB::table('applications')
+    //             ->join(
+    //                 'users',
+    //                 'applications.student_id',
+    //                 '=',
+    //                 'users.id'
+    //             )
+    //             ->leftJoin(
+    //                 'student_profiles',
+    //                 'student_profiles.user_id',
+    //                 '=',
+    //                 'users.id'
+    //             )
+    //             ->join(
+    //                 'jobs',
+    //                 'applications.job_id',
+    //                 '=',
+    //                 'jobs.id'
+    //             )
+    //             ->select(
+    //                 // application
+    //                 'applications.id',
+    //                 'applications.job_id',
+    //                 'applications.student_id',
+    //                 'applications.recruiter_status',
+    //                 'applications.status',
+    //                 'applications.applied_at',
+    //                 'applications.shortlisted_at',
+    //                 'applications.rejected_at',
+    //                 'applications.interview_requested_at',
+    //                 'applications.interview_responded_at',
+    //                 'applications.selected_at',
+    //                 'applications.interview_date',
+    //                 'applications.interview_mode',
+    //                 'applications.interview_note',
+    //                 'applications.student_interview_response',
+    //                 'applications.student_response_note',
+    //                 'applications.recruiter_notes',
+    //                 // user
+    //                 'users.name',
+    //                 'users.email',
+    //                 'users.profile_image',
+    //                 // student profile
+    //                 'student_profiles.city',
+    //                 'student_profiles.gender',
+    //                 'student_profiles.ca_status',
+    //                 'student_profiles.registration_type',
+    //                 'student_profiles.articleship_status',
+    //                 'student_profiles.core_department',
+    //                 'student_profiles.attempts',
+    //                 'student_profiles.experience_years',
+    //                 'student_profiles.industry_worked_in',
+    //                 'student_profiles.experience_department',
+    //                 'student_profiles.resume_path',
+    //                 'student_profiles.linkedin_url',
+    //                 'student_profiles.portfolio_url',
+    //                 // job
+    //                 'jobs.title as job_title',
+    //                 'jobs.department as job_department',
+    //                 'jobs.location as job_location',
+    //             )
+    //             ->where('applications.job_id', $jobId)
+    //             ->orderBy('applications.applied_at', 'desc')
+    //             ->get();
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Format Response
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $formatted = $applications->map(function ($item) {
+    //             return [
+    //                 'id' => (string) $item->id,
+    //                 'job_id' => (string) $item->job_id,
+    //                 'student_id' => (string) $item->student_id,
+    //                 'recruiter_status' =>
+    //                 $item->recruiter_status ?? 'Applied',
+    //                 'applied_at' => $item->applied_at
+    //                     ? date('d M Y', strtotime($item->applied_at))
+    //                     : null,
+    //                 'interview_date' =>
+    //                 $item->interview_date,
+    //                 'interview_mode' =>
+    //                 $item->interview_mode,
+    //                 'interview_note' =>
+    //                 $item->interview_note,
+    //                 'student_interview_response' =>
+    //                 $item->student_interview_response,
+    //                 'student_response_note' =>
+    //                 $item->student_response_note,
+    //                 'recruiter_notes' =>
+    //                 $item->recruiter_notes,
+    //                 'student' => [
+    //                     'id' => (string) $item->student_id,
+    //                     'name' => $item->name,
+    //                     'email' => $item->email,
+    //                     'city' => $item->city,
+    //                     'qualification' =>
+    //                     $item->ca_status,
+    //                     'preferred_department' =>
+    //                     $item->core_department,
+    //                     'experience' =>
+    //                     $item->experience_years,
+    //                     'profile_photo' =>
+    //                     !empty($item->profile_image)
+    //                         ? asset('/storage/' . $item->profile_image)
+    //                         : null,
+    //                     'resume_path' =>
+    //                     !empty($item->resume_path)
+    //                         ? asset('/storage/' . $item->resume_path)
+    //                         : null,
+    //                     'skills' => array_values(array_filter([
+    //                         $item->core_department,
+    //                         $item->industry_worked_in,
+    //                         $item->experience_department,
+    //                     ])),
+    //                 ],
+    //                 'job' => [
+    //                     'id' => (string) $item->job_id,
+    //                     'title' => $item->job_title,
+    //                     'department' => $item->job_department,
+    //                     'location' => $item->job_location,
+    //                 ],
+    //             ];
+    //         });
+    //         return response()->json([
+    //             'status' => true,
+    //             'message' => 'Applications fetched successfully',
+    //             'data' => [
+    //                 'job' => [
+    //                     'id' => (string) $job->id,
+    //                     'title' => $job->title,
+    //                 ],
+    //                 'applications' => $formatted,
+    //                 'total' => $formatted->count(),
+    //             ]
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Get Applications API Error', [
+    //             'message' => $e->getMessage(),
+    //             'line' => $e->getLine(),
+    //             'file' => $e->getFile(),
+    //         ]);
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => 'Unexpected server error while fetching applications.',
+    //         ]);
+    //     }
+    // }
     public function getApplications(Request $request, $jobId = null)
     {
         try {
@@ -630,10 +834,23 @@ class JobsController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
-        | Fetch Applications
+        | Premium Access
         |--------------------------------------------------------------------------
         */
-            $applications = DB::table('applications')
+            $isPremium =
+                \App\Helpers\SubscriptionHelper::isPremiumFirm(
+                    $firm->id
+                );
+            $applicationLimit =
+                \App\Helpers\SubscriptionHelper::allowedApplicationLimit(
+                    $firm->id
+                );
+            /*
+        |--------------------------------------------------------------------------
+        | Base Query
+        |--------------------------------------------------------------------------
+        */
+            $query = DB::table('applications')
                 ->join(
                     'users',
                     'applications.student_id',
@@ -653,7 +870,11 @@ class JobsController extends Controller
                     'jobs.id'
                 )
                 ->select(
-                    // application
+                    /*
+                |--------------------------------------------------------------------------
+                | Application
+                |--------------------------------------------------------------------------
+                */
                     'applications.id',
                     'applications.job_id',
                     'applications.student_id',
@@ -671,11 +892,19 @@ class JobsController extends Controller
                     'applications.student_interview_response',
                     'applications.student_response_note',
                     'applications.recruiter_notes',
-                    // user
+                    /*
+                |--------------------------------------------------------------------------
+                | User
+                |--------------------------------------------------------------------------
+                */
                     'users.name',
                     'users.email',
                     'users.profile_image',
-                    // student profile
+                    /*
+                |--------------------------------------------------------------------------
+                | Student Profile
+                |--------------------------------------------------------------------------
+                */
                     'student_profiles.city',
                     'student_profiles.gender',
                     'student_profiles.ca_status',
@@ -689,14 +918,47 @@ class JobsController extends Controller
                     'student_profiles.resume_path',
                     'student_profiles.linkedin_url',
                     'student_profiles.portfolio_url',
-                    // job
+                    /*
+                |--------------------------------------------------------------------------
+                | Job
+                |--------------------------------------------------------------------------
+                */
                     'jobs.title as job_title',
                     'jobs.department as job_department',
                     'jobs.location as job_location',
                 )
-                ->where('applications.job_id', $jobId)
-                ->orderBy('applications.applied_at', 'desc')
-                ->get();
+                ->where(
+                    'applications.job_id',
+                    $jobId
+                )
+                ->orderBy(
+                    'applications.applied_at',
+                    'desc'
+                );
+            /*
+        |--------------------------------------------------------------------------
+        | Total Applications
+        |--------------------------------------------------------------------------
+        */
+            $totalApplications =
+                (clone $query)->count();
+            /*
+        |--------------------------------------------------------------------------
+        | Free Plan Restriction
+        |--------------------------------------------------------------------------
+        */
+            if (!$isPremium) {
+                $query->limit(
+                    $applicationLimit
+                );
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Fetch Applications
+        |--------------------------------------------------------------------------
+        */
+            $applications =
+                $query->get();
             /*
         |--------------------------------------------------------------------------
         | Format Response
@@ -704,13 +966,23 @@ class JobsController extends Controller
         */
             $formatted = $applications->map(function ($item) {
                 return [
-                    'id' => (string) $item->id,
-                    'job_id' => (string) $item->job_id,
-                    'student_id' => (string) $item->student_id,
+                    'id' =>
+                    (string) $item->id,
+                    'job_id' =>
+                    (string) $item->job_id,
+                    'student_id' =>
+                    (string) $item->student_id,
                     'recruiter_status' =>
-                    $item->recruiter_status ?? 'Applied',
-                    'applied_at' => $item->applied_at
-                        ? date('d M Y', strtotime($item->applied_at))
+                    $item->recruiter_status
+                        ?? 'Applied',
+                    'applied_at' =>
+                    $item->applied_at
+                        ? date(
+                            'd M Y',
+                            strtotime(
+                                $item->applied_at
+                            )
+                        )
                         : null,
                     'interview_date' =>
                     $item->interview_date,
@@ -725,10 +997,14 @@ class JobsController extends Controller
                     'recruiter_notes' =>
                     $item->recruiter_notes,
                     'student' => [
-                        'id' => (string) $item->student_id,
-                        'name' => $item->name,
-                        'email' => $item->email,
-                        'city' => $item->city,
+                        'id' =>
+                        (string) $item->student_id,
+                        'name' =>
+                        $item->name,
+                        'email' =>
+                        $item->email,
+                        'city' =>
+                        $item->city,
                         'qualification' =>
                         $item->ca_status,
                         'preferred_department' =>
@@ -737,47 +1013,87 @@ class JobsController extends Controller
                         $item->experience_years,
                         'profile_photo' =>
                         !empty($item->profile_image)
-                            ? asset('/storage/' . $item->profile_image)
+                            ? asset(
+                                '/storage/'
+                                    . $item->profile_image
+                            )
                             : null,
                         'resume_path' =>
                         !empty($item->resume_path)
-                            ? asset('/storage/' . $item->resume_path)
+                            ? asset(
+                                '/storage/'
+                                    . $item->resume_path
+                            )
                             : null,
-                        'skills' => array_values(array_filter([
-                            $item->core_department,
-                            $item->industry_worked_in,
-                            $item->experience_department,
-                        ])),
+                        'skills' =>
+                        array_values(
+                            array_filter([
+                                $item->core_department,
+                                $item->industry_worked_in,
+                                $item->experience_department,
+                            ])
+                        ),
                     ],
                     'job' => [
-                        'id' => (string) $item->job_id,
-                        'title' => $item->job_title,
-                        'department' => $item->job_department,
-                        'location' => $item->job_location,
+                        'id' =>
+                        (string) $item->job_id,
+                        'title' =>
+                        $item->job_title,
+                        'department' =>
+                        $item->job_department,
+                        'location' =>
+                        $item->job_location,
                     ],
                 ];
             });
+            /*
+        |--------------------------------------------------------------------------
+        | Response
+        |--------------------------------------------------------------------------
+        */
             return response()->json([
                 'status' => true,
-                'message' => 'Applications fetched successfully',
+                'message' =>
+                'Applications fetched successfully',
                 'data' => [
                     'job' => [
-                        'id' => (string) $job->id,
-                        'title' => $job->title,
+                        'id' =>
+                        (string) $job->id,
+                        'title' =>
+                        $job->title,
                     ],
-                    'applications' => $formatted,
-                    'total' => $formatted->count(),
+                    'applications' =>
+                    $formatted,
+                    'total' =>
+                    $totalApplications,
+                    'visible_applications' =>
+                    $formatted->count(),
+                    'locked_applications' =>
+                    max(
+                        0,
+                        $totalApplications
+                            - $formatted->count()
+                    ),
+                    'is_premium' =>
+                    $isPremium,
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error('Get Applications API Error', [
-                'message' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-            ]);
+            Log::error(
+                'Get Applications API Error',
+                [
+                    'message' =>
+                    $e->getMessage(),
+                    'line' =>
+                    $e->getLine(),
+                    'file' =>
+                    $e->getFile(),
+                ]
+            );
             return response()->json([
                 'status' => false,
-                'message' => 'Unexpected server error while fetching applications.',
+                'message' =>
+                'Unexpected server error while fetching applications.',
             ]);
         }
     }
@@ -1385,18 +1701,16 @@ class JobsController extends Controller
                     $user->id
                 )
                 // ->where(function ($q) {
-
                 //     $q->where(
                 //         'recruiter_actions.visible_to',
                 //         'student'
                 //     )
-
                 //         ->orWhere(
                 //             'recruiter_actions.visible_to',
                 //             'both'
                 //         );
                 // })
-                ->where('recruiter_actions.visible_to','student')
+                ->where('recruiter_actions.visible_to', 'student')
                 ->orderBy(
                     'recruiter_actions.created_at',
                     'desc'
@@ -1575,7 +1889,6 @@ class JobsController extends Controller
             $application = DB::table('applications')
                 ->select('applications.*', 'jobs.firm_id')
                 ->join('jobs', 'applications.job_id', '=', 'jobs.id')
-
                 ->where('applications.id', $applicationId)
                 ->where('applications.student_id', $user->id)
                 ->first();

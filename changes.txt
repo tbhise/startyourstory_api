@@ -1,2 +1,5 @@
 1. in student dashboard - in filter section Show all companies list in dropdown
-2. Multi selector and single selectore for comapny list 
+2. Multi selector and single selectore for comapny list
+3. If Creater then dont ask for passing month and srn
+4. For creator ask for resume or Links
+5. If creater then dont show other jobs 

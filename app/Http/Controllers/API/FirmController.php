@@ -105,20 +105,15 @@ class FirmController extends Controller
                 'additional_contacts' => $request->additional_contacts,
                 'updated_at' => now(),
             ];
-
-
             $isProfileCompleted =
                 !empty($request->firm_name) &&
                 !empty($request->hr_name) &&
-
                 !empty($request->frn) &&
                 !empty($request->firm_type) &&
                 !empty($request->about) &&
                 !empty($request->mobile) &&
                 !empty($request->exposure_type) &&
                 !empty($request->email);
-
-
             $userUpdateData = [
                 'name' => $request->firm_name,
                 'email' => $request->email,
@@ -126,11 +121,6 @@ class FirmController extends Controller
                 'profile_completed' => $isProfileCompleted ? 1 : 0,
                 'updated_at' => now(),
             ];
-
-
-
-
-
             /*
         |--------------------------------------------------------------------------
         | Logo Upload
@@ -257,8 +247,6 @@ class FirmController extends Controller
             ]);
         }
     }
-
-
     public function getFirmProfileDetails(Request $request)
     {
         try {
@@ -972,6 +960,7 @@ class FirmController extends Controller
                 'work_mode' => $request->work_mode,
                 'experience_level' => $request->experience_level,
                 'openings' => $request->openings,
+                'hiring_for' => $request->hiring_for,
                 'required_skills' =>
                 !empty($request->required_skills)
                     ? json_encode($request->required_skills)
@@ -1019,82 +1008,62 @@ class FirmController extends Controller
             ]);
         }
     }
-
     public function getFirmJobs(Request $request)
     {
         try {
-
             /*
         |--------------------------------------------------------------------------
         | Get Auth User
         |--------------------------------------------------------------------------
         */
-
             $user = $request->attributes->get('auth_user');
-
             /*
         |--------------------------------------------------------------------------
         | Get Firm
         |--------------------------------------------------------------------------
         */
-
             $firm = DB::table('firm_profiles')
                 ->where('user_id', $user->id)
                 ->first();
-
             if (!$firm) {
-
                 return response()->json([
                     'status' => false,
                     'message' => 'Firm profile not found',
                 ]);
             }
-
             /*
         |--------------------------------------------------------------------------
         | Base Query
         |--------------------------------------------------------------------------
         */
-
             $query = DB::table('jobs')
-
                 ->select(
-
                     'jobs.*',
-
                     DB::raw('(
                     SELECT COUNT(*)
                     FROM applications
                     WHERE applications.job_id = jobs.id
                 ) as applications_count')
                 )
-
                 ->where('jobs.firm_id', $firm->id);
-
             /*
         |--------------------------------------------------------------------------
         | Search
         |--------------------------------------------------------------------------
         */
-
             if (!empty($request->search)) {
-
                 $query->where(function ($q) use ($request) {
-
                     $search = '%' . $request->search . '%';
-
                     $q->where(
                         'jobs.title',
                         'LIKE',
                         $search
                     )
-
                         ->orWhere(
                             'jobs.location',
                             'LIKE',
                             $search
                         )
-
                         ->orWhere(
                             'jobs.department',
                             'LIKE',
@@ -1102,150 +1071,113 @@ class FirmController extends Controller
                         );
                 });
             }
-
             /*
         |--------------------------------------------------------------------------
         | Filters
         |--------------------------------------------------------------------------
         */
-
             if (
                 !empty($request->status)
                 &&
                 is_array($request->status)
             ) {
-
                 $query->whereIn(
                     'jobs.status',
                     $request->status
                 );
             }
-
             if (
                 !empty($request->type)
                 &&
                 is_array($request->type)
             ) {
-
                 $query->whereIn(
                     'jobs.type',
                     $request->type
                 );
             }
-
             if (
                 !empty($request->department)
                 &&
                 is_array($request->department)
             ) {
-
                 $query->whereIn(
                     'jobs.department',
                     $request->department
                 );
             }
-
             if (
                 !empty($request->work_mode)
                 &&
                 is_array($request->work_mode)
             ) {
-
                 $query->whereIn(
                     'jobs.work_mode',
                     $request->work_mode
                 );
             }
-
             /*
         |--------------------------------------------------------------------------
         | Sorting
         |--------------------------------------------------------------------------
         */
-
             if ($request->sort === 'oldest') {
-
                 $query->orderBy(
                     'jobs.created_at',
                     'asc'
                 );
             } else if ($request->sort === 'active') {
-
                 $query->orderBy(
                     'jobs.is_active',
                     'desc'
                 );
             } else {
-
                 $query->orderBy(
                     'jobs.created_at',
                     'desc'
                 );
             }
-
             /*
         |--------------------------------------------------------------------------
         | Pagination
         |--------------------------------------------------------------------------
         */
-
             $jobs = $query->paginate(12);
-
             /*
         |--------------------------------------------------------------------------
         | Format Response
         |--------------------------------------------------------------------------
         */
-
             $data = collect($jobs->items())->map(function ($job) {
-
                 return [
-
                     'id' => $job->id,
-
                     'firm_id' => $job->firm_id,
-
                     'title' => $job->title,
-
                     'location' => $job->location,
-
                     'type' => $job->type,
-
                     'salary' => $job->salary,
-
                     'description' => $job->description,
-
                     'department' => $job->department,
-
                     'work_mode' => $job->work_mode,
-
                     'experience_level' =>
                     $job->experience_level,
-
                     'openings' =>
                     $job->openings,
-
                     'required_skills' =>
                     json_decode(
                         $job->required_skills,
                         true
                     ) ?? [],
-
                     'benefits' =>
                     $job->benefits,
-
                     'required_qualification' =>
                     $job->required_qualification,
-
                     'application_deadline' =>
                     $job->application_deadline,
-
                     'status' =>
                     $job->status,
-
                     'is_active' =>
                     $job->is_active,
-
                     'created_at' =>
                     $job->created_at
                         ? date(
@@ -1253,67 +1185,47 @@ class FirmController extends Controller
                             strtotime($job->created_at)
                         )
                         : null,
-
                     'applications_count' =>
                     (int) $job->applications_count,
                 ];
             });
-
             /*
         |--------------------------------------------------------------------------
         | Success Response
         |--------------------------------------------------------------------------
         */
-
             return response()->json([
-
                 'status' => true,
-
                 'message' =>
                 'Firm jobs fetched successfully',
-
                 'data' => [
-
                     'jobs' =>
                     $data,
-
                     'current_page' =>
                     $jobs->currentPage(),
-
                     'last_page' =>
                     $jobs->lastPage(),
-
                     'per_page' =>
                     $jobs->perPage(),
-
                     'total' =>
                     $jobs->total(),
-
                     'next_page_url' =>
                     $jobs->nextPageUrl(),
-
                     'prev_page_url' =>
                     $jobs->previousPageUrl(),
                 ]
             ]);
         } catch (\Exception $e) {
-
             Log::error('Get Firm Jobs API Error', [
-
                 'message' =>
                 $e->getMessage(),
-
                 'line' =>
                 $e->getLine(),
-
                 'file' =>
                 $e->getFile(),
             ]);
-
             return response()->json([
-
                 'status' => false,
-
                 'message' =>
                 'Unexpected server error while fetching job list.',
             ]);
@@ -1323,196 +1235,336 @@ class FirmController extends Controller
     public function getJobs(Request $request)
     {
         try {
-
-
-
+            /*
+        |--------------------------------------------------------------------------
+        | AUTH USER
+        |--------------------------------------------------------------------------
+        */
             $token = $request->cookie('auth_token');
-
             $user = null;
-
             if ($token) {
-
                 $user = DB::table('users')
                     ->where('api_token', $token)
                     ->where('is_deleted', false)
                     ->first();
             }
-
-
-
-
-
-            $firmId = DB::table('firm_profiles')->where('firm_name', $request->company)->value('id');
-
-
+            /*
+        |--------------------------------------------------------------------------
+        | STUDENT PROFILE
+        |--------------------------------------------------------------------------
+        */
+            $studentProfile = null;
+            if ($user && $user->role === 'student') {
+                $studentProfile = DB::table('student_profiles')
+                    ->where('user_id', $user->id)
+                    ->first();
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | COMPANY FILTER
+        |--------------------------------------------------------------------------
+        */
+            $firmId = DB::table('firm_profiles')
+                ->where('firm_name', $request->company)
+                ->value('id');
+            /*
+        |--------------------------------------------------------------------------
+        | BASE QUERY
+        |--------------------------------------------------------------------------
+        */
             $query = DB::table('jobs')
-                ->join('firm_profiles', 'jobs.firm_id', '=', 'firm_profiles.id')
+                ->join(
+                    'firm_profiles',
+                    'jobs.firm_id',
+                    '=',
+                    'firm_profiles.id'
+                )
                 ->select(
                     'jobs.*',
                     'firm_profiles.firm_name',
                     'firm_profiles.logo_path'
                 )
-                ->where('is_active', true)
-                ->where('status', 'Active');
-
+                ->where('jobs.is_active', true)
+                ->where('jobs.status', 'Active');
+            /*
+        |--------------------------------------------------------------------------
+        | HIRING FOR FILTER
+        |--------------------------------------------------------------------------
+        */
+            if ($studentProfile) {
+                /*
+            |--------------------------------------------------------------------------
+            | Creator Users
+            |--------------------------------------------------------------------------
+            */
+                if ($studentProfile->looking_for === 'creator') {
+                    $query->where(
+                        'jobs.hiring_for',
+                        'creator'
+                    );
+                }
+                /*
+            |--------------------------------------------------------------------------
+            | Articleship Users
+            |--------------------------------------------------------------------------
+            */ else if (
+                    $studentProfile->looking_for === 'articleship'
+                ) {
+                    $query->where(
+                        'jobs.hiring_for',
+                        'articleship'
+                    );
+                }
+                /*
+            |--------------------------------------------------------------------------
+            | Semi / Qualified Users
+            |--------------------------------------------------------------------------
+            */ else if (
+                    in_array(
+                        $studentProfile->looking_for,
+                        [
+                            'semi-qualified',
+                            'qualified'
+                        ]
+                    )
+                ) {
+                    $query->where(
+                        'jobs.hiring_for',
+                        // 'ca-job'   <- temparory comment
+                        'articleship'
+                    );
+                }
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | SEARCH
+        |--------------------------------------------------------------------------
+        */
             if (!empty($request->search)) {
-
-
                 $query->where(function ($q) use ($request) {
-
-                    $search =
-                        '%' . $request->search . '%';
-
+                    $search = '%' . $request->search . '%';
                     $q->where(
-                        'title',
+                        'jobs.title',
                         'LIKE',
                         $search
                     )
                         ->orWhere(
-                            'location',
+                            'jobs.location',
                             'LIKE',
                             $search
                         )
                         ->orWhere(
-                            'department',
+                            'jobs.department',
                             'LIKE',
                             $search
                         )
                         ->orWhere(
-                            'description',
+                            'jobs.description',
                             'LIKE',
                             $search
                         );
                 });
             }
+            /*
+        |--------------------------------------------------------------------------
+        | COMPANY FILTER
+        |--------------------------------------------------------------------------
+        */
             if (!empty($firmId)) {
-                $query->where('firm_id', $firmId);
+                $query->where(
+                    'jobs.firm_id',
+                    $firmId
+                );
             }
-            if (!empty($request->cities) && is_array($request->cities)) {
-                $query->whereIn('location', $request->cities);
+            /*
+        |--------------------------------------------------------------------------
+        | CITY FILTER
+        |--------------------------------------------------------------------------
+        */
+            if (
+                !empty($request->cities)
+                &&
+                is_array($request->cities)
+            ) {
+                $query->whereIn(
+                    'jobs.location',
+                    $request->cities
+                );
             }
-            if (!empty($request->departments) && is_array($request->departments)) {
-                $query->whereIn('department', $request->departments);
+            /*
+        |--------------------------------------------------------------------------
+        | DEPARTMENT FILTER
+        |--------------------------------------------------------------------------
+        */
+            if (
+                !empty($request->departments)
+                &&
+                is_array($request->departments)
+            ) {
+                $query->whereIn(
+                    'jobs.department',
+                    $request->departments
+                );
             }
-            $query->orderBy('created_at', 'desc');
+            /*
+        |--------------------------------------------------------------------------
+        | SORTING
+        |--------------------------------------------------------------------------
+        */
+            $query->orderBy(
+                'jobs.created_at',
+                'desc'
+            );
+            /*
+        |--------------------------------------------------------------------------
+        | PAGINATION
+        |--------------------------------------------------------------------------
+        */
             $jobs = $query->paginate(10);
-
-
+            /*
+        |--------------------------------------------------------------------------
+        | APPLIED & SAVED JOBS
+        |--------------------------------------------------------------------------
+        */
             $appliedJobIds = [];
             $savedJobIds = [];
-
             if ($user && $user->role === 'student') {
-
                 $appliedJobIds = DB::table('applications')
-                    ->where('student_id', $user->id)
+                    ->where(
+                        'student_id',
+                        $user->id
+                    )
                     ->pluck('job_id')
                     ->toArray();
                 $savedJobIds = DB::table('saved_jobs')
-                    ->where('student_id', $user->id)
+                    ->where(
+                        'student_id',
+                        $user->id
+                    )
                     ->pluck('job_id')
                     ->toArray();
             }
-
-
-
-            // $data = collect($jobs->items())->map(function ($job) {
-            //     return [
-            //         'id' => $job->id,
-            //         'firm_id' => $job->firm_id,
-            //         'firm_name' => $job->firm_name,
-            //         'firm_logo_path' => asset('/storage/' . $job->logo_path),
-            //         'title' => $job->title,
-            //         'location' => $job->location,
-            //         'type' => $job->type,
-            //         'salary' => $job->salary,
-            //         'description' => $job->description,
-            //         'department' => $job->department,
-            //         'work_mode' => $job->work_mode,
-            //         'experience_level' =>
-            //         $job->experience_level,
-            //         'openings' => $job->openings,
-            //         'required_skills' => json_decode($job->required_skills, true) ?? [],
-            //         'benefits' => $job->benefits,
-            //         'required_qualification' =>
-            //         $job->required_qualification,
-            //         'application_deadline' =>
-            //         $job->application_deadline,
-            //         'status' => $job->status,
-            //         'is_active' => $job->is_active,
-            //         'created_at' => $job->created_at ? date('d M Y g:i A', strtotime($job->created_at)) : null,
-            //     ];
-            // });
-
-            $data = collect($jobs->items())->map(function ($job) use ($appliedJobIds, $savedJobIds) {
-
-                return [
-                    'id' => $job->id,
-                    'firm_id' => $job->firm_id,
-                    'firm_name' => $job->firm_name,
-                    'firm_logo_path' => asset('/storage/' . $job->logo_path),
-                    'title' => $job->title,
-                    'location' => $job->location,
-                    'type' => $job->type,
-                    'salary' => $job->salary,
-                    'description' => $job->description,
-                    'department' => $job->department,
-                    'work_mode' => $job->work_mode,
-                    'experience_level' => $job->experience_level,
-                    'openings' => $job->openings,
-                    'required_skills' => json_decode($job->required_skills, true) ?? [],
-                    'benefits' => $job->benefits,
-                    'required_qualification' => $job->required_qualification,
-                    'application_deadline' => $job->application_deadline,
-                    'status' => $job->status,
-                    'is_active' => $job->is_active,
-
-                    // NEW
-                    'is_applied' => in_array($job->id, $appliedJobIds),
-                    'is_saved' => in_array($job->id, $savedJobIds),
-
-                    'created_at' => $job->created_at
-                        ? date('d M Y g:i A', strtotime($job->created_at))
-                        : null,
-                ];
-            });
-
-
-
-
+            /*
+        |--------------------------------------------------------------------------
+        | FORMAT DATA
+        |--------------------------------------------------------------------------
+        */
+            $data = collect($jobs->items())
+                ->map(function ($job) use (
+                    $appliedJobIds,
+                    $savedJobIds
+                ) {
+                    return [
+                        'id' =>
+                        $job->id,
+                        'firm_id' =>
+                        $job->firm_id,
+                        'firm_name' =>
+                        $job->firm_name,
+                        'firm_logo_path' =>
+                        !empty($job->logo_path)
+                            ? asset('/storage/' . $job->logo_path)
+                            : null,
+                        'title' =>
+                        $job->title,
+                        'location' =>
+                        $job->location,
+                        'type' =>
+                        $job->type,
+                        'salary' =>
+                        $job->salary,
+                        'description' =>
+                        $job->description,
+                        'department' =>
+                        $job->department,
+                        'work_mode' =>
+                        $job->work_mode,
+                        'experience_level' =>
+                        $job->experience_level,
+                        'openings' =>
+                        $job->openings,
+                        'required_skills' =>
+                        json_decode(
+                            $job->required_skills,
+                            true
+                        ) ?? [],
+                        'benefits' =>
+                        $job->benefits,
+                        'required_qualification' =>
+                        $job->required_qualification,
+                        'application_deadline' =>
+                        $job->application_deadline,
+                        'status' =>
+                        $job->status,
+                        'is_active' =>
+                        $job->is_active,
+                        'hiring_for' =>
+                        $job->hiring_for,
+                        'is_applied' =>
+                        in_array(
+                            $job->id,
+                            $appliedJobIds
+                        ),
+                        'is_saved' =>
+                        in_array(
+                            $job->id,
+                            $savedJobIds
+                        ),
+                        'created_at' =>
+                        $job->created_at
+                            ? date(
+                                'd M Y g:i A',
+                                strtotime($job->created_at)
+                            )
+                            : null,
+                    ];
+                });
+            /*
+        |--------------------------------------------------------------------------
+        | RESPONSE
+        |--------------------------------------------------------------------------
+        */
             return response()->json([
                 'status' => true,
-                'message' => 'Firm jobs fetched successfully',
+                'message' =>
+                'Jobs fetched successfully',
                 'data' => [
-                    'jobs' => $data,
-                    'current_page' => $jobs->currentPage(),
-                    'last_page' => $jobs->lastPage(),
-                    'per_page' => $jobs->perPage(),
-                    'total' => $jobs->total(),
-                    'next_page_url' => $jobs->nextPageUrl(),
-                    'prev_page_url' => $jobs->previousPageUrl(),
+                    'jobs' =>
+                    $data,
+                    'current_page' =>
+                    $jobs->currentPage(),
+                    'last_page' =>
+                    $jobs->lastPage(),
+                    'per_page' =>
+                    $jobs->perPage(),
+                    'total' =>
+                    $jobs->total(),
+                    'next_page_url' =>
+                    $jobs->nextPageUrl(),
+                    'prev_page_url' =>
+                    $jobs->previousPageUrl(),
                 ]
             ]);
         } catch (\Exception $e) {
             Log::error('Get Jobs API Error', [
-                'message' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
+                'message' =>
+                $e->getMessage(),
+                'line' =>
+                $e->getLine(),
+                'file' =>
+                $e->getFile(),
             ]);
             return response()->json([
                 'status' => false,
-                'message' => 'Unexpected server error while fetching job list.',
+                'message' =>
+                'Unexpected server error while fetching job list.',
             ]);
         }
     }
-
-
-
     public function searchFirms(Request $request)
     {
         try {
-
             $search = trim($request->search ?? '');
-
             $query = DB::table('firm_profiles')
                 ->select(
                     'firm_profiles.id',
@@ -1523,58 +1575,42 @@ class FirmController extends Controller
                 )
                 ->leftJoin('users', 'firm_profiles.user_id', '=', 'users.id')
                 ->where('users.is_deleted', false);
-
             /*
         |--------------------------------------------------------------------------
         | Search
         |--------------------------------------------------------------------------
         */
-
             if (!empty($search)) {
-
                 $query->where(function ($q) use ($search) {
-
                     $q->where('firm_profiles.firm_name', 'like', "%{$search}%")
                         ->orWhere('firm_profiles.city', 'like', "%{$search}%");
                 });
             }
-
             /*
         |--------------------------------------------------------------------------
         | Fetch Firms
         |--------------------------------------------------------------------------
         */
-
             $firms = $query
                 ->orderBy('firm_profiles.firm_name')
                 ->limit(20)
                 ->get();
-
             return response()->json([
                 'status' => true,
                 'data' => $firms
             ]);
         } catch (\Exception $e) {
-
             Log::error('Search Firms Error: ' . $e->getMessage());
-
             return response()->json([
                 'status' => false,
                 'message' => 'Failed to fetch firms'
             ]);
         }
     }
-
-
-
-
-
     /**
      *
      *
      */
-
-
     public function getFirmJobDetails(Request $request, $id = null)
     {
         try {
@@ -1628,6 +1664,7 @@ class FirmController extends Controller
                     $job->application_deadline,
                     'status' => $job->status,
                     'is_active' => $job->is_active,
+                    'hiring_for' => $job->hiring_for,
                     'created_at' =>  $formatDate($job->created_at),
                     'updated_at' =>  $formatDate($job->updated_at),
                 ]
@@ -1795,6 +1832,7 @@ class FirmController extends Controller
                     'type' => $request->type,
                     'salary' => $request->salary,
                     'description' => $request->description,
+                    'hiring_for' => $request->hiring_for,
                     'department' => $request->department,
                     'work_mode' => $request->work_mode,
                     'experience_level' => $request->experience_level,

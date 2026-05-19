@@ -320,24 +320,25 @@ class UserController extends Controller
         |--------------------------------------------------------------------------
         */
             $isProfileComplete = false;
-            /*
-        |--------------------------------------------------------------------------
-        | Articleship
-        |--------------------------------------------------------------------------
-        */
+            Log::info('===== PROFILE COMPLETION DEBUG START =====');
+            Log::info('Looking For', [
+                'looking_for' => $request->looking_for,
+            ]);
             if ($request->looking_for === 'articleship') {
+                Log::info('Checking Articleship Profile');
                 $isProfileComplete =
                     !empty($request->srn) &&
                     !empty($request->city) &&
                     !empty($request->gender);
-                /*
-            |--------------------------------------------------------------------------
-            | Confirm Registration
-            |--------------------------------------------------------------------------
-            */
+                Log::info('Basic Articleship Fields', [
+                    'srn' => !empty($request->srn),
+                    'city' => !empty($request->city),
+                    'gender' => !empty($request->gender),
+                    'basic_complete' => $isProfileComplete,
+                ]);
                 if ($registrationType === 'confirm') {
-                    $isProfileComplete =
-                        $isProfileComplete &&
+                    Log::info('Checking Confirm Registration Fields');
+                    $confirmFieldsComplete =
                         !empty($request->preferred_locations_json) &&
                         !empty($request->it_oc_status) &&
                         !empty($request->exposure_type) &&
@@ -350,18 +351,26 @@ class UserController extends Controller
                             $marksheetPath ||
                             !empty($existingProfile->marksheet_path ?? null)
                         );
+                    Log::info('Confirm Fields Status', [
+                        'preferred_locations_json' => !empty($request->preferred_locations_json),
+                        'it_oc_status' => !empty($request->it_oc_status),
+                        'exposure_type' => !empty($request->exposure_type),
+                        'core_department' => !empty($request->core_department),
+                        'resume_exists' => ($resumePath || !empty($existingProfile->resume_path ?? null)),
+                        'marksheet_exists' => ($marksheetPath || !empty($existingProfile->marksheet_path ?? null)),
+                        'confirm_complete' => $confirmFieldsComplete,
+                    ]);
+                    $isProfileComplete =
+                        $isProfileComplete &&
+                        $confirmFieldsComplete;
                 }
-            }
-            /*
-        |--------------------------------------------------------------------------
-        | Semi Qualified / Qualified
-        |--------------------------------------------------------------------------
-        */ elseif (
+            } elseif (
                 in_array(
                     $request->looking_for,
                     ['semi-qualified', 'qualified']
                 )
             ) {
+                Log::info('Checking Semi/Qualified Profile');
                 $isProfileComplete =
                     !empty($request->srn) &&
                     !empty($request->city) &&
@@ -373,29 +382,47 @@ class UserController extends Controller
                         $resumePath ||
                         !empty($existingProfile->resume_path ?? null)
                     );
-            }
-            /*
-        |--------------------------------------------------------------------------
-        | Creator
-        |--------------------------------------------------------------------------
-        */ elseif ($request->looking_for === 'creator') {
-                $isProfileComplete =
-                    !empty($request->srn) &&
-                    !empty($request->city) &&
-                    (
+                Log::info('Semi/Qualified Fields Status', [
+                    'srn' =>
+                    !empty($request->srn),
+                    'city' =>
+                    !empty($request->city),
+                    'gender' =>
+                    !empty($request->gender),
+                    'experience_years' =>
+                    !empty($request->experience_years),
+                    'current_ctc' =>
+                    !empty($request->current_ctc),
+                    'expected_ctc' =>
+                    !empty($request->expected_ctc),
+                    'resume_exists' => (
                         $resumePath ||
                         !empty($existingProfile->resume_path ?? null)
-                    );
+                    ),
+                    'profile_complete' =>
+                    $isProfileComplete,
+                ]);
+            } elseif ($request->looking_for === 'creator') {
+                Log::info('Checking Creator Profile');
+                $isProfileComplete =!empty($request->city);
+                Log::info('Creator Fields Status', [
+
+                    'city' =>
+                    !empty($request->city),
+                    
+                    'profile_complete' =>
+                    $isProfileComplete,
+                ]);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Update User Table
-        |--------------------------------------------------------------------------
-        */
+            Log::info('FINAL PROFILE COMPLETION STATUS', [
+                'isProfileComplete' => $isProfileComplete,
+            ]);
+            Log::info('===== PROFILE COMPLETION DEBUG END =====');
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
                     'profile_completed' => $isProfileComplete ? 1 : 0,
+                    // 'profile_completed' => $isProfileComplete ? 1 : 1,
                     'updated_at' => now()
                 ]);
             /*

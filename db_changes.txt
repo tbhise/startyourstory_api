@@ -36,3 +36,24 @@ ADD COLUMN status ENUM('draft','active','closed') DEFAULT 'active' AFTER is_acti
 
 ALTER TABLE `startyourstory`.`jobs`
 CHANGE COLUMN `status` `status` VARCHAR(25) NULL DEFAULT NULL ;
+
+-----------------------------------------------------------------
+
+ALTER TABLE `startyourstory`.`jobs`
+ADD COLUMN `hiring_for` VARCHAR(55) NULL AFTER `description`,
+ADD INDEX `hiring_for` (`hiring_for` ASC) INVISIBLE;
+ALTER TABLE `startyourstory`.`jobs` ALTER INDEX `idx_jobs_firm_id` INVISIBLE;
+
+
+CREATE TABLE `firm_subscriptions` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `firm_id` bigint NOT NULL,
+  `plan` varchar(25) DEFAULT 'free',
+  `status` enum('active','expired','cancelled') DEFAULT 'active',
+  `starts_at` datetime DEFAULT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `index` (`id`,`firm_id`,`plan`,`status`)
+) ;

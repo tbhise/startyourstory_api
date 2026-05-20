@@ -1307,39 +1307,40 @@ class FirmController extends Controller
             |--------------------------------------------------------------------------
             | Articleship Users
             |--------------------------------------------------------------------------
-            */ else if (
-                    $studentProfile->looking_for === 'articleship'
-                ) {
-                    $query->where(
-                        'jobs.hiring_for',
-                        'articleship'
-                    );
-                }
+            //  else if (
+            //         $studentProfile->looking_for === 'articleship'
+            //     ) {
+            //         $query->where(
+            //             'jobs.hiring_for',
+            //             'articleship'
+            //         );
+            //     }
                 /*
             |--------------------------------------------------------------------------
             | Semi / Qualified Users
             |--------------------------------------------------------------------------
-            */ else if (
-                    in_array(
-                        $studentProfile->looking_for,
-                        [
-                            'semi-qualified',
-                            'qualified'
-                        ]
-                    )
-                ) {
-                    $query->where(
-                        'jobs.hiring_for',
-                        // 'ca-job'   <- temparory comment
-                        'articleship'
-                    );
-                }
-            }
+            //  else if (
+            //         in_array(
+            //             $studentProfile->looking_for,
+            //             [
+            //                 'semi-qualified',
+            //                 'qualified'
+            //             ]
+            //         )
+            //     ) {
+            //         $query->where(
+            //             'jobs.hiring_for',
+            //             // 'ca-job'   <- temparory comment
+            //             'articleship'
+            //         );
+                // }
+            // }
             /*
         |--------------------------------------------------------------------------
         | SEARCH
         |--------------------------------------------------------------------------
         */
+            }
             if (!empty($request->search)) {
                 $query->where(function ($q) use ($request) {
                     $search = '%' . $request->search . '%';

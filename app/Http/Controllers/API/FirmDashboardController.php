@@ -270,33 +270,7 @@ class FirmDashboardController extends Controller
             ]);
         }
     }
-    // public function downloadFile(Request $request)
-    // {
-    //     try {
-    //         $path = $request->path;
-    //         $type = $request->type;
-    //         if (!$path) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'File path required'
-    //             ]);
-    //         }
-    //         $fullPath = storage_path('app/public/' . $path);
-    //         if (!file_exists($fullPath)) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'File not found'
-    //             ]);
-    //         }
-    //         return response()->download($fullPath);
-    //     } catch (\Exception $e) {
-    //         Log::error("Download Error: " . $e->getMessage());
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Something went wrong'
-    //         ]);
-    //     }
-    // }
+
     public function downloadFile(Request $request)
     {
         try {
@@ -314,7 +288,7 @@ class FirmDashboardController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => 'File not found'
-                ]);
+                ], 404);
             }
             $authUser = $request->attributes->get('auth_user');
             $firm = DB::table('firm_profiles')

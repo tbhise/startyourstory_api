@@ -53,7 +53,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getApplications/{id}',                [JobsController::class, 'getApplications']);
     Route::post('/applications/{id}/updateStatus',      [JobsController::class, 'updateApplicationStatus']);
     Route::post('/applications/{id}/schedule-interview',     [JobsController::class, 'scheduleInterview']);
-    Route::post('/getRecruiterActions',                 [JobsController::class, 'getRecruiterActions']);
+    Route::post('/getRecruiterActions',                        [JobsController::class, 'getRecruiterActions']);
     Route::post('/applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
 });
 

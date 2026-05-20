@@ -173,33 +173,6 @@ class FirmDashboardController extends Controller
             ]);
         }
     }
-    // public function candidateDetail(Request $request)
-    // {
-    //     try {
-    //         $users = DB::table('users')
-    //             ->leftJoin('student_profiles', 'users.id', 'student_profiles.user_id')
-    //             ->where('users.is_deleted', false)
-    //             ->where('users.role', 'student')
-    //             ->where('users.id', $request->id)
-    //             ->first();
-    //         if (!$users) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Candidate not found'
-    //             ]);
-    //         }
-    //         return response()->json([
-    //             'status' => true,
-    //             'data' =>  $users
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         Log::error('Get candidateDetail Error: ' . $e->getMessage());
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Unexpected server error..!'
-    //         ]);
-    //     }
-    // }
     public function candidateDetail(Request $request)
     {
         try {
@@ -297,10 +270,39 @@ class FirmDashboardController extends Controller
             ]);
         }
     }
+    // public function downloadFile(Request $request)
+    // {
+    //     try {
+    //         $path = $request->path;
+    //         $type = $request->type;
+    //         if (!$path) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'File path required'
+    //             ]);
+    //         }
+    //         $fullPath = storage_path('app/public/' . $path);
+    //         if (!file_exists($fullPath)) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'File not found'
+    //             ]);
+    //         }
+    //         return response()->download($fullPath);
+    //     } catch (\Exception $e) {
+    //         Log::error("Download Error: " . $e->getMessage());
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => 'Something went wrong'
+    //         ]);
+    //     }
+    // }
     public function downloadFile(Request $request)
     {
         try {
             $path = $request->path;
+            $type = $request->type;
+            $studentId = $request->student_id;
             if (!$path) {
                 return response()->json([
                     'status' => false,
@@ -313,6 +315,34 @@ class FirmDashboardController extends Controller
                     'status' => false,
                     'message' => 'File not found'
                 ]);
+            }
+            $authUser = $request->attributes->get('auth_user');
+            $firm = DB::table('firm_profiles')
+                ->where('user_id', $authUser->id)->first();
+            if ($firm && $studentId) {
+                $message = '';
+                if ($type === 'resume') {
+                    $message =
+                        $firm->firm_name
+                        . ' downloaded your resume.';
+                }
+                if ($type === 'marksheet') {
+                    $message =
+                        $firm->firm_name
+                        . ' downloaded your marksheet.';
+                }
+                DB::table('recruiter_actions')
+                    ->insert([
+                        'student_id' => $studentId,
+                        'firm_id' => $firm->id,
+                        'job_id' => null,
+                        'application_id' => null,
+                        'visible_to' => 'student',
+                        'action_type' => $type . '_downloaded',
+                        'message' => $message,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
             }
             return response()->download($fullPath);
         } catch (\Exception $e) {

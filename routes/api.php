@@ -20,7 +20,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfile',    [UserController::class, 'updateProfile']);
     Route::post('/getProfile',       [UserController::class, 'getProfile']);
     Route::post('/updateProfileImage',       [UserController::class, 'updateProfileImage']);
-    Route::post('/students/{id}/track-recruiter-action',       [UserController::class, 'trackProfileView']);
+    Route::post('/students/{id}/track-recruiter-action',       [UserController::class, 'trackRecruiterAction']);
 
     Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
     Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);

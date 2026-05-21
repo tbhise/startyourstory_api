@@ -1,13 +1,10 @@
 <?php
-
 namespace App\Http\Controllers\API;
-
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-
 class UserController extends Controller
 {
     public function registerStudent(Request $request)
@@ -404,12 +401,10 @@ class UserController extends Controller
                 ]);
             } elseif ($request->looking_for === 'creator') {
                 Log::info('Checking Creator Profile');
-                $isProfileComplete =!empty($request->city);
+                $isProfileComplete = !empty($request->city);
                 Log::info('Creator Fields Status', [
-
                     'city' =>
                     !empty($request->city),
-                    
                     'profile_complete' =>
                     $isProfileComplete,
                 ]);
@@ -523,14 +518,141 @@ class UserController extends Controller
             ]);
         }
     }
-    public function trackProfileView(Request $request, $studentId = null)
+    // public function trackProfileView(Request $request, $studentId = null)
+    // {
+    //     try {
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Authenticate Recruiter
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $token = $request->cookie('auth_token');
+    //         if (!$token) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Unauthorized'
+    //             ], 401);
+    //         }
+    //         $user = DB::table('users')
+    //             ->where('api_token', $token)
+    //             ->where('is_deleted', false)
+    //             ->first();
+    //         if (!$user) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Invalid token'
+    //             ], 401);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Recruiter Only
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         if ($user->role !== 'firm') {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Only recruiters can track profile views'
+    //             ], 403);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Get Firm
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $firm = DB::table('firm_profiles')
+    //             ->where('user_id', $user->id)
+    //             ->first();
+    //         if (!$firm) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Firm profile not found'
+    //             ], 404);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Validate Student
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $student = DB::table('users')
+    //             ->where('id', $studentId)
+    //             ->where('role', 'student')
+    //             ->where('is_deleted', false)
+    //             ->first();
+    //         if (!$student) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => 'Student not found'
+    //             ], 404);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Prevent Duplicate View Spam
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         $alreadyViewed = DB::table('recruiter_actions')
+    //             ->where('firm_id', $firm->id)
+    //             ->where('student_id', $studentId)
+    //             ->where('action_type', 'profile_viewed')
+    //             ->where(
+    //                 'created_at',
+    //                 '>=',
+    //                 now()->subHours(24)
+    //             )
+    //             ->first();
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Insert Action
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         if (!$alreadyViewed) {
+    //             DB::table('recruiter_actions')->insert([
+    //                 'firm_id' =>
+    //                 $firm->id,
+    //                 'student_id' =>
+    //                 $studentId,
+    //                 'action_type' =>
+    //                 'profile_viewed',
+    //                 'title' =>
+    //                 'Profile viewed',
+    //                 'message' =>
+    //                 $firm->firm_name . ' viewed your profile.',
+    //                 'visible_to' =>
+    //                 'student',
+    //                 'action_status' =>
+    //                 'viewed',
+    //                 'created_at' =>
+    //                 now(),
+    //             ]);
+    //         }
+    //         /*
+    //     |--------------------------------------------------------------------------
+    //     | Success Response
+    //     |--------------------------------------------------------------------------
+    //     */
+    //         return response()->json([
+    //             'status' => true,
+    //             'message' =>
+    //             'Profile view tracked successfully',
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Track Profile View API Error', [
+    //             'message' =>
+    //             $e->getMessage(),
+    //             'line' =>
+    //             $e->getLine(),
+    //             'file' =>
+    //             $e->getFile(),
+    //         ]);
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' =>
+    //             'Unexpected server error while tracking profile view.',
+    //         ], 500);
+    //     }
+    // }
+    public function trackRecruiterAction(Request $request, $studentId = null)
     {
         try {
-            /*
-        |--------------------------------------------------------------------------
-        | Authenticate Recruiter
-        |--------------------------------------------------------------------------
-        */
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -548,22 +670,37 @@ class UserController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Recruiter Only
-        |--------------------------------------------------------------------------
-        */
             if ($user->role !== 'firm') {
                 return response()->json([
                     'status' => false,
-                    'message' => 'Only recruiters can track profile views'
+                    'message' => 'Only recruiters can perform this action'
                 ], 403);
             }
             /*
         |--------------------------------------------------------------------------
-        | Get Firm
+        | Validate Action Type
         |--------------------------------------------------------------------------
         */
+            // $validator = Validator::make(
+            //     $request->all(),
+            //     [
+            //         'action_type' =>
+            //         'required|in:
+            //         profile_viewed,
+            //         candidate_shortlisted,
+            //         candidate_rejected,
+            //         candidate_saved',
+            //     ]
+            // );
+            // if ($validator->fails()) {
+            //     return response()->json([
+            //         'status' => false,
+            //         'message' =>
+            //         $validator
+            //             ->errors()
+            //             ->first(),
+            //     ], 422);
+            // }
             $firm = DB::table('firm_profiles')
                 ->where('user_id', $user->id)
                 ->first();
@@ -573,11 +710,6 @@ class UserController extends Controller
                     'message' => 'Firm profile not found'
                 ], 404);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Validate Student
-        |--------------------------------------------------------------------------
-        */
             $student = DB::table('users')
                 ->where('id', $studentId)
                 ->where('role', 'student')
@@ -589,69 +721,68 @@ class UserController extends Controller
                     'message' => 'Student not found'
                 ], 404);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Prevent Duplicate View Spam
-        |--------------------------------------------------------------------------
-        */
-            $alreadyViewed = DB::table('recruiter_actions')
+            $actionType = $request->action_type;
+            $title = '';
+            $message = '';
+            $actionStatus = '';
+            switch ($actionType) {
+                case 'profile_viewed':
+                    $title = 'Profile viewed';
+                    $message = $firm->firm_name . ' viewed your profile.';
+                    $actionStatus = 'viewed';
+                    break;
+                case 'candidate_shortlisted':
+                    $title = 'Profile shortlisted';
+                    $message = $firm->firm_name . ' shortlisted your profile.';
+                    $actionStatus = 'shortlisted';
+                    break;
+                case 'candidate_rejected':
+                    $title = 'Profile rejected';
+                    $message = $firm->firm_name . ' rejected your profile.';
+                    $actionStatus = 'rejected';
+                    break;
+                case 'candidate_saved':
+                    $title = 'Profile saved';
+                    $message = $firm->firm_name . ' saved your profile for future opportunities.';
+                    $actionStatus = 'saved';
+                    break;
+            }
+            $alreadyExists = DB::table('recruiter_actions')
                 ->where('firm_id', $firm->id)
                 ->where('student_id', $studentId)
-                ->where('action_type', 'profile_viewed')
-                ->where(
-                    'created_at',
-                    '>=',
-                    now()->subHours(24)
-                )
+                ->where('action_type', $actionType)
+                ->where('created_at', '>=', now()->subHours(24))
                 ->first();
-            /*
-        |--------------------------------------------------------------------------
-        | Insert Action
-        |--------------------------------------------------------------------------
-        */
-            if (!$alreadyViewed) {
-                DB::table('recruiter_actions')->insert([
-                    'firm_id' =>
-                    $firm->id,
-                    'student_id' =>
-                    $studentId,
-                    'action_type' =>
-                    'profile_viewed',
-                    'title' =>
-                    'Profile viewed',
-                    'message' =>
-                    $firm->firm_name . ' viewed your profile.',
-                    'visible_to' =>
-                    'student',
-                    'action_status' =>
-                    'viewed',
-                    'created_at' =>
-                    now(),
-                ]);
+            if (!$alreadyExists) {
+                DB::table('recruiter_actions')
+                    ->insert([
+                        'firm_id' => $firm->id,
+                        'student_id' => $studentId,
+                        'action_type' => $actionType,
+                        'title' => $title,
+                        'message' => $message,
+                        'visible_to' => 'student',
+                        'action_status' => $actionStatus,
+                        'created_at' => now(),
+                        // 'updated_at' =>now(),
+                    ]);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Success Response
-        |--------------------------------------------------------------------------
-        */
             return response()->json([
                 'status' => true,
-                'message' =>
-                'Profile view tracked successfully',
+                'message' => 'Recruiter action tracked successfully',
             ]);
         } catch (\Exception $e) {
-            Log::error('Track Profile View API Error', [
-                'message' =>
-                $e->getMessage(),
-                'line' =>
-                $e->getLine(),
-                'file' =>
-                $e->getFile(),
-            ]);
+            Log::error(
+                'Track Recruiter Action API Error',
+                [
+                    'message' => $e->getMessage(),
+                    'line' => $e->getLine(),
+                    'file' => $e->getFile(),
+                ]
+            );
             return response()->json([
                 'status' => false,
-                'message' =>
-                'Unexpected server error while tracking profile view.',
+                'message' => 'Unexpected server error while tracking recruiter action.',
             ], 500);
         }
     }

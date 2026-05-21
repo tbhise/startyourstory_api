@@ -1,10 +1,10 @@
 CREATE DATABASE  IF NOT EXISTS `startyourstory` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */ /*!80016 DEFAULT ENCRYPTION='N' */;
 USE `startyourstory`;
--- MySQL dump 10.13  Distrib 8.0.36, for Win64 (x86_64)
+-- MySQL dump 10.13  Distrib 8.0.41, for Win64 (x86_64)
 --
--- Host: localhost    Database: startyourstory
+-- Host: 147.93.97.25    Database: startyourstory
 -- ------------------------------------------------------
--- Server version	8.3.0
+-- Server version	8.0.45-0ubuntu0.24.04.1
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -43,12 +43,8 @@ CREATE TABLE `applications` (
   `student_response_note` text,
   `recruiter_notes` text,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_applications_student_id` (`student_id`),
-  KEY `idx_applications_job_id` (`job_id`),
-  CONSTRAINT `applications_ibfk_1` FOREIGN KEY (`job_id`) REFERENCES `jobs` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `applications_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -57,7 +53,6 @@ CREATE TABLE `applications` (
 
 LOCK TABLES `applications` WRITE;
 /*!40000 ALTER TABLE `applications` DISABLE KEYS */;
-INSERT INTO `applications` VALUES (1,6,1,'Interview Confirmed','applied','2026-05-18 06:00:20','2026-05-18 12:19:31','2026-05-18 12:19:25','2026-05-18 12:27:13','2026-05-18 13:17:48',NULL,'2026-05-22 00:00:00','Physical','test instructions','Accepted',NULL,NULL,'2026-05-18 13:17:48'),(2,3,1,'Interview Requested','applied','2026-05-18 06:23:08',NULL,'2026-05-18 12:46:04','2026-05-18 12:46:14','2026-05-18 13:22:36',NULL,'2026-05-30 00:00:00','Physical',NULL,'Reschedule Requested','Requesting reschedule interview date',NULL,'2026-05-18 13:22:36');
 /*!40000 ALTER TABLE `applications` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -105,10 +100,8 @@ CREATE TABLE `firm_branches` (
   `address` text,
   `state` varchar(100) DEFAULT NULL,
   `pincode` varchar(20) DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `firm_id` (`firm_id`),
-  CONSTRAINT `firm_branches_ibfk_1` FOREIGN KEY (`firm_id`) REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=33 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -117,7 +110,7 @@ CREATE TABLE `firm_branches` (
 
 LOCK TABLES `firm_branches` WRITE;
 /*!40000 ALTER TABLE `firm_branches` DISABLE KEYS */;
-INSERT INTO `firm_branches` VALUES (3,1,'','','',''),(4,2,'Pune','Pune','MH','411046'),(5,3,'','','',''),(6,4,'','','',''),(7,5,'dgdgtdgt','dgtdgdgdg','dgdgdgdg','8596'),(8,5,'dgdgd','g dgdgdgdg',' dgdgdg ','24522'),(18,6,'Benglore','Benglore','Karnataka','415263'),(19,6,'Mumbai','Mumbai','Maharashtra','400001'),(20,6,'Pune','Pune','Maharashtra','410026');
+INSERT INTO `firm_branches` VALUES (4,2,'Pune','Pune','MH','411046'),(5,3,'','','',''),(6,4,'','','',''),(7,5,'dgdgtdgt','dgtdgdgdg','dgdgdgdg','8596'),(8,5,'dgdgd','g dgdgdgdg',' dgdgdg ','24522'),(26,1,'jhgjg','jgjgjhgjg','jgjgjgjgj','gjgjgjgj'),(30,6,'Benglore','Benglore','Karnataka','415263'),(31,6,'Mumbai','Mumbai','Maharashtra','400001'),(32,6,'Pune','Pune','Maharashtra','410026');
 /*!40000 ALTER TABLE `firm_branches` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -132,9 +125,7 @@ CREATE TABLE `firm_departments` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `firm_id` bigint DEFAULT NULL,
   `department_name` varchar(100) DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `firm_id` (`firm_id`),
-  CONSTRAINT `firm_departments_ibfk_1` FOREIGN KEY (`firm_id`) REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -185,10 +176,8 @@ CREATE TABLE `firm_profiles` (
   `other_links` text,
   `office_images` json DEFAULT NULL,
   `additional_contacts` json DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `user_id` (`user_id`),
-  CONSTRAINT `firm_profiles_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -197,8 +186,37 @@ CREATE TABLE `firm_profiles` (
 
 LOCK TABLES `firm_profiles` WRITE;
 /*!40000 ALTER TABLE `firm_profiles` DISABLE KEYS */;
-INSERT INTO `firm_profiles` VALUES (1,3,'123456','ABC Firm','Pune',NULL,'Test',2,30,12,'[\"overall\"]','https://www.linkedin.com','https://www.google.com/','firm/logo/1778483637_logo.png',0,'2026-04-27 06:18:30','2026-05-11 07:13:57','This is test firm','Partnership','2021','Audit, Tax','Manufacturing, IT','[\"On-site\"]','Mentorship','₹15000 Per month','https://www.instagram.com','https://www.facebook.com','https://www.twitter.com','[\"firm/office-images/1778245112_69fdddf8904cd.png\", \"firm/office-images/1778245112_69fdddf890987.png\", \"firm/office-images/1778245112_69fdddf89a359.png\"]','[{\"name\": \"\", \"role\": \"\", \"phone\": \"\"}]'),(2,4,'741852','Deloitte India LLP','Mumbai',NULL,'Hr Deloitte',2,35,12,'[\"overall\"]','test.com','test.com','firm/logo/1778483956_logo.png',0,'2026-05-11 07:06:14','2026-05-11 07:19:16','test Deloitte','LLP','2021','Audit, Tax','IT','[\"On-site\"]','test','10000','test.com','test.com','test.com',NULL,'[{\"name\": \"\", \"role\": \"\", \"phone\": \"\"}]'),(3,5,'741852','KPMG Assurance Services','Pune',NULL,'hr KPMG',2,50,45,'[\"overall\"]','test.com','test.com','firm/logo/1778484190_logo.png',0,'2026-05-11 07:06:51','2026-05-11 09:23:43','sfsfsfsfsfsf','LLP','2000','dsfgs , fsfsfsf','gsfsg, sf,sfsfsf','[\"On-site\"]','sfsfsfsfsfsf','15000','test.com','test.com','test.com',NULL,'[{\"name\": \"test \", \"role\": \"hr\", \"phone\": \"7485963652\"}]'),(4,6,'859631','EY GDS Pvt. Ltd.','Pune',NULL,'test',2,52,65,'[\"overall\"]',NULL,NULL,'firm/logo/1778484281_logo.png',0,'2026-05-11 07:07:27','2026-05-11 09:23:43','sdgdgdgdgdgdgdgd dgdgdgd gdgdgd dgdgdg dgdgd','Private Ltd','2004','dgd, gd, gd, gd','dgdg, dgdg, dg','[\"On-site\"]','dgdgdgdgdg','20000',NULL,NULL,NULL,NULL,'[{\"name\": \"\", \"role\": \"\", \"phone\": \"\"}]'),(5,7,'89657422','PwC India','Delhi',NULL,'dgdgdg',4,25,12,'[\"Statutory Audit\",\"Internal Audit\"]','dgdgdgdgdg.com','dgdgdgdgdg.com','firm/logo/1778484479_logo.png',0,'2026-05-11 07:08:08','2026-05-11 09:23:43','dgdg dgdgd  dgdgd dgdgdg dg dgdg','Private Ltd','2025','drgd,rtd ,drtd,rtert, drtd,tdt, dtd,tdr','drtd,rt ,dtdt,dtd, dt,dt,dt','[\"On-site\", \"Hybrid\"]','drtdtdr dtd dtdtdtd dtdtdt dtdt','25000','dgdgdgdgdg.com','dgdgdgdgdg.com','dgdgdgdgdg.com','[\"firm/office-images/1778484479_6a0184ffeb411.png\", \"firm/office-images/1778484479_6a0184ffeb68d.png\", \"firm/office-images/1778484479_6a0184fff293f.png\", \"firm/office-images/1778484479_6a0184fff2f19.png\"]','[{\"name\": \"dgdgdg \", \"role\": \"dgdgdg \", \"phone\": \"963852360\"}]'),(6,8,'896574123','BDO India','Chennai','test','Kunal Bhosale',2,45,12,'[\"Direct Tax\",\"Bank Audit\",\"Indirect Tax\",\"Internal Audit\"]','https://linkedin.com/bdo','https://www.bdo.in/','firm/logo/1778495522_logo.png',0,'2026-05-11 07:08:55','2026-05-13 09:24:37','We are a leading professional services firm offering Tax, Assurance, Accounting, Outsourcing, Advisory and Technology-led Services for both domestic and international clients across a range of industries. Bringing innovative thinking to a digitally evolving market is helping us reinstate and better offer our long-standing promise of delivering quality driven by value and up-to-date thinking.','Partnership','2005','Assuarance, Tax, Advisory, Managed Services','BFSI, GCC, E-Mobility, Technology','[\"On-site\"]','Structured articleship training with exposure in Audit, GST, Income Tax, ROC compliance, client handling, and accounting software like Tally and Zoho Books.','Monthly stipend ranging from ₹8,000 to ₹15,000 based on year of articleship, performance, and department allocation.','https://instagram.com/bdo','https://facebook.com/bdo','https://twitter.com/bdo','[\"firm/office-images/1778495522_6a01b0220f58a.png\", \"firm/office-images/1778495522_6a01b0220f899.png\", \"firm/office-images/1778495522_6a01b022153ff.png\", \"firm/office-images/1778495522_6a01b02215ecd.png\", \"firm/office-images/1778495522_6a01b0221d41a.png\", \"firm/office-images/1778495522_6a01b0221dad6.png\", \"firm/office-images/1778495522_6a01b02225b9a.png\", \"firm/office-images/1778495522_6a01b022267f7.png\"]','[{\"name\": \"Shubham W\", \"role\": \"Manager\", \"phone\": \"789654123\"}, {\"name\": \"Saurabh Gaikwad\", \"role\": \"HR\", \"phone\": \"7410258963\"}]');
 /*!40000 ALTER TABLE `firm_profiles` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `firm_subscriptions`
+--
+
+DROP TABLE IF EXISTS `firm_subscriptions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `firm_subscriptions` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `firm_id` bigint NOT NULL,
+  `plan` varchar(25) DEFAULT 'free',
+  `status` enum('active','expired','cancelled') DEFAULT 'active',
+  `starts_at` datetime DEFAULT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `index` (`id`,`firm_id`,`plan`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `firm_subscriptions`
+--
+
+LOCK TABLES `firm_subscriptions` WRITE;
+/*!40000 ALTER TABLE `firm_subscriptions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `firm_subscriptions` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -224,14 +242,14 @@ CREATE TABLE `jobs` (
   `application_deadline` date DEFAULT NULL,
   `salary` varchar(100) DEFAULT NULL,
   `description` text,
+  `hiring_for` varchar(55) DEFAULT NULL,
   `is_active` tinyint(1) DEFAULT '1',
   `status` varchar(25) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_jobs_firm_id` (`firm_id`),
-  CONSTRAINT `jobs_ibfk_1` FOREIGN KEY (`firm_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `hiring_for` (`hiring_for`) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -240,7 +258,6 @@ CREATE TABLE `jobs` (
 
 LOCK TABLES `jobs` WRITE;
 /*!40000 ALTER TABLE `jobs` DISABLE KEYS */;
-INSERT INTO `jobs` VALUES (3,6,'Articleship Trainee','Pune','Articleship','Taxation','On-site','Fresher',2,'[\"Taxation\",\"Audit\",\"Tax\"]',NULL,'CA Intermediate (Both Groups / Single Group) cleared or appearing candidates with strong analytical skills, basic accounting knowledge, and willingness to learn professional compliance and audit work.','2026-05-30','15000','We are looking for motivated and dedicated CA Articleship Trainees to join our growing Chartered Accountancy firm. The selected candidates will gain practical exposure across Audit, Taxation, GST, ROC Compliance, Accounting, and Financial Advisory assignments while working closely with experienced Chartered Accountants.\n\nThis role is ideal for CA Intermediate students who are eager to build strong professional and technical skills through hands-on client work and real-time business exposure.\n\nRoles and Responsibilities :\n\n• Assist in statutory audits, tax audits, and internal audits\n• Prepare and review financial statements and audit documentation\n• Support GST return filing, income tax return preparation, and compliance work\n• Handle ROC filings, registrations, and regulatory documentation\n• Work on accounting entries, bank reconciliations, and MIS reporting\n• Participate in client meetings and data collection activities\n• Assist senior team members in advisory and consultancy assignments\n• Maintain proper documentation and working papers\n• Coordinate with clients for pending information and compliance follow-ups\n\nBenefits\n• Structured practical training under experienced Chartered Accountants\n• Exposure to multiple industries and real client assignments\n• Department-wise learning opportunities in Audit, Taxation, GST, and Compliance\n• Mentorship and professional guidance throughout articleship period\n• Friendly and growth-oriented work culture\n• Performance-based stipend increments\n• Opportunity to work on advanced accounting and taxation software\n• Exam leave support as per firm policy\n• Skill development and professional growth opportunities',1,'Active','2026-05-12 11:13:19','2026-05-12 11:16:38'),(5,6,'Articleship Trainee (Copy)','Pune','Articleship','Taxation','On-site','Fresher',2,'[\"Taxation\",\"Audit\",\"Tax\"]',NULL,'CA Intermediate (Both Groups / Single Group) cleared or appearing candidates with strong analytical skills, basic accounting knowledge, and willingness to learn professional compliance and audit work.','2026-05-30','15000','We are looking for motivated and dedicated CA Articleship Trainees to join our growing Chartered Accountancy firm. The selected candidates will gain practical exposure across Audit, Taxation, GST, ROC Compliance, Accounting, and Financial Advisory assignments while working closely with experienced Chartered Accountants.\n\nThis role is ideal for CA Intermediate students who are eager to build strong professional and technical skills through hands-on client work and real-time business exposure.\n\nRoles and Responsibilities :\n\n• Assist in statutory audits, tax audits, and internal audits\n• Prepare and review financial statements and audit documentation\n• Support GST return filing, income tax return preparation, and compliance work\n• Handle ROC filings, registrations, and regulatory documentation\n• Work on accounting entries, bank reconciliations, and MIS reporting\n• Participate in client meetings and data collection activities\n• Assist senior team members in advisory and consultancy assignments\n• Maintain proper documentation and working papers\n• Coordinate with clients for pending information and compliance follow-ups\n\nBenefits\n• Structured practical training under experienced Chartered Accountants\n• Exposure to multiple industries and real client assignments\n• Department-wise learning opportunities in Audit, Taxation, GST, and Compliance\n• Mentorship and professional guidance throughout articleship period\n• Friendly and growth-oriented work culture\n• Performance-based stipend increments\n• Opportunity to work on advanced accounting and taxation software\n• Exam leave support as per firm policy\n• Skill development and professional growth opportunities',1,'Draft','2026-05-12 11:16:58','2026-05-12 11:16:58'),(6,6,'Articleship Trainee','Mumbai','Articleship','Taxation','On-site','Fresher',5,'[\"Taxation\",\"Audit\",\"Tax\"]',NULL,'CA Intermediate (Both Groups / Single Group) cleared or appearing candidates with strong analytical skills, basic accounting knowledge, and willingness to learn professional compliance and audit work.','2026-05-30','25000','We are looking for motivated and dedicated CA Articleship Trainees to join our growing Chartered Accountancy firm. The selected candidates will gain practical exposure across Audit, Taxation, GST, ROC Compliance, Accounting, and Financial Advisory assignments while working closely with experienced Chartered Accountants.\n\nThis role is ideal for CA Intermediate students who are eager to build strong professional and technical skills through hands-on client work and real-time business exposure.\n\nRoles and Responsibilities :\n\n• Assist in statutory audits, tax audits, and internal audits\n• Prepare and review financial statements and audit documentation\n• Support GST return filing, income tax return preparation, and compliance work\n• Handle ROC filings, registrations, and regulatory documentation\n• Work on accounting entries, bank reconciliations, and MIS reporting\n• Participate in client meetings and data collection activities\n• Assist senior team members in advisory and consultancy assignments\n• Maintain proper documentation and working papers\n• Coordinate with clients for pending information and compliance follow-ups\n\nBenefits\n• Structured practical training under experienced Chartered Accountants\n• Exposure to multiple industries and real client assignments\n• Department-wise learning opportunities in Audit, Taxation, GST, and Compliance\n• Mentorship and professional guidance throughout articleship period\n• Friendly and growth-oriented work culture\n• Performance-based stipend increments\n• Opportunity to work on advanced accounting and taxation software\n• Exam leave support as per firm policy\n• Skill development and professional growth opportunities',1,'Active','2026-05-12 11:20:13','2026-05-18 05:28:42');
 /*!40000 ALTER TABLE `jobs` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -258,9 +275,7 @@ CREATE TABLE `notifications` (
   `message` text,
   `is_read` tinyint(1) DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `user_id` (`user_id`),
-  CONSTRAINT `notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -300,7 +315,7 @@ CREATE TABLE `recruiter_actions` (
   KEY `idx_recruiter_actions_student_id` (`student_id`),
   KEY `idx_recruiter_actions_firm_id` (`firm_id`),
   KEY `idx_recruiter_actions_job_id` (`job_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -309,7 +324,6 @@ CREATE TABLE `recruiter_actions` (
 
 LOCK TABLES `recruiter_actions` WRITE;
 /*!40000 ALTER TABLE `recruiter_actions` DISABLE KEYS */;
-INSERT INTO `recruiter_actions` VALUES (1,6,1,'student',6,1,'shortlisted','You were shortlisted','Your profile matched recruiter requirements.','shortlisted',NULL,NULL,NULL,0,'2026-05-18 12:10:47'),(2,6,1,'student',6,1,'shortlisted','You were shortlisted','Your profile matched recruiter requirements.','shortlisted',NULL,NULL,NULL,0,'2026-05-18 12:16:17'),(3,6,1,'student',6,1,'rejected','Application not progressing','The recruiter decided not to proceed further.','rejected',NULL,NULL,NULL,0,'2026-05-18 12:19:25'),(4,6,1,'student',6,1,'interview_requested','Interview requested','The recruiter invited you for an interview.','pending','2026-05-22 00:00:00','test instructions','{\"interview_mode\": \"Physical\"}',0,'2026-05-18 12:27:13'),(5,6,1,'student',3,2,'interview_requested','Interview requested','The recruiter invited you for an interview.','pending','2026-05-22 00:00:00','sdfsfsfsfsf','{\"interview_mode\": \"Physical\"}',0,'2026-05-18 12:32:13'),(6,6,1,'student',3,2,'rejected','Application not progressing','The recruiter decided not to proceed further.','rejected',NULL,NULL,NULL,0,'2026-05-18 12:46:04'),(7,6,1,'firm',3,2,'interview_reschedule_received','Reschedule requested','Student requested interview reschedule.','reschedule requested','2026-05-30 00:00:00','Requesting reschedule interview date',NULL,0,'2026-05-18 13:22:36');
 /*!40000 ALTER TABLE `recruiter_actions` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -325,13 +339,9 @@ CREATE TABLE `saved_jobs` (
   `student_id` bigint DEFAULT NULL,
   `job_id` bigint DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_saved_job` (`student_id`,`job_id`),
   KEY `student_id` (`student_id`),
-  KEY `job_id` (`job_id`),
-  KEY `idx_saved_student_job` (`student_id`,`job_id`),
-  CONSTRAINT `saved_jobs_ibfk_1` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `saved_jobs_ibfk_2` FOREIGN KEY (`job_id`) REFERENCES `jobs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `idx_saved_student_job` (`student_id`,`job_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -340,7 +350,6 @@ CREATE TABLE `saved_jobs` (
 
 LOCK TABLES `saved_jobs` WRITE;
 /*!40000 ALTER TABLE `saved_jobs` DISABLE KEYS */;
-INSERT INTO `saved_jobs` VALUES (10,1,6);
 /*!40000 ALTER TABLE `saved_jobs` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -355,11 +364,7 @@ CREATE TABLE `saved_students` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `firm_id` bigint DEFAULT NULL,
   `student_id` bigint DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `firm_id` (`firm_id`),
-  KEY `student_id` (`student_id`),
-  CONSTRAINT `saved_students_ibfk_1` FOREIGN KEY (`firm_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `saved_students_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+  PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -370,32 +375,6 @@ CREATE TABLE `saved_students` (
 LOCK TABLES `saved_students` WRITE;
 /*!40000 ALTER TABLE `saved_students` DISABLE KEYS */;
 /*!40000 ALTER TABLE `saved_students` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `student_departments`
---
-
-DROP TABLE IF EXISTS `student_departments`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `student_departments` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `student_profile_id` bigint DEFAULT NULL,
-  `department_name` varchar(100) DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `student_profile_id` (`student_profile_id`),
-  CONSTRAINT `student_departments_ibfk_1` FOREIGN KEY (`student_profile_id`) REFERENCES `student_profiles` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `student_departments`
---
-
-LOCK TABLES `student_departments` WRITE;
-/*!40000 ALTER TABLE `student_departments` DISABLE KEYS */;
-/*!40000 ALTER TABLE `student_departments` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -437,13 +416,11 @@ CREATE TABLE `student_profiles` (
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `user_id` (`user_id`),
   KEY `idx_student_looking_for` (`looking_for`),
   KEY `idx_student_city` (`city`),
   KEY `idx_student_registration_type` (`registration_type`),
-  KEY `idx_student_passing_month` (`passing_month`),
-  CONSTRAINT `student_profiles_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  KEY `idx_student_passing_month` (`passing_month`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -452,7 +429,6 @@ CREATE TABLE `student_profiles` (
 
 LOCK TABLES `student_profiles` WRITE;
 /*!40000 ALTER TABLE `student_profiles` DISABLE KEYS */;
-INSERT INTO `student_profiles` VALUES (1,1,'ca-job','sdfsfsfsf','Pune',NULL,'male','2025','doing-articleship',NULL,NULL,'[\"Mumbai\", \"Pune\", \"Bangalore\"]','it','[\"overall\"]','Bank Audit','1','https://npav.net/','https://npav.net/',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'marksheets/1778069945_marksheet.png','resumes/1778073560_resume.png','2026-04-26 11:32:01','2026-05-14 06:49:02'),(3,9,'articleship',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'2026-05-13 09:45:10','2026-05-13 09:45:10'),(4,10,'qualified','748596321','Pune',NULL,'male',NULL,NULL,NULL,NULL,'[\"Pune\", \"Mumbai\"]','both','[\"Audit & Assurance\", \"Statutory Audit\", \"Internal Audit\", \"Bank Audit\", \"Forensic Audit\"]','Statutory Audit',NULL,'https://in.linkedin.com/','https://in.linkedin.com/',NULL,NULL,'4','BFSI','Internal Audit','Because you have to','4.5','6',NULL,'resumes/1778760889_resume.png','2026-05-14 06:51:37','2026-05-14 12:14:49'),(5,11,'articleship','65465464','Pune','Pune','male','Sep 2025','inter-both','confirm',NULL,'[\"Pune\"]','pending','[\"Audit & Assurance\", \"Statutory Audit\", \"Direct Tax\"]','Statutory Audit','1','https://www.google.com/','https://www.google.com/',1,'ABC Firm',NULL,NULL,NULL,NULL,NULL,NULL,'marksheets/1778762114_marksheet.png','resumes/1778762114_resume.png','2026-05-14 06:58:55','2026-05-14 12:39:00'),(6,12,'semi-qualified','7485963','Latur','Latur','male',NULL,NULL,'confirm',NULL,'[\"Latur\", \"Pune\", \"Mumbai\"]','both','[\"Audit & Assurance\", \"Internal Audit\", \"Indirect Tax / GST\", \"Bank Audit\", \"Direct Tax\", \"Statutory Audit\"]','Statutory Audit',NULL,'https://www.google.com/','https://www.google.com/',NULL,NULL,'2','IT / SaaS','Indirect Tax / GST','They have no option','5','6','marksheets/1778761419_marksheet.png','resumes/1778761419_resume.png','2026-05-14 12:21:04','2026-05-14 12:39:40');
 /*!40000 ALTER TABLE `student_profiles` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -480,7 +456,7 @@ CREATE TABLE `users` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`),
   KEY `index` (`id`,`is_deleted`,`token_expires_at`,`api_token`) /*!80000 INVISIBLE */
-) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -489,7 +465,6 @@ CREATE TABLE `users` (
 
 LOCK TABLES `users` WRITE;
 /*!40000 ALTER TABLE `users` DISABLE KEYS */;
-INSERT INTO `users` VALUES (1,'Tushar Bhise','tusharbhise908@gmail.com','9284581330','$2y$12$gmFTbBitaKwEa.O1acMkRON.7NgOaYwHFi1IKVlQhY068O4aBN5by','student',1,'profile/1779094283_profile.png','2026-04-26 17:02:01','2026-05-18 18:16:51',0,'S05XaDdxV1hPazhZYlNkNTlKZkg4Nml4VGYxSWdTZ01QVnByZ0FzaA==','2026-05-25 18:16:51'),(3,'ABC Firm','hr@abc.com','7894561230','$2y$12$C.cXzA/LxSoVqHqDsDZYaeWT4gx1rU46Ja9CpxF0nKC14.ljyetze','firm',1,'firm/logo/1778483637_logo.png','2026-04-27 11:48:30','2026-05-11 12:43:57',0,'TGM5Z3dxajg3SHVwQWd3ZkZqVTh4QXJNejNNTGgxV3l3Smw5QlFqVQ==','2026-05-18 12:39:26'),(4,'Deloitte India LLP','info@dl.com','7485912360','$2y$12$gAXsoI/Di7RwZxrXbcmSt.f8AjbMiGLypZyg4lThiSjEh4JIFu/lW','firm',1,'firm/logo/1778483956_logo.png','2026-05-11 12:36:14','2026-05-11 14:02:01',0,'U3RQVGZSU01taE5aUnRDTmpYM0FFZ29DRlJQSlBaUFAwNE16ZnA1QQ==','2026-05-18 14:02:01'),(5,'KPMG Assurance Services','info@kpmg.com','7896321450','$2y$12$xedn3tzOSqy9r1Y5yj92L.dC08Sy1TviyhAE8L764UdSG/ecr2u7e','firm',1,'firm/logo/1778484190_logo.png','2026-05-11 12:36:51','2026-05-11 12:53:10',0,'bG5zR29FcnBWcXpjbTUxVUNLTEloTG9rMEVzZ0Z6RDVaQXJyWk1tQQ==','2026-05-18 12:50:23'),(6,'EY GDS Pvt. Ltd.','info@ey.com','7412589630','$2y$12$LErBRKCJpkaMTW7AIIAKNugY1PzmyZggyGa7rTtvbbkkpl20gM5.O','firm',1,'firm/logo/1778484281_logo.png','2026-05-11 12:37:27','2026-05-11 12:54:41',0,'UGhRTm1yaVhRMGUzT0xCYmRodDlyQ1pXRVZKTG9XU0NTS3F2ZGswTg==','2026-05-18 12:53:41'),(7,'PwC India','info@pwc.com','8527419630','$2y$12$p5CzFUJHbdcRKBilJGwQHO.Kl4nVsgDGfjWWDkty/2oy9UR6fCs9a','firm',1,'firm/logo/1778484479_logo.png','2026-05-11 12:38:08','2026-05-12 16:34:39',0,'cVJ3OWZISUFZNzQ2WFhiNHNqV2syVzdkVjRPWVJqYmI4VkdsUkMySQ==','2026-05-19 16:34:39'),(8,'BDO India','info@bdo.in','9638527410','$2y$12$4MXSF3ClR0SjXvUAIkPj7ulrlOC7qqobglpgWb5P4hNRNvW4S8A/.','firm',1,'firm/logo/1778495522_logo.png','2026-05-11 12:38:55','2026-05-18 19:00:31',0,'YTRaZFpUY2RWZHVIblgyemFjOEFhUU45U2hYeDdHRzFSWHJJTVhHTQ==','2026-05-25 19:00:31'),(9,'Kunal Bhosale','kunalbhosale@gmail.com','7896635241','$2y$12$UuBZaygwHQRtk.cTLe2zcOPxVq5TxnN.nrLwpEJAM7Qa27f1ozAcK','student',0,NULL,'2026-05-13 15:15:10','2026-05-13 15:15:10',0,NULL,NULL),(10,'Shubham W','shubhamw@gmail.com','7412563980','$2y$12$d8Kt3fnSm8uzLTdCjEMLQOUJRYJZpMpqW9RwQ.2YFrwJ5FQ8qLqPC','student',0,NULL,'2026-05-14 12:21:37','2026-05-14 17:44:49',0,'R25WcnNXWUpXcjZTMTV6YXJCclF4MXRPczVkQWRtNm1uZUs2b29pcQ==','2026-05-21 17:42:34'),(11,'KishorG','kishorg@gmail.com','7891234560','$2y$12$fkU5glAKa.tEpaD2HTZlxuCEsMiMru16hI6y27PU3Q0dOM2XcVC9a','student',1,NULL,'2026-05-14 12:28:55','2026-05-14 18:09:00',0,'bEhtVm5SNFhlaGVFY2dHYnV1NFRGMDlzODFEemJFelhnYlBxV0Y3Rg==','2026-05-21 18:04:24'),(12,'SAurabh G','sg@gmail.com','7485963210','$2y$12$032lSacNOKSM3NKGCuJWaeCDySW1KmBF.7TXJY2H8yOa7opOxF5/e','student',1,NULL,'2026-05-14 17:51:04','2026-05-14 18:25:17',0,'RHpDZmNNQzRwc3B0RjFjTEJqd3JYeWpFaUgzeUZZaTNycml4R1pJUg==','2026-05-21 18:25:17');
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -502,4 +477,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-05-18 19:01:54
+-- Dump completed on 2026-05-21 23:14:43

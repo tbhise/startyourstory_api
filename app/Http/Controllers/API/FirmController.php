@@ -399,22 +399,15 @@ class FirmController extends Controller
     {
         try {
             $query = DB::table('firm_profiles')
-                ->leftJoin(
-                    'firm_departments',
-                    'firm_profiles.id',
-                    '=',
-                    'firm_departments.firm_id'
-                )
+                ->leftJoin('firm_departments', 'firm_profiles.id', '=', 'firm_departments.firm_id')
                 ->select(
                     'firm_profiles.*',
-                    DB::raw('GROUP_CONCAT(firm_departments.department_name) as departments')
+                    DB::raw('GROUP_CONCAT(firm_departments.department_name) as departments'),
+                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
+
                 )
                 ->groupBy('firm_profiles.id');
-            /*
-        |--------------------------------------------------------------------------
-        | Search
-        |--------------------------------------------------------------------------
-        */
+
             if (!empty($request->search)) {
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
@@ -424,11 +417,7 @@ class FirmController extends Controller
                         ->orWhere('firm_profiles.services_offered', 'LIKE', "%{$search}%");
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | City Filter
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->cities) &&
                 is_array($request->cities)
@@ -438,11 +427,7 @@ class FirmController extends Controller
                     $request->cities
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Firm Type Filter
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->firmTypes) &&
                 is_array($request->firmTypes)
@@ -452,11 +437,7 @@ class FirmController extends Controller
                     $request->firmTypes
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Exposure Type Filter
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->exposure) &&
                 is_array($request->exposure)
@@ -484,11 +465,7 @@ class FirmController extends Controller
                     }
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Department
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->departments) &&
                 is_array($request->departments)
@@ -501,28 +478,9 @@ class FirmController extends Controller
                     );
                 };
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Work Modes Filter
-        |--------------------------------------------------------------------------
-        */
-            if (
-                !empty($request->workModes) &&
-                is_array($request->workModes)
-            ) {
-                foreach ($request->workModes as $mode) {
-                    $query->where(
-                        'firm_profiles.work_modes',
-                        'LIKE',
-                        '%' . $mode . '%'
-                    );
-                }
-            }
-            /*
-        |--------------------------------------------------------------------------
-        | Employee
-        |--------------------------------------------------------------------------
-        */
+
+
+
             if (
                 !empty($request->empRanges) &&
                 is_array($request->empRanges)
@@ -546,11 +504,7 @@ class FirmController extends Controller
                     }
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Article Count
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->artRanges) &&
                 is_array($request->artRanges)
@@ -574,11 +528,7 @@ class FirmController extends Controller
                     }
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Departments Filter
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->exposure_type) &&
                 is_array($request->exposure_type)
@@ -588,11 +538,7 @@ class FirmController extends Controller
                     $request->exposure_type
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Sorting
-        |--------------------------------------------------------------------------
-        */
+
             if (!empty($request->sort)) {
                 switch ($request->sort) {
                     case 'premium':
@@ -632,11 +578,7 @@ class FirmController extends Controller
                     'DESC'
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Simple Pagination
-        |--------------------------------------------------------------------------
-        */
+
             $companies = $query->paginate(12);
             $formattedCompanies = [];
             foreach ($companies->items() as $company) {
@@ -656,6 +598,7 @@ class FirmController extends Controller
                     'website_url' => $company->website_url,
                     'logo_path' => $company->logo_path ? asset('storage/' . $company->logo_path) : null,
                     'is_premium' => $company->is_premium,
+                    'current_openings' => $company->current_openings,
                     'about' => $company->about,
                     'firm_type' => $company->firm_type,
                     'establishment_year' =>
@@ -952,7 +895,7 @@ class FirmController extends Controller
             $jobId = DB::table('jobs')->insertGetId([
                 'firm_id' => $firm->id,
                 'title' => $request->title,
-                'location' => $request->location,
+                'location' => $firm->city,
                 'type' => $request->type,
                 'salary' => $request->salary,
                 'description' => $request->description,
@@ -960,7 +903,7 @@ class FirmController extends Controller
                 'work_mode' => $request->work_mode,
                 'experience_level' => $request->experience_level,
                 'openings' => $request->openings,
-                'hiring_for' => $request->hiring_for,
+                'hiring_for' => $request->type,
                 'required_skills' =>
                 !empty($request->required_skills)
                     ? json_encode($request->required_skills)
@@ -1235,11 +1178,7 @@ class FirmController extends Controller
     public function getJobs(Request $request)
     {
         try {
-            /*
-        |--------------------------------------------------------------------------
-        | AUTH USER
-        |--------------------------------------------------------------------------
-        */
+
             $token = $request->cookie('auth_token');
             $user = null;
             if ($token) {
@@ -1248,30 +1187,18 @@ class FirmController extends Controller
                     ->where('is_deleted', false)
                     ->first();
             }
-            /*
-        |--------------------------------------------------------------------------
-        | STUDENT PROFILE
-        |--------------------------------------------------------------------------
-        */
+
             $studentProfile = null;
             if ($user && $user->role === 'student') {
                 $studentProfile = DB::table('student_profiles')
                     ->where('user_id', $user->id)
                     ->first();
             }
-            /*
-        |--------------------------------------------------------------------------
-        | COMPANY FILTER
-        |--------------------------------------------------------------------------
-        */
+
             $firmId = DB::table('firm_profiles')
                 ->where('firm_name', $request->company)
                 ->value('id');
-            /*
-        |--------------------------------------------------------------------------
-        | BASE QUERY
-        |--------------------------------------------------------------------------
-        */
+
             $query = DB::table('jobs')
                 ->join(
                     'firm_profiles',
@@ -1286,60 +1213,36 @@ class FirmController extends Controller
                 )
                 ->where('jobs.is_active', true)
                 ->where('jobs.status', 'Active');
-            /*
-        |--------------------------------------------------------------------------
-        | HIRING FOR FILTER
-        |--------------------------------------------------------------------------
-        */
+
+
             if ($studentProfile) {
-                /*
-            |--------------------------------------------------------------------------
-            | Creator Users
-            |--------------------------------------------------------------------------
-            */
+
                 if ($studentProfile->looking_for === 'creator') {
                     $query->where(
                         'jobs.hiring_for',
                         'creator'
                     );
+                } else if (
+                    $studentProfile->looking_for === 'articleship'
+                ) {
+                    $query->where(
+                        'jobs.hiring_for',
+                        'articleship'
+                    );
+                } else if (
+                    in_array(
+                        $studentProfile->looking_for,
+                        [
+                            'semi-qualified',
+                            'qualified'
+                        ]
+                    )
+                ) {
+                    $query->whereIn(
+                        'jobs.hiring_for',
+                        ['semi-qualified', 'qualified']
+                    );
                 }
-                /*
-            |--------------------------------------------------------------------------
-            | Articleship Users
-            |--------------------------------------------------------------------------
-            //  else if (
-            //         $studentProfile->looking_for === 'articleship'
-            //     ) {
-            //         $query->where(
-            //             'jobs.hiring_for',
-            //             'articleship'
-            //         );
-            //     }
-                /*
-            |--------------------------------------------------------------------------
-            | Semi / Qualified Users
-            |--------------------------------------------------------------------------
-            //  else if (
-            //         in_array(
-            //             $studentProfile->looking_for,
-            //             [
-            //                 'semi-qualified',
-            //                 'qualified'
-            //             ]
-            //         )
-            //     ) {
-            //         $query->where(
-            //             'jobs.hiring_for',
-            //             // 'ca-job'   <- temparory comment
-            //             'articleship'
-            //         );
-                // }
-            // }
-            /*
-        |--------------------------------------------------------------------------
-        | SEARCH
-        |--------------------------------------------------------------------------
-        */
             }
             if (!empty($request->search)) {
                 $query->where(function ($q) use ($request) {
@@ -1366,22 +1269,14 @@ class FirmController extends Controller
                         );
                 });
             }
-            /*
-        |--------------------------------------------------------------------------
-        | COMPANY FILTER
-        |--------------------------------------------------------------------------
-        */
+
             if (!empty($firmId)) {
                 $query->where(
                     'jobs.firm_id',
                     $firmId
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | CITY FILTER
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->cities)
                 &&
@@ -1392,11 +1287,7 @@ class FirmController extends Controller
                     $request->cities
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | DEPARTMENT FILTER
-        |--------------------------------------------------------------------------
-        */
+
             if (
                 !empty($request->departments)
                 &&
@@ -1407,26 +1298,14 @@ class FirmController extends Controller
                     $request->departments
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | SORTING
-        |--------------------------------------------------------------------------
-        */
+
             $query->orderBy(
                 'jobs.created_at',
                 'desc'
             );
-            /*
-        |--------------------------------------------------------------------------
-        | PAGINATION
-        |--------------------------------------------------------------------------
-        */
+
             $jobs = $query->paginate(10);
-            /*
-        |--------------------------------------------------------------------------
-        | APPLIED & SAVED JOBS
-        |--------------------------------------------------------------------------
-        */
+
             $appliedJobIds = [];
             $savedJobIds = [];
             if ($user && $user->role === 'student') {
@@ -1445,11 +1324,7 @@ class FirmController extends Controller
                     ->pluck('job_id')
                     ->toArray();
             }
-            /*
-        |--------------------------------------------------------------------------
-        | FORMAT DATA
-        |--------------------------------------------------------------------------
-        */
+
             $data = collect($jobs->items())
                 ->map(function ($job) use (
                     $appliedJobIds,
@@ -1520,11 +1395,7 @@ class FirmController extends Controller
                             : null,
                     ];
                 });
-            /*
-        |--------------------------------------------------------------------------
-        | RESPONSE
-        |--------------------------------------------------------------------------
-        */
+
             return response()->json([
                 'status' => true,
                 'message' =>

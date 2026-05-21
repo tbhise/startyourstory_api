@@ -907,7 +907,7 @@ class FirmController extends Controller
             $validator = Validator::make($request->all(), [
                 //'firm_id' => 'required|integer',
                 'title' => 'required|string|max:255',
-                'location' => 'required|string|max:255',
+                // 'location' => 'required|string|max:255',
                 'type' => 'required|string|max:255',
                 'salary' => 'required|string|max:255',
                 'description' => 'required|string',

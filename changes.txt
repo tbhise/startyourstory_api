@@ -1,1 +1,9 @@
 2. Multi selector and single selectore for comapny list
+3. Student Profile section - UI improvement
+4. Student Profile - highest qualification field
+5. Manage Profile fields viewer according to ca_status / looking_for
+6. Firm job post page - fields update
+7. Studnt Dashboard - Show openings from posted job vacancies
+8. On view Jobs Show firm posted jobs default
+9. show jobs based on looking_for
+

@@ -245,6 +245,17 @@ class FirmDashboardController extends Controller
                     'Candidate not found'
                 ]);
             }
+
+
+            /**
+             * Is Shortlisted
+             *
+             */
+
+
+            $is_shortlisted =  DB::table('recruiter_actions')->where('firm_id', $firm->id)->where('student_id', $request->id)->where('action_status', 'shortlisted')->exists();
+
+
             /*
         |--------------------------------------------------------------------------
         | Response
@@ -254,8 +265,8 @@ class FirmDashboardController extends Controller
                 'status' => true,
                 'data' => [
                     ...((array) $users),
-                    'is_premium' =>
-                    $isPremium,
+                    'is_premium' => $isPremium,
+                    'is_shortlisted' => $is_shortlisted ? 'Shortlisted' : null,
                 ]
             ]);
         } catch (\Exception $e) {

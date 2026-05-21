@@ -518,141 +518,13 @@ class UserController extends Controller
             ]);
         }
     }
-    // public function trackProfileView(Request $request, $studentId = null)
-    // {
-    //     try {
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Authenticate Recruiter
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $token = $request->cookie('auth_token');
-    //         if (!$token) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Unauthorized'
-    //             ], 401);
-    //         }
-    //         $user = DB::table('users')
-    //             ->where('api_token', $token)
-    //             ->where('is_deleted', false)
-    //             ->first();
-    //         if (!$user) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Invalid token'
-    //             ], 401);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Recruiter Only
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         if ($user->role !== 'firm') {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Only recruiters can track profile views'
-    //             ], 403);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Get Firm
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $firm = DB::table('firm_profiles')
-    //             ->where('user_id', $user->id)
-    //             ->first();
-    //         if (!$firm) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Firm profile not found'
-    //             ], 404);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Validate Student
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $student = DB::table('users')
-    //             ->where('id', $studentId)
-    //             ->where('role', 'student')
-    //             ->where('is_deleted', false)
-    //             ->first();
-    //         if (!$student) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Student not found'
-    //             ], 404);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Prevent Duplicate View Spam
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $alreadyViewed = DB::table('recruiter_actions')
-    //             ->where('firm_id', $firm->id)
-    //             ->where('student_id', $studentId)
-    //             ->where('action_type', 'profile_viewed')
-    //             ->where(
-    //                 'created_at',
-    //                 '>=',
-    //                 now()->subHours(24)
-    //             )
-    //             ->first();
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Insert Action
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         if (!$alreadyViewed) {
-    //             DB::table('recruiter_actions')->insert([
-    //                 'firm_id' =>
-    //                 $firm->id,
-    //                 'student_id' =>
-    //                 $studentId,
-    //                 'action_type' =>
-    //                 'profile_viewed',
-    //                 'title' =>
-    //                 'Profile viewed',
-    //                 'message' =>
-    //                 $firm->firm_name . ' viewed your profile.',
-    //                 'visible_to' =>
-    //                 'student',
-    //                 'action_status' =>
-    //                 'viewed',
-    //                 'created_at' =>
-    //                 now(),
-    //             ]);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Success Response
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         return response()->json([
-    //             'status' => true,
-    //             'message' =>
-    //             'Profile view tracked successfully',
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         Log::error('Track Profile View API Error', [
-    //             'message' =>
-    //             $e->getMessage(),
-    //             'line' =>
-    //             $e->getLine(),
-    //             'file' =>
-    //             $e->getFile(),
-    //         ]);
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' =>
-    //             'Unexpected server error while tracking profile view.',
-    //         ], 500);
-    //     }
-    // }
+
     public function trackRecruiterAction(Request $request, $studentId = null)
     {
         try {
+
+
+
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -721,6 +593,8 @@ class UserController extends Controller
                     'message' => 'Student not found'
                 ], 404);
             }
+
+
             $actionType = $request->action_type;
             $title = '';
             $message = '';

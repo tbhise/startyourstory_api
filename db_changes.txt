@@ -105,3 +105,37 @@ CREATE TABLE premium_requests (
     ON UPDATE CURRENT_TIMESTAMP
 
 );
+
+----------
+SET SQL_SAFE_UPDATES = 0;
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Uttar Pradesh' WHERE (`id` = '1361');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Uttar Pradesh' WHERE (`id` = '1364');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Uttar Pradesh' WHERE (`id` = '1362');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '413');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '414');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '415');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '416');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '417');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '418');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '419');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '420');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '421');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '422');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Gujarat' WHERE (`id` = '423');
+DELETE FROM `startyourstory`.`city_master` WHERE (`id` = '1356');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Haryana' WHERE (`id` = '424');
+DELETE FROM `startyourstory`.`city_master` WHERE (`id` = '340');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '891');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '892');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '893');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '894');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '895');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '896');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '897');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '898');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '899');
+UPDATE `startyourstory`.`city_master` SET `state_name` = 'Maharashtra' WHERE (`id` = '900');
+update startyourstory.city_master set state_name='Odisha' where state_name='Orissa' and is_active=true;
+update startyourstory.city_master set state_name='PUDUCHERRY' where state_name='Pondicherry' and is_active=true;
+DELETE FROM `startyourstory`.`city_master` WHERE (`id` = '1416');
+update startyourstory.city_master set state_name='Rajastan' where state_name='Rajasthan' and is_active=true;

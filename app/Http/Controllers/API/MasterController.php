@@ -19,9 +19,9 @@ class MasterController extends Controller
             $query = DB::table('city_master')
                 ->select(
                     'id',
-                    'city_name',
-                    'state_name',
-                    DB::raw("CONCAT(city_name, ', ', state_name) as label"),
+                    DB::raw("UPPER(city_name) as city_name"),
+                    DB::raw("UPPER(state_name) as state_name"),
+                    DB::raw("UPPER(CONCAT(city_name, ', ', state_name)) as label"),
                 )
                 ->where('is_active', true);
             if ($request->filled('search')) {

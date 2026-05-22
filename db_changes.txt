@@ -57,3 +57,51 @@ CREATE TABLE `firm_subscriptions` (
   PRIMARY KEY (`id`),
   KEY `index` (`id`,`firm_id`,`plan`,`status`)
 ) ;
+
+--------------------------
+
+ALTER TABLE firm_subscriptions
+ADD COLUMN contact_person VARCHAR(255) NULL AFTER firm_id,
+ADD COLUMN transaction_id VARCHAR(255) NULL AFTER plan,
+ADD COLUMN payment_date DATE NULL AFTER transaction_id,
+ADD COLUMN screenshot_url TEXT NULL AFTER payment_date,
+ADD COLUMN remarks TEXT NULL AFTER screenshot_url;
+
+
+
+CREATE TABLE premium_requests (
+
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    firm_id BIGINT UNSIGNED NOT NULL,
+
+    contact_person VARCHAR(255) NOT NULL,
+
+    firm_name VARCHAR(255) NOT NULL,
+
+    plan VARCHAR(100) NOT NULL,
+
+    transaction_id VARCHAR(255) NOT NULL,
+
+    payment_date DATE NOT NULL,
+
+    screenshot_url TEXT NOT NULL,
+
+    status ENUM(
+        'pending',
+        'approved',
+        'rejected'
+    ) DEFAULT 'pending',
+
+    remarks TEXT NULL,
+
+    approved_by BIGINT UNSIGNED NULL,
+
+    approved_at TIMESTAMP NULL,
+
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+    ON UPDATE CURRENT_TIMESTAMP
+
+);

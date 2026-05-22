@@ -661,7 +661,12 @@ class FirmController extends Controller
         try {
             $id = $request->id;
             $company = DB::table('firm_profiles')
-                ->select('firm_profiles.*', 'users.mobile as primary_mobile')
+                ->select('firm_profiles.*', 'users.mobile as primary_mobile',
+
+                DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
+
+
+                )
                 ->leftJoin('users', 'users.id', 'firm_profiles.user_id')
                 ->where('firm_profiles.id', $id)
                 ->first();
@@ -730,6 +735,7 @@ class FirmController extends Controller
                 'id' => $company->id,
                 'user_id' => $company->user_id,
                 'firm_name' => $company->firm_name,
+                'current_openings' => $company->current_openings,
                 // 'frn' => $company->frn,
                 'city' => $company->city,
                 'address' => $company->address,
@@ -1215,35 +1221,37 @@ class FirmController extends Controller
                 ->where('jobs.status', 'Active');
 
 
-            if ($studentProfile) {
+            // if ($studentProfile) {
 
-                if ($studentProfile->looking_for === 'creator') {
-                    $query->where(
-                        'jobs.hiring_for',
-                        'creator'
-                    );
-                } else if (
-                    $studentProfile->looking_for === 'articleship'
-                ) {
-                    $query->where(
-                        'jobs.hiring_for',
-                        'articleship'
-                    );
-                } else if (
-                    in_array(
-                        $studentProfile->looking_for,
-                        [
-                            'semi-qualified',
-                            'qualified'
-                        ]
-                    )
-                ) {
-                    $query->whereIn(
-                        'jobs.hiring_for',
-                        ['semi-qualified', 'qualified']
-                    );
-                }
-            }
+            //     if ($studentProfile->looking_for === 'creator') {
+            //         $query->where(
+            //             'jobs.hiring_for',
+            //             'creator'
+            //         );
+            //     } else if (
+            //         $studentProfile->looking_for === 'articleship'
+            //     ) {
+            //         $query->where(
+            //             'jobs.hiring_for',
+            //             'articleship'
+            //         );
+            //     } else if (
+            //         in_array(
+            //             $studentProfile->looking_for,
+            //             [
+            //                 'semi-qualified',
+            //                 'qualified'
+            //             ]
+            //         )
+            //     ) {
+            //         $query->whereIn(
+            //             'jobs.hiring_for',
+            //             ['semi-qualified', 'qualified']
+            //         );
+            //     }
+            // }
+
+
             if (!empty($request->search)) {
                 $query->where(function ($q) use ($request) {
                     $search = '%' . $request->search . '%';

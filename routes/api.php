@@ -9,6 +9,8 @@ use App\Http\Controllers\API\UserController;
 use App\Http\Middleware\ApiAuthMiddleware;
 use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
+use App\Http\Controllers\API\NotificationController;
+
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -25,6 +27,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
     Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
     Route::post('/downloadFile',     [FirmDashboardController::class, 'downloadFile']);
+    Route::post('/notifications',     [FirmDashboardController::class, 'getNotifications']);
 
     Route::post('/firm_profile_update',       [FirmController::class, 'firm_profile_update']);
     Route::post('/getFirmProfileDetails',     [FirmController::class, 'getFirmProfileDetails']);
@@ -55,9 +58,14 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/applications/{id}/schedule-interview',     [JobsController::class, 'scheduleInterview']);
     Route::post('/getRecruiterActions',                        [JobsController::class, 'getRecruiterActions']);
     Route::post('/applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
+
+
+    Route::post('/mark-read',        [NotificationController::class, 'markAsRead']);
 });
 
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);
 Route::post('/admin/subscriptions',        [MasterController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [MasterController::class, 'addSubscriptions']);
+Route::post('/premium-requests',           [MasterController::class, 'submitPremiumRequest']);
+Route::post('/admin/premium-requests',            [MasterController::class, 'getPremiumRequests']);

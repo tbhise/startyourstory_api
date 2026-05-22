@@ -1,19 +1,19 @@
 <?php
+
 namespace App\Http\Controllers\API;
+
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\NotificationHelper;
+
 class JobsController extends Controller
 {
     public function applyJob(Request $request, $id)
     {
         try {
-            /*
-        |--------------------------------------------------------------------------
-        | GET USER FROM TOKEN
-        |--------------------------------------------------------------------------
-        */
+
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -31,22 +31,14 @@ class JobsController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | STUDENT ONLY
-        |--------------------------------------------------------------------------
-        */
+
             if ($user->role !== 'student') {
                 return response()->json([
                     'status' => false,
                     'message' => 'Only students can apply for jobs'
                 ], 403);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | CHECK JOB EXISTS
-        |--------------------------------------------------------------------------
-        */
+
             $job = DB::table('jobs')
                 ->where('id', $id)
                 ->where('is_active', 1)
@@ -57,11 +49,7 @@ class JobsController extends Controller
                     'message' => 'Job not found'
                 ], 404);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | CHECK ALREADY APPLIED
-        |--------------------------------------------------------------------------
-        */
+
             $alreadyApplied = DB::table('applications')
                 ->where('job_id', $id)
                 ->where('student_id', $user->id)
@@ -72,11 +60,7 @@ class JobsController extends Controller
                     'message' => 'You already applied for this job'
                 ], 409);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | APPLY JOB
-        |--------------------------------------------------------------------------
-        */
+
             DB::table('applications')->insert([
                 'job_id' => $id,
                 'student_id' => $user->id,
@@ -84,11 +68,29 @@ class JobsController extends Controller
                 'applied_at' => now(),
                 'updated_at' => now(),
             ]);
-            /*
-        |--------------------------------------------------------------------------
-        | SUCCESS RESPONSE
-        |--------------------------------------------------------------------------
-        */
+
+
+            $firm = DB::table('firm_profiles')
+                ->where('id', $job->firm_id)
+                ->first();
+
+            NotificationHelper::create(
+
+                $firm->user_id,
+
+                'New application received',
+
+                $user->name .
+                    ' applied for ' .
+                    $job->title . '.'
+            );
+
+
+
+
+
+
+
             return response()->json([
                 'status' => true,
                 'message' => 'Job applied successfully'

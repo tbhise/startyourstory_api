@@ -1,9 +1,221 @@
-2. Multi selector and single selectore for comapny list
-3. Student Profile section - UI improvement
-4. Student Profile - highest qualification field
-5. Manage Profile fields viewer according to ca_status / looking_for
-6. Firm job post page - fields update
-7. Studnt Dashboard - Show openings from posted job vacancies
-8. On view Jobs Show firm posted jobs default
-9. show jobs based on looking_for
+Please test the CA Job Portal thoroughly from scratch by registering as BOTH:
 
+1. Student / CA Candidate
+2. Firm / Recruiter
+
+Please test on:
+• Desktop
+• Mobile devices
+• Chrome / Edge / Safari if possible
+
+━━━━━━━━━━━━━━━━━━━
+AUTHENTICATION TESTING
+━━━━━━━━━━━━━━━━━━━
+
+1. Student Registration
+   • Register as Articleship student
+   • Register as Semi-qualified CA
+   • Register as Qualified CA
+   • Upload resume and marksheets
+   • Verify validations and required fields
+
+2. Firm Registration
+   • Create recruiter account
+   • Add firm details/logo
+   • Verify profile creation flow
+
+3. Login / Logout
+   • Login with valid credentials
+   • Login with wrong password
+   • Logout and login again
+   • Test in incognito mode
+   • Refresh page after login
+   • Verify protected routes
+
+4. Session Handling
+   • Open multiple tabs
+   • Refresh browser
+   • Verify session persists correctly
+
+━━━━━━━━━━━━━━━━━━━
+STUDENT FLOW TESTING
+━━━━━━━━━━━━━━━━━━━
+
+1. Dashboard / Discover Jobs
+   • Jobs load correctly
+   • Search works
+   • Filters work properly
+   • Company filter redirect works
+   • Job cards display properly
+   • Mobile responsiveness
+
+2. Job Details
+   • Open job details
+   • Apply for job
+   • Prevent duplicate applications
+   • Save/unsave jobs
+   • Verify company profile section
+
+3. Student Profile
+   • Edit profile
+   • Upload/update resume
+   • Upload marksheets
+   • Exposure preferences display correctly
+   • Skills list UI works properly
+   • Empty values handled correctly
+
+4. Recruiter Activity
+   • Profile views appear
+   • Shortlist actions appear
+   • Interview notifications appear
+   • Read/unread status works
+   • Mark single notification as read
+   • Mark all as read
+   • Accept/reject interview requests
+   • Request interview reschedule
+
+5. Notifications
+   • Notification badge count updates correctly
+   • Dropdown opens properly
+   • Read state persists after refresh
+
+━━━━━━━━━━━━━━━━━━━
+FIRM / RECRUITER FLOW TESTING
+━━━━━━━━━━━━━━━━━━━
+
+1. Recruiter Dashboard
+   • Candidate listing loads
+   • Tabs work properly
+   • Filters work properly
+   • City dropdown works
+   • Mobile responsiveness
+
+2. Candidate Profiles
+   • Open student profile
+   • View resume
+   • Download resume (premium)
+   • Save candidate
+   • Shortlist candidate
+   • Verify recruiter actions are created
+
+3. Job Posting
+   • Create job
+   • Edit job
+   • Delete job
+   • Auto-generated title works
+   • Hiring type values work properly
+   • Department selection works
+
+4. Applications
+   • Applications load properly
+   • Schedule interview
+   • Reject candidate
+   • Select candidate
+   • Send interview notes/messages
+
+5. Notifications
+   • New application notifications appear
+   • Read/unread works
+   • Mark all read works
+
+━━━━━━━━━━━━━━━━━━━
+PREMIUM FLOW TESTING
+━━━━━━━━━━━━━━━━━━━
+
+1. Non-Premium Firm
+   • Resume download locked
+   • Blur overlay visible
+   • Upgrade CTA visible
+
+2. Premium Firm
+   • Resume unlock works
+   • Candidate details visible
+   • Premium badge/status works
+
+3. Payment Flow
+   • Upgrade page opens
+   • Upload payment screenshot
+   • Premium approval request created
+
+━━━━━━━━━━━━━━━━━━━
+ADMIN PANEL TESTING
+━━━━━━━━━━━━━━━━━━━
+
+1. Admin Login
+   • Login works correctly
+
+2. Firm Subscription Management
+   • Search firms
+   • Add subscription manually
+   • Approve premium requests
+   • Reject premium requests
+
+━━━━━━━━━━━━━━━━━━━
+RESPONSIVE UI TESTING
+━━━━━━━━━━━━━━━━━━━
+
+Please verify:
+• Navbar responsiveness
+• Mobile menus
+• Dialogs/modals
+• Buttons alignment
+• Tables/cards on mobile
+• No horizontal scrolling
+• No broken layouts
+
+━━━━━━━━━━━━━━━━━━━
+EDGE CASE TESTING
+━━━━━━━━━━━━━━━━━━━
+
+Please test:
+• Empty data states
+• Broken image handling
+• Invalid file uploads
+• Large text inputs
+• Slow internet/network throttling
+• Duplicate clicks/actions
+• Multiple notifications
+• Refresh during API calls
+
+━━━━━━━━━━━━━━━━━━━
+CONSOLE / PERFORMANCE TESTING
+━━━━━━━━━━━━━━━━━━━
+
+Please check browser console for:
+• React warnings
+• API errors
+• Hydration issues
+• Duplicate key warnings
+• Any uncaught exceptions
+
+━━━━━━━━━━━━━━━━━━━
+IMPORTANT INTERACTION FLOWS
+━━━━━━━━━━━━━━━━━━━
+
+Please test complete end-to-end flows such as:
+
+1.
+
+Firm registers → posts job → student applies → recruiter reviews application → student receives notification
+
+2.
+
+Recruiter views profile → student receives recruiter activity notification
+
+3.
+
+Recruiter shortlists student → student sees unread notification → mark as read works
+
+4.
+
+Recruiter schedules interview → student responds → recruiter sees updated response
+
+━━━━━━━━━━━━━━━━━━━
+PLEASE SHARE
+━━━━━━━━━━━━━━━━━━━
+
+For every issue found, please provide:
+• Steps to reproduce
+• Screenshot or screen recording
+• Device/browser used
+• Expected behavior vs actual behavior

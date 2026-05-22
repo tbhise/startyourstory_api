@@ -10,35 +10,28 @@ use App\Helpers\SubscriptionHelper;
 
 class FirmDashboardController extends Controller
 {
+
     public function getCandidates(Request $request)
     {
         try {
+            $authUser = $request->attributes->get('auth_user');
+            $firm = DB::table('firm_profiles')->where('user_id', $authUser->id)->first();
             $pageSize = $request->page_size ?? 12;
             $query = DB::table('users')
                 ->select(
                     'users.id',
                     'users.name',
-                    'users.email',
-                    'users.mobile',
                     'student_profiles.looking_for',
-                    'student_profiles.srn',
                     'student_profiles.address',
                     'student_profiles.gender',
                     'student_profiles.passing_month',
-                    'student_profiles.ca_status',
-                    'student_profiles.articleship_status',
-                    'student_profiles.preferred_location',
-                    'student_profiles.it_oc_status',
                     'student_profiles.exposure_type',
                     'student_profiles.core_department',
-                    'student_profiles.attempts',
-                    'student_profiles.linkedin_url',
-                    'student_profiles.portfolio_url',
-                    'student_profiles.marksheet_path',
                     'student_profiles.resume_path',
-                    'student_profiles.created_at',
-                    'student_profiles.updated_at',
-                    'student_profiles.registration_type'
+                    'student_profiles.registration_type',
+                    DB::raw("
+                    CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE recruiter_actions.student_id = users.id AND recruiter_actions.firm_id = {$firm->id}
+                            AND recruiter_actions.action_type = 'candidate_saved') THEN 1 ELSE 0 END as is_saved")
                 )
                 ->leftJoin('student_profiles', 'users.id', '=', 'student_profiles.user_id')
                 ->where('users.is_deleted', false)
@@ -52,7 +45,6 @@ class FirmDashboardController extends Controller
                 $search = trim($request->search);
                 $query->where(function ($q) use ($search) {
                     $q->where('users.name', 'like', "%{$search}%")
-                        ->orWhere('users.email', 'like', "%{$search}%")
                         ->orWhere('student_profiles.address', 'like', "%{$search}%")
                         ->orWhere('student_profiles.core_department', 'like', "%{$search}%");
                 });
@@ -66,7 +58,10 @@ class FirmDashboardController extends Controller
                 $cities = is_array($request->cities)
                     ? $request->cities
                     : [$request->cities];
-                $query->whereIn('student_profiles.address', $cities);
+                $query->whereIn(
+                    'student_profiles.address',
+                    $cities
+                );
             }
             /*
         |--------------------------------------------------------------------------
@@ -77,47 +72,38 @@ class FirmDashboardController extends Controller
                 $genders = is_array($request->genders)
                     ? $request->genders
                     : [$request->genders];
-                $query->whereIn('student_profiles.gender', $genders);
+                $query->whereIn(
+                    'student_profiles.gender',
+                    $genders
+                );
             }
             /*
         |--------------------------------------------------------------------------
-        | Registration Type
-        |--------------------------------------------------------------------------
-        | Provisional / Confirm
-        |--------------------------------------------------------------------------
-        */
-            if ($request->filled('registration_types')) {
-                $registrationTypes = is_array($request->registration_types)
-                    ? $request->registration_types
-                    : [$request->registration_types];
-                $query->whereIn('student_profiles.articleship_status', $registrationTypes);
-            }
-            /*
-        |--------------------------------------------------------------------------
-        | Departments
+        | Department Filter
         |--------------------------------------------------------------------------
         */
             if ($request->filled('departments')) {
                 $departments = is_array($request->departments)
                     ? $request->departments
                     : [$request->departments];
-                $query->whereIn('student_profiles.core_department', $departments);
+                $query->whereIn(
+                    'student_profiles.core_department',
+                    $departments
+                );
             }
             /*
         |--------------------------------------------------------------------------
         | Registered For
-        |--------------------------------------------------------------------------
-        | Articleship
-        | Semi Qualified Jobs
-        | Qualified Jobs
-        | Creator or Freelancer
         |--------------------------------------------------------------------------
         */
             if ($request->filled('registered_for')) {
                 $registeredFor = is_array($request->registered_for)
                     ? $request->registered_for
                     : [$request->registered_for];
-                $query->whereIn('student_profiles.looking_for', $registeredFor);
+                $query->whereIn(
+                    'student_profiles.looking_for',
+                    $registeredFor
+                );
             }
             /*
         |--------------------------------------------------------------------------
@@ -128,7 +114,33 @@ class FirmDashboardController extends Controller
                 $passingMonths = is_array($request->passing_months)
                     ? $request->passing_months
                     : [$request->passing_months];
-                $query->whereIn('student_profiles.passing_month', $passingMonths);
+                $query->whereIn(
+                    'student_profiles.passing_month',
+                    $passingMonths
+                );
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Saved Only
+        |--------------------------------------------------------------------------
+        */
+            if ($request->saved_only) {
+                $query->whereExists(function ($q) use ($firm) {
+                    $q->select(DB::raw(1))
+                        ->from('recruiter_actions')
+                        ->whereColumn(
+                            'recruiter_actions.student_id',
+                            'users.id'
+                        )
+                        ->where(
+                            'recruiter_actions.firm_id',
+                            $firm->id
+                        )
+                        ->where(
+                            'recruiter_actions.action_type',
+                            'candidate_saved'
+                        );
+                });
             }
             /*
         |--------------------------------------------------------------------------
@@ -137,16 +149,22 @@ class FirmDashboardController extends Controller
         */
             switch ($request->sort) {
                 case 'oldest':
-                    $query->orderBy('student_profiles.created_at', 'asc');
+                    $query->orderBy(
+                        'student_profiles.created_at',
+                        'asc'
+                    );
                     break;
                 case 'name':
-                    $query->orderBy('users.name', 'asc');
-                    break;
-                case 'passing_month':
-                    $query->orderBy('student_profiles.passing_month', 'asc');
+                    $query->orderBy(
+                        'users.name',
+                        'asc'
+                    );
                     break;
                 default:
-                    $query->orderBy('student_profiles.created_at', 'desc');
+                    $query->orderBy(
+                        'student_profiles.created_at',
+                        'desc'
+                    );
                     break;
             }
             /*
@@ -158,15 +176,23 @@ class FirmDashboardController extends Controller
             return response()->json([
                 'status' => true,
                 'data' => [
-                    'students' => $users->items(),
-                    'current_page' => $users->currentPage(),
-                    'last_page' => $users->lastPage(),
-                    'next_page_url' => $users->nextPageUrl(),
-                    'total' => $users->total(),
+                    'students' =>
+                    $users->items(),
+                    'current_page' =>
+                    $users->currentPage(),
+                    'last_page' =>
+                    $users->lastPage(),
+                    'next_page_url' =>
+                    $users->nextPageUrl(),
+                    'total' =>
+                    $users->total(),
                 ]
             ]);
         } catch (\Exception $e) {
-            Log::error('Get Candidates Error: ' . $e->getMessage());
+            Log::error(
+                'Get Candidates Error: ' .
+                    $e->getMessage()
+            );
             return response()->json([
                 'status' => false,
                 'message' => 'Unexpected server error..!'
@@ -245,17 +271,11 @@ class FirmDashboardController extends Controller
                     'Candidate not found'
                 ]);
             }
-
-
             /**
              * Is Shortlisted
              *
              */
-
-
             $is_shortlisted =  DB::table('recruiter_actions')->where('firm_id', $firm->id)->where('student_id', $request->id)->where('action_status', 'shortlisted')->exists();
-
-
             /*
         |--------------------------------------------------------------------------
         | Response
@@ -281,7 +301,6 @@ class FirmDashboardController extends Controller
             ]);
         }
     }
-
     public function downloadFile(Request $request)
     {
         try {
@@ -335,6 +354,36 @@ class FirmDashboardController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Something went wrong'
+            ]);
+        }
+    }
+
+
+
+    public function getNotifications(Request $request)
+    {
+        try {
+
+            $authUser = $request->attributes->get('auth_user');
+            // return $authUser;
+            $notifications = DB::table('notifications')
+                ->where('user_id', $authUser->id)
+                ->orderBy('created_at', 'desc')
+                ->limit(25)
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => $notifications
+            ]);
+        } catch (\Exception $e) {
+            Log::error(
+                'Get Notifications Error: ' .
+                    $e->getMessage()
+            );
+            return response()->json([
+                'status' => false,
+                'message' => 'Unexpected server error'
             ]);
         }
     }

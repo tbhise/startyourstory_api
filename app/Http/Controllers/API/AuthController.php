@@ -99,9 +99,9 @@ class AuthController extends Controller
     {
         try {
 
-            // Log::info($request->headers->all());
+
             $token = $request->cookie('auth_token');
-         
+
             if (!$token) {
                 return response()->json([
                     'status' => false,
@@ -153,9 +153,7 @@ class AuthController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-
             Log::error('Me API Error: ' . $e->getMessage());
-
             return response()->json([
                 'status' => false,
                 'message' => 'Server error'

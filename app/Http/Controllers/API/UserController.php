@@ -1,10 +1,13 @@
 <?php
+
 namespace App\Http\Controllers\API;
+
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+
 class UserController extends Controller
 {
     public function registerStudent(Request $request)
@@ -23,7 +26,6 @@ class UserController extends Controller
                     'message' => $validator->errors()->first()
                 ]);
             }
-            // create user
             $userId = DB::table('users')->insertGetId([
                 'name' => $request->name,
                 'email' => $request->email,
@@ -33,7 +35,6 @@ class UserController extends Controller
                 'created_at' => now(),
                 'updated_at' => now()
             ]);
-            // create profile
             DB::table('student_profiles')->insert([
                 'user_id' => $userId,
                 'looking_for' => $request->looking_for,
@@ -56,14 +57,8 @@ class UserController extends Controller
     }
     public function updateProfile(Request $request)
     {
-        // Log::info($request->all());
         DB::beginTransaction();
         try {
-            /*
-        |--------------------------------------------------------------------------
-        | Validation
-        |--------------------------------------------------------------------------
-        */
             $validator = Validator::make($request->all(), [
                 'looking_for' => 'nullable|string',
                 'srn' => 'nullable|string',
@@ -97,11 +92,6 @@ class UserController extends Controller
                     'message' => $validator->errors()->first()
                 ]);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Auth User
-        |--------------------------------------------------------------------------
-        */
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -119,22 +109,10 @@ class UserController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Existing Profile
-        |--------------------------------------------------------------------------
-        */
             $existingProfile = DB::table('student_profiles')
-                ->where('user_id', $user->id)
-                ->first();
-            /*
-        |--------------------------------------------------------------------------
-        | File Uploads
-        |--------------------------------------------------------------------------
-        */
+                ->where('user_id', $user->id)->first();
             $resumePath = null;
             $marksheetPath = null;
-            // Resume Upload
             if ($request->hasFile('resume_path')) {
                 $resume = $request->file('resume_path');
                 $resumeName =
@@ -146,7 +124,6 @@ class UserController extends Controller
                     'public'
                 );
             }
-            // Marksheet Upload
             if ($request->hasFile('marksheet_path')) {
                 $marksheet = $request->file('marksheet_path');
                 $marksheetName =
@@ -158,17 +135,7 @@ class UserController extends Controller
                     'public'
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Registration Type Logic
-        |--------------------------------------------------------------------------
-        */
             $registrationType = 'provisional';
-            /*
-        |--------------------------------------------------------------------------
-        | Semi Qualified / Qualified
-        |--------------------------------------------------------------------------
-        */
             if (
                 in_array(
                     strtolower(trim($request->looking_for ?? '')),
@@ -176,12 +143,7 @@ class UserController extends Controller
                 )
             ) {
                 $registrationType = 'confirm';
-            }
-            /*
-        |--------------------------------------------------------------------------
-        | Articleship Logic
-        |--------------------------------------------------------------------------
-        */ elseif (
+            } elseif (
                 strtolower(trim($request->looking_for ?? '')) === 'articleship'
             ) {
                 $caStatus =
@@ -200,11 +162,6 @@ class UserController extends Controller
                     $registrationType = 'confirm';
                 }
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Normalize Arrays
-        |--------------------------------------------------------------------------
-        */
             $preferredLocations = [];
             if (!empty($request->preferred_locations_json)) {
                 $preferredLocations =
@@ -218,90 +175,40 @@ class UserController extends Controller
                 $exposureTypes =
                     explode(',', $request->exposure_type);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Prepare Data
-        |--------------------------------------------------------------------------
-        */
             $profileData = [
                 'user_id' => $user->id,
                 'looking_for' => $request->looking_for,
                 'srn' => $request->srn,
-                /*
-            |--------------------------------------------------------------------------
-            | Address Compatibility
-            |--------------------------------------------------------------------------
-            */
                 'address' => $request->city,
                 'city' => $request->city,
                 'gender' => $request->gender,
-                /*
-            |--------------------------------------------------------------------------
-            | Articleship Fields
-            |--------------------------------------------------------------------------
-            */
                 'passing_month' => $request->passing_month,
                 'ca_status' => $request->ca_status,
                 'registration_type' => $registrationType,
                 'articleship_status' => $request->articleship_status,
-                /*
-            |--------------------------------------------------------------------------
-            | Preferences
-            |--------------------------------------------------------------------------
-            */
                 'preferred_location' => json_encode($preferredLocations),
                 'it_oc_status' => $request->it_oc_status,
-                /*
-            |--------------------------------------------------------------------------
-            | Exposure
-            |--------------------------------------------------------------------------
-            */
                 'exposure_type' => json_encode($exposureTypes),
                 'core_department' => $request->core_department,
                 'attempts' => $request->attempts,
-                /*
-            |--------------------------------------------------------------------------
-            | Links
-            |--------------------------------------------------------------------------
-            */
                 'linkedin_url' => $request->linkedin_url,
                 'portfolio_url' => $request->portfolio_url,
-                /*
-            |--------------------------------------------------------------------------
-            | Experience
-            |--------------------------------------------------------------------------
-            */
                 'current_firm_id' => $request->current_firm_id,
                 'current_firm_name' => $request->current_firm_name,
                 'experience_years' => $request->experience_years,
                 'industry_worked_in' => $request->industry_worked_in,
                 'experience_department' => $request->experience_department,
                 'why_should_hire_you' => $request->why_should_hire_you,
-                /*
-            |--------------------------------------------------------------------------
-            | CTC
-            |--------------------------------------------------------------------------
-            */
                 'current_ctc' => $request->current_ctc,
                 'expected_ctc' => $request->expected_ctc,
                 'updated_at' => now(),
             ];
-            /*
-        |--------------------------------------------------------------------------
-        | File Paths
-        |--------------------------------------------------------------------------
-        */
             if ($resumePath) {
                 $profileData['resume_path'] = $resumePath;
             }
             if ($marksheetPath) {
                 $profileData['marksheet_path'] = $marksheetPath;
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Insert / Update
-        |--------------------------------------------------------------------------
-        */
             if ($existingProfile) {
                 DB::table('student_profiles')
                     ->where('user_id', $user->id)
@@ -311,30 +218,13 @@ class UserController extends Controller
                 DB::table('student_profiles')
                     ->insert($profileData);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Profile Completion Logic
-        |--------------------------------------------------------------------------
-        */
             $isProfileComplete = false;
-            Log::info('===== PROFILE COMPLETION DEBUG START =====');
-            Log::info('Looking For', [
-                'looking_for' => $request->looking_for,
-            ]);
             if ($request->looking_for === 'articleship') {
-                Log::info('Checking Articleship Profile');
                 $isProfileComplete =
                     !empty($request->srn) &&
                     !empty($request->city) &&
                     !empty($request->gender);
-                Log::info('Basic Articleship Fields', [
-                    'srn' => !empty($request->srn),
-                    'city' => !empty($request->city),
-                    'gender' => !empty($request->gender),
-                    'basic_complete' => $isProfileComplete,
-                ]);
                 if ($registrationType === 'confirm') {
-                    Log::info('Checking Confirm Registration Fields');
                     $confirmFieldsComplete =
                         !empty($request->preferred_locations_json) &&
                         !empty($request->it_oc_status) &&
@@ -348,15 +238,6 @@ class UserController extends Controller
                             $marksheetPath ||
                             !empty($existingProfile->marksheet_path ?? null)
                         );
-                    Log::info('Confirm Fields Status', [
-                        'preferred_locations_json' => !empty($request->preferred_locations_json),
-                        'it_oc_status' => !empty($request->it_oc_status),
-                        'exposure_type' => !empty($request->exposure_type),
-                        'core_department' => !empty($request->core_department),
-                        'resume_exists' => ($resumePath || !empty($existingProfile->resume_path ?? null)),
-                        'marksheet_exists' => ($marksheetPath || !empty($existingProfile->marksheet_path ?? null)),
-                        'confirm_complete' => $confirmFieldsComplete,
-                    ]);
                     $isProfileComplete =
                         $isProfileComplete &&
                         $confirmFieldsComplete;
@@ -367,7 +248,6 @@ class UserController extends Controller
                     ['semi-qualified', 'qualified']
                 )
             ) {
-                Log::info('Checking Semi/Qualified Profile');
                 $isProfileComplete =
                     !empty($request->srn) &&
                     !empty($request->city) &&
@@ -379,52 +259,15 @@ class UserController extends Controller
                         $resumePath ||
                         !empty($existingProfile->resume_path ?? null)
                     );
-                Log::info('Semi/Qualified Fields Status', [
-                    'srn' =>
-                    !empty($request->srn),
-                    'city' =>
-                    !empty($request->city),
-                    'gender' =>
-                    !empty($request->gender),
-                    'experience_years' =>
-                    !empty($request->experience_years),
-                    'current_ctc' =>
-                    !empty($request->current_ctc),
-                    'expected_ctc' =>
-                    !empty($request->expected_ctc),
-                    'resume_exists' => (
-                        $resumePath ||
-                        !empty($existingProfile->resume_path ?? null)
-                    ),
-                    'profile_complete' =>
-                    $isProfileComplete,
-                ]);
             } elseif ($request->looking_for === 'creator') {
-                Log::info('Checking Creator Profile');
                 $isProfileComplete = !empty($request->city);
-                Log::info('Creator Fields Status', [
-                    'city' =>
-                    !empty($request->city),
-                    'profile_complete' =>
-                    $isProfileComplete,
-                ]);
             }
-            Log::info('FINAL PROFILE COMPLETION STATUS', [
-                'isProfileComplete' => $isProfileComplete,
-            ]);
-            Log::info('===== PROFILE COMPLETION DEBUG END =====');
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
                     'profile_completed' => $isProfileComplete ? 1 : 0,
-                    // 'profile_completed' => $isProfileComplete ? 1 : 1,
                     'updated_at' => now()
                 ]);
-            /*
-        |--------------------------------------------------------------------------
-        | Commit
-        |--------------------------------------------------------------------------
-        */
             DB::commit();
             return response()->json([
                 'status' => true,
@@ -518,13 +361,9 @@ class UserController extends Controller
             ]);
         }
     }
-
     public function trackRecruiterAction(Request $request, $studentId = null)
     {
         try {
-
-
-
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -548,31 +387,6 @@ class UserController extends Controller
                     'message' => 'Only recruiters can perform this action'
                 ], 403);
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Validate Action Type
-        |--------------------------------------------------------------------------
-        */
-            // $validator = Validator::make(
-            //     $request->all(),
-            //     [
-            //         'action_type' =>
-            //         'required|in:
-            //         profile_viewed,
-            //         candidate_shortlisted,
-            //         candidate_rejected,
-            //         candidate_saved',
-            //     ]
-            // );
-            // if ($validator->fails()) {
-            //     return response()->json([
-            //         'status' => false,
-            //         'message' =>
-            //         $validator
-            //             ->errors()
-            //             ->first(),
-            //     ], 422);
-            // }
             $firm = DB::table('firm_profiles')
                 ->where('user_id', $user->id)
                 ->first();
@@ -593,8 +407,6 @@ class UserController extends Controller
                     'message' => 'Student not found'
                 ], 404);
             }
-
-
             $actionType = $request->action_type;
             $title = '';
             $message = '';
@@ -605,7 +417,7 @@ class UserController extends Controller
                     $message = $firm->firm_name . ' viewed your profile.';
                     $actionStatus = 'viewed';
                     break;
-                case 'candidate_shortlisted':
+                case 'shortlisted':
                     $title = 'Profile shortlisted';
                     $message = $firm->firm_name . ' shortlisted your profile.';
                     $actionStatus = 'shortlisted';
@@ -617,7 +429,7 @@ class UserController extends Controller
                     break;
                 case 'candidate_saved':
                     $title = 'Profile saved';
-                    $message = $firm->firm_name . ' saved your profile for future opportunities.';
+                    $message = $firm->firm_name . ' saved your profile.';
                     $actionStatus = 'saved';
                     break;
             }
@@ -638,7 +450,6 @@ class UserController extends Controller
                         'visible_to' => 'student',
                         'action_status' => $actionStatus,
                         'created_at' => now(),
-                        // 'updated_at' =>now(),
                     ]);
             }
             return response()->json([

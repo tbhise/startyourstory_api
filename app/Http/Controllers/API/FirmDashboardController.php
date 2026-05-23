@@ -285,6 +285,9 @@ class FirmDashboardController extends Controller
                 'status' => true,
                 'data' => [
                     ...((array) $users),
+                    'profile_image' => $users->profile_image
+                        ? asset('storage/' . $users->profile_image)
+                        : null,
                     'is_premium' => $isPremium,
                     'is_shortlisted' => $is_shortlisted ? 'Shortlisted' : null,
                 ]

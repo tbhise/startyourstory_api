@@ -139,3 +139,26 @@ update startyourstory.city_master set state_name='Odisha' where state_name='Oris
 update startyourstory.city_master set state_name='PUDUCHERRY' where state_name='Pondicherry' and is_active=true;
 DELETE FROM `startyourstory`.`city_master` WHERE (`id` = '1416');
 update startyourstory.city_master set state_name='Rajastan' where state_name='Rajasthan' and is_active=true;
+----
+CREATE TABLE admin_users (
+
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    name VARCHAR(255) NOT NULL,
+
+    email VARCHAR(255) NOT NULL UNIQUE,
+
+    password VARCHAR(255) NOT NULL,
+
+    api_token VARCHAR(255) NULL,
+
+    role VARCHAR(50) DEFAULT 'admin',
+
+    is_active BOOLEAN DEFAULT TRUE,
+
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+    ON UPDATE CURRENT_TIMESTAMP
+
+);

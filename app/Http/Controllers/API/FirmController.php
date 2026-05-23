@@ -661,9 +661,11 @@ class FirmController extends Controller
         try {
             $id = $request->id;
             $company = DB::table('firm_profiles')
-                ->select('firm_profiles.*', 'users.mobile as primary_mobile',
+                ->select(
+                    'firm_profiles.*',
+                    'users.mobile as primary_mobile',
 
-                DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
+                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
 
 
                 )

@@ -10,7 +10,7 @@ use App\Http\Middleware\ApiAuthMiddleware;
 use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
 use App\Http\Controllers\API\NotificationController;
-
+use App\Http\Controllers\API\AdminController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -63,9 +63,16 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/mark-read',        [NotificationController::class, 'markAsRead']);
 });
 
+
+
+Route::post('/admin/login',   [AdminController::class, 'login']);
+Route::get('/admin/me',       [AdminController::class, 'me']);
+Route::post('/admin/logout',  [AdminController::class, 'logout']
+);
+
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);
 Route::post('/admin/subscriptions',        [MasterController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [MasterController::class, 'addSubscriptions']);
 Route::post('/premium-requests',           [MasterController::class, 'submitPremiumRequest']);
-Route::post('/admin/premium-requests',            [MasterController::class, 'getPremiumRequests']);
+Route::post('/admin/premium-requests',     [MasterController::class, 'getPremiumRequests']);

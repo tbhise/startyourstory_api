@@ -71,7 +71,16 @@ Route::post('/admin/logout',  [AdminController::class, 'logout']);
 
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);
-Route::post('/admin/subscriptions',        [MasterController::class, 'getAdminSubscriptions']);
-Route::post('/admin/addSubscriptions',     [MasterController::class, 'addSubscriptions']);
-Route::post('/premium-requests',           [MasterController::class, 'submitPremiumRequest']);
-Route::post('/admin/premium-requests',     [MasterController::class, 'getPremiumRequests']);
+
+Route::post('/admin/subscriptions',        [AdminController::class, 'getAdminSubscriptions']);
+Route::post('/admin/addSubscriptions',     [AdminController::class, 'addSubscriptions']);
+Route::post('/premium-requests',           [AdminController::class, 'submitPremiumRequest']);
+Route::post('/admin/premium-requests',     [AdminController::class, 'getPremiumRequests']);
+Route::post(
+    '/admin/premium-requests/{id}/approve',
+    [AdminController::class, 'approvePremiumRequest']
+);
+Route::post(
+    '/admin/premium-requests/{id}/reject',
+    [AdminController::class, 'rejectPremiumRequest']
+);

@@ -67,8 +67,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
 Route::post('/admin/login',   [AdminController::class, 'login']);
 Route::get('/admin/me',       [AdminController::class, 'me']);
-Route::post('/admin/logout',  [AdminController::class, 'logout']
-);
+Route::post('/admin/logout',  [AdminController::class, 'logout']);
 
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);

@@ -72,38 +72,24 @@ ADD COLUMN remarks TEXT NULL AFTER screenshot_url;
 CREATE TABLE premium_requests (
 
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-
     firm_id BIGINT UNSIGNED NOT NULL,
-
     contact_person VARCHAR(255) NOT NULL,
-
     firm_name VARCHAR(255) NOT NULL,
-
     plan VARCHAR(100) NOT NULL,
-
     transaction_id VARCHAR(255) NOT NULL,
-
     payment_date DATE NOT NULL,
-
     screenshot_url TEXT NOT NULL,
-
     status ENUM(
         'pending',
         'approved',
         'rejected'
     ) DEFAULT 'pending',
-
     remarks TEXT NULL,
-
     approved_by BIGINT UNSIGNED NULL,
-
     approved_at TIMESTAMP NULL,
-
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
     ON UPDATE CURRENT_TIMESTAMP
-
 );
 
 ----------
@@ -162,3 +148,13 @@ CREATE TABLE admin_users (
     ON UPDATE CURRENT_TIMESTAMP
 
 );
+
+
+ALTER TABLE `startyourstory`.`premium_requests`
+ADD COLUMN `amount` VARCHAR(45) NULL AFTER `plan`;
+
+
+ALTER TABLE users
+ADD COLUMN referral_code VARCHAR(50) UNIQUE NULL,
+ADD COLUMN referred_by BIGINT UNSIGNED NULL,
+ADD COLUMN referral_count INT DEFAULT 0;

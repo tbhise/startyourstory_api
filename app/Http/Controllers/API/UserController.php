@@ -7,54 +7,165 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
+    // public function registerStudent(Request $request)
+    // {
+    //     DB::beginTransaction();
+    //     try {
+    //         $validator = Validator::make($request->all(), [
+    //             'name' => 'required',
+    //             'email' => 'required|email|unique:users,email',
+    //             'mobile' => 'required|unique:users,mobile',
+    //             'password' => 'required|min:6|max:10',
+    //         ]);
+    //         if ($validator->fails()) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => $validator->errors()->first()
+    //             ]);
+    //         }
+    //         $userId = DB::table('users')->insertGetId([
+    //             'name' => $request->name,
+    //             'email' => $request->email,
+    //             'mobile' => $request->mobile,
+    //             'password' => bcrypt($request->password),
+    //             'role' => 'student',
+    //             'created_at' => now(),
+    //             'updated_at' => now()
+    //         ]);
+    //         DB::table('student_profiles')->insert([
+    //             'user_id' => $userId,
+    //             'looking_for' => $request->looking_for,
+    //             'created_at' => now(),
+    //             'updated_at' => now()
+    //         ]);
+    //         DB::commit();
+    //         return response()->json([
+    //             'status' => true,
+    //             'message' => 'Candidate Registration successfull..!'
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         DB::rollBack();
+    //         Log::error('Candidate Registration Error: ' . $e->getMessage());
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => 'Candidate Registration failed: Server error'
+    //         ]);
+    //     }
+    // }
+
     public function registerStudent(Request $request)
     {
         DB::beginTransaction();
+
         try {
             $validator = Validator::make($request->all(), [
                 'name' => 'required',
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:10',
+                'referral_code' => 'nullable|string|max:50',
             ]);
+
             if ($validator->fails()) {
                 return response()->json([
                     'status' => false,
                     'message' => $validator->errors()->first()
                 ]);
             }
-            $userId = DB::table('users')->insertGetId([
-                'name' => $request->name,
-                'email' => $request->email,
-                'mobile' => $request->mobile,
-                'password' => bcrypt($request->password),
-                'role' => 'student',
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
-            DB::table('student_profiles')->insert([
-                'user_id' => $userId,
-                'looking_for' => $request->looking_for,
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
+
+
+            $referrer = null;
+
+            if ($request->referral_code) {
+                $referrer = DB::table('users')
+                    ->where('referral_code', strtoupper($request->referral_code))
+                    ->first();
+
+                if (!$referrer) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Invalid referral code'
+                    ]);
+                }
+            }
+
+            $namePrefix = strtoupper(
+                substr(preg_replace('/[^A-Za-z]/', '', $request->name), 0, 4)
+            );
+
+
+
+            do {
+                $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+                $randomString = '';
+
+                for ($i = 0; $i < 5; $i++) {
+
+                    $randomString .= $characters[rand(0, strlen($characters) - 1)];
+                }
+
+                $myReferralCode = $namePrefix . $randomString;
+            } while (
+                DB::table('users')
+                ->where('referral_code', $myReferralCode)
+                ->exists()
+            );
+
+
+            $userId = DB::table('users')
+                ->insertGetId([
+                    'name' => $request->name,
+                    'email' => $request->email,
+                    'mobile' => $request->mobile,
+                    'password' => bcrypt($request->password),
+                    'role' => 'student',
+                    'referral_code' => $myReferralCode,
+                    'referred_by' => $referrer?->id,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+
+
+            DB::table('student_profiles')
+                ->insert([
+                    'user_id' => $userId,
+                    'looking_for' => $request->looking_for,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+
+            if ($referrer) {
+
+                DB::table('users')
+                    ->where('id', $referrer->id)
+                    ->increment('referral_count');
+            }
+
             DB::commit();
             return response()->json([
                 'status' => true,
-                'message' => 'Candidate Registration successfull..!'
+                'message' => 'Candidate Registration successful..!',
+                'data' => [
+                    'referral_code' => $myReferralCode
+                ]
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Candidate Registration Error: ' . $e->getMessage());
+
             return response()->json([
                 'status' => false,
                 'message' => 'Candidate Registration failed: Server error'
             ]);
         }
     }
+
+
     public function updateProfile(Request $request)
     {
         DB::beginTransaction();

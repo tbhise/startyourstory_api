@@ -54,6 +54,7 @@ class AdminController extends Controller
             }
 
             $token = Str::random(80);
+            Log::info($admin->id);
             DB::table('admin_users')
                 ->where('id', $admin->id)
                 ->update([

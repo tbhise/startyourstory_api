@@ -7,20 +7,71 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 
 class FirmController extends Controller
 {
+    // public function registerFirm(Request $request)
+    // {
+    //     DB::beginTransaction();
+    //     try {
+    //         // Log::info($request->all());
+    //         $validator = Validator::make($request->all(), [
+    //             'email' => 'required|email|unique:users,email',
+    //             'mobile' => 'required|unique:users,mobile',
+    //             'password' => 'required|min:6|max:10',
+    //             'firmName' => 'required',
+    //             'city' => 'required',
+    //         ]);
+    //         if ($validator->fails()) {
+    //             return response()->json([
+    //                 'status' => false,
+    //                 'message' => $validator->errors()->first()
+    //             ]);
+    //         }
+    //         // create user
+    //         $userId = DB::table('users')->insertGetId([
+    //             'name' => $request->firmName,
+    //             'email' => $request->email,
+    //             'mobile' => $request->mobile,
+    //             'password' => bcrypt($request->password),
+    //             'role' => 'firm',
+    //             'created_at' => now(),
+    //             'updated_at' => now()
+    //         ]);
+    //         // create profile
+    //         DB::table('firm_profiles')->insert([
+    //             'user_id' => $userId,
+    //             'firm_name' => $request->firmName,
+    //             'city' => $request->city,
+    //             'created_at' => now(),
+    //             'updated_at' => now()
+    //         ]);
+    //         DB::commit();
+    //         return response()->json([
+    //             'status' => true,
+    //             'message' => 'Firm Registration successfull..!'
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         DB::rollBack();
+    //         Log::error('Firm Registration Error: ' . $e->getMessage());
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => 'Firm Registration failed: Server error'
+    //         ]);
+    //     }
+    // }
     public function registerFirm(Request $request)
     {
         DB::beginTransaction();
         try {
-            // Log::info($request->all());
             $validator = Validator::make($request->all(), [
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:10',
                 'firmName' => 'required',
                 'city' => 'required',
+                'referral_code' => 'nullable|string|max:50',
             ]);
             if ($validator->fails()) {
                 return response()->json([
@@ -28,35 +79,80 @@ class FirmController extends Controller
                     'message' => $validator->errors()->first()
                 ]);
             }
-            // create user
-            $userId = DB::table('users')->insertGetId([
-                'name' => $request->firmName,
-                'email' => $request->email,
-                'mobile' => $request->mobile,
-                'password' => bcrypt($request->password),
-                'role' => 'firm',
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
-            // create profile
-            DB::table('firm_profiles')->insert([
-                'user_id' => $userId,
-                'firm_name' => $request->firmName,
-                'city' => $request->city,
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
+            $referrer = null;
+            if ($request->referral_code) {
+                $referrer = DB::table('users')
+                    ->where('referral_code', strtoupper($request->referral_code))
+                    ->first();
+                if (!$referrer) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Invalid referral code'
+                    ]);
+                }
+            }
+            $firmPrefix = strtoupper(
+                substr(preg_replace('/[^A-Za-z]/', '', $request->firmName), 0, 4)
+            );
+            do {
+                $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+                $randomString = '';
+
+                for ($i = 0; $i < 5; $i++) {
+
+                    $randomString .= $characters[rand(0, strlen($characters) - 1)];
+                }
+
+                $myReferralCode = $firmPrefix . $randomString;
+            } while (
+                DB::table('users')
+                ->where('referral_code', $myReferralCode)
+                ->exists()
+            );
+            $userId = DB::table('users')
+                ->insertGetId([
+                    'name' => $request->firmName,
+                    'email' => $request->email,
+                    'mobile' => $request->mobile,
+                    'password' => bcrypt($request->password),
+                    'role' => 'firm',
+                    'referral_code' => $myReferralCode,
+                    'referred_by' => $referrer?->id,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+            DB::table('firm_profiles')
+                ->insert([
+                    'user_id' => $userId,
+                    'firm_name' => $request->firmName,
+                    'city' => $request->city,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+            if ($referrer) {
+                DB::table('users')
+                    ->where('id', $referrer->id)
+                    ->increment('referral_count');
+            }
             DB::commit();
             return response()->json([
                 'status' => true,
-                'message' => 'Firm Registration successfull..!'
+                'message' => 'Firm Registration successful..!',
+                'data' => [
+                    'referral_code' => $myReferralCode
+                ]
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Firm Registration Error: ' . $e->getMessage());
+            Log::error(
+                'Firm Registration Error: ' .
+                    $e->getMessage()
+            );
             return response()->json([
                 'status' => false,
-                'message' => 'Firm Registration failed: Server error'
+                'message' =>
+                'Firm Registration failed: Server error'
             ]);
         }
     }
@@ -404,10 +500,8 @@ class FirmController extends Controller
                     'firm_profiles.*',
                     DB::raw('GROUP_CONCAT(firm_departments.department_name) as departments'),
                     DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
-
                 )
                 ->groupBy('firm_profiles.id');
-
             if (!empty($request->search)) {
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
@@ -417,7 +511,6 @@ class FirmController extends Controller
                         ->orWhere('firm_profiles.services_offered', 'LIKE', "%{$search}%");
                 });
             }
-
             if (
                 !empty($request->cities) &&
                 is_array($request->cities)
@@ -427,7 +520,6 @@ class FirmController extends Controller
                     $request->cities
                 );
             }
-
             if (
                 !empty($request->firmTypes) &&
                 is_array($request->firmTypes)
@@ -437,7 +529,6 @@ class FirmController extends Controller
                     $request->firmTypes
                 );
             }
-
             if (
                 !empty($request->exposure) &&
                 is_array($request->exposure)
@@ -465,7 +556,6 @@ class FirmController extends Controller
                     }
                 });
             }
-
             if (
                 !empty($request->departments) &&
                 is_array($request->departments)
@@ -478,9 +568,6 @@ class FirmController extends Controller
                     );
                 };
             }
-
-
-
             if (
                 !empty($request->empRanges) &&
                 is_array($request->empRanges)
@@ -504,7 +591,6 @@ class FirmController extends Controller
                     }
                 });
             }
-
             if (
                 !empty($request->artRanges) &&
                 is_array($request->artRanges)
@@ -528,7 +614,6 @@ class FirmController extends Controller
                     }
                 });
             }
-
             if (
                 !empty($request->exposure_type) &&
                 is_array($request->exposure_type)
@@ -538,7 +623,6 @@ class FirmController extends Controller
                     $request->exposure_type
                 );
             }
-
             if (!empty($request->sort)) {
                 switch ($request->sort) {
                     case 'premium':
@@ -578,7 +662,6 @@ class FirmController extends Controller
                     'DESC'
                 );
             }
-
             $companies = $query->paginate(12);
             $formattedCompanies = [];
             foreach ($companies->items() as $company) {
@@ -664,10 +747,7 @@ class FirmController extends Controller
                 ->select(
                     'firm_profiles.*',
                     'users.mobile as primary_mobile',
-
                     DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
-
-
                 )
                 ->leftJoin('users', 'users.id', 'firm_profiles.user_id')
                 ->where('firm_profiles.id', $id)
@@ -1182,11 +1262,9 @@ class FirmController extends Controller
             ]);
         }
     }
-
     public function getJobs(Request $request)
     {
         try {
-
             $token = $request->cookie('auth_token');
             $user = null;
             if ($token) {
@@ -1195,18 +1273,15 @@ class FirmController extends Controller
                     ->where('is_deleted', false)
                     ->first();
             }
-
             $studentProfile = null;
             if ($user && $user->role === 'student') {
                 $studentProfile = DB::table('student_profiles')
                     ->where('user_id', $user->id)
                     ->first();
             }
-
             $firmId = DB::table('firm_profiles')
                 ->where('firm_name', $request->company)
                 ->value('id');
-
             $query = DB::table('jobs')
                 ->join(
                     'firm_profiles',
@@ -1221,10 +1296,7 @@ class FirmController extends Controller
                 )
                 ->where('jobs.is_active', true)
                 ->where('jobs.status', 'Active');
-
-
             // if ($studentProfile) {
-
             //     if ($studentProfile->looking_for === 'creator') {
             //         $query->where(
             //             'jobs.hiring_for',
@@ -1252,8 +1324,6 @@ class FirmController extends Controller
             //         );
             //     }
             // }
-
-
             if (!empty($request->search)) {
                 $query->where(function ($q) use ($request) {
                     $search = '%' . $request->search . '%';
@@ -1279,14 +1349,12 @@ class FirmController extends Controller
                         );
                 });
             }
-
             if (!empty($firmId)) {
                 $query->where(
                     'jobs.firm_id',
                     $firmId
                 );
             }
-
             if (
                 !empty($request->cities)
                 &&
@@ -1297,7 +1365,6 @@ class FirmController extends Controller
                     $request->cities
                 );
             }
-
             if (
                 !empty($request->departments)
                 &&
@@ -1308,14 +1375,11 @@ class FirmController extends Controller
                     $request->departments
                 );
             }
-
             $query->orderBy(
                 'jobs.created_at',
                 'desc'
             );
-
             $jobs = $query->paginate(10);
-
             $appliedJobIds = [];
             $savedJobIds = [];
             if ($user && $user->role === 'student') {
@@ -1334,7 +1398,6 @@ class FirmController extends Controller
                     ->pluck('job_id')
                     ->toArray();
             }
-
             $data = collect($jobs->items())
                 ->map(function ($job) use (
                     $appliedJobIds,
@@ -1405,7 +1468,6 @@ class FirmController extends Controller
                             : null,
                     ];
                 });
-
             return response()->json([
                 'status' => true,
                 'message' =>

@@ -10,7 +10,6 @@ use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 
-
 class MasterController extends Controller
 {
     public function getCities(Request $request)
@@ -148,7 +147,6 @@ class MasterController extends Controller
     public function addSubscriptions(Request $request)
     {
         try {
-
             $validator = Validator::make(
                 $request->all(),
                 [
@@ -159,14 +157,12 @@ class MasterController extends Controller
                     'expires_at' => 'nullable|date',
                 ]
             );
-
             if ($validator->fails()) {
                 return response()->json([
                     'status' => false,
                     'message' => $validator->errors()->first(),
                 ]);
             }
-
             $firm = DB::table('firm_profiles')
                 ->where('id', $request->firm_id)
                 ->first();
@@ -176,7 +172,6 @@ class MasterController extends Controller
                     'message' => 'Firm not found'
                 ]);
             }
-
             DB::table('firm_subscriptions')
                 ->where('firm_id', $request->firm_id)
                 ->where('status', 'active')
@@ -184,7 +179,6 @@ class MasterController extends Controller
                     'status' => 'expired',
                     'updated_at' => now(),
                 ]);
-
             $subscriptionId =
                 DB::table('firm_subscriptions')
                 ->insertGetId([
@@ -196,12 +190,10 @@ class MasterController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
-
             $subscription =
                 DB::table('firm_subscriptions')
                 ->where('id', $subscriptionId)
                 ->first();
-
             return response()->json([
                 'status' => true,
                 'message' => 'Subscription added successfully',
@@ -232,117 +224,80 @@ class MasterController extends Controller
             ]);
         }
     }
-
-
-
     public function submitPremiumRequest(Request $request)
     {
         try {
-
             /*
         |--------------------------------------------------------------------------
         | Authenticate User
         |--------------------------------------------------------------------------
         */
 
+
+            DB::beginTransaction();
             $token = $request->cookie('auth_token');
-
             if (!$token) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Unauthorized'
                 ], 401);
             }
-
             $user = DB::table('users')
-
                 ->where('api_token', $token)
-
                 ->where('is_deleted', false)
-
                 ->first();
-
             if (!$user) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Invalid token'
                 ], 401);
             }
-
             /*
         |--------------------------------------------------------------------------
         | Recruiter Only
         |--------------------------------------------------------------------------
         */
-
             if ($user->role !== 'firm') {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Only firms can submit premium requests'
                 ], 403);
             }
-
             /*
         |--------------------------------------------------------------------------
         | Validate Inputs
         |--------------------------------------------------------------------------
         */
-
             $validator = Validator::make($request->all(), [
-
                 'firm_id' =>
                 'required|integer',
-
                 'firm_name' =>
                 'required|string|max:255',
-
                 'contact_person' =>
                 'required|string|max:255',
-
                 'transaction_id' =>
                 'required|string|max:255',
-
                 'payment_date' =>
                 'required|date',
-
                 'plan' =>
                 'required|string',
-
                 'screenshot_url' =>
                 'required|string',
             ]);
-
             if ($validator->fails()) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => $validator->errors()->first()
                 ], 422);
             }
-
             /*
         |--------------------------------------------------------------------------
         | Upload Screenshot
         |--------------------------------------------------------------------------
         */
-
             $screenshotPath = null;
-
             if ($request->screenshot_url) {
-
                 $image = $request->screenshot_url;
-
                 if (
                     preg_match(
                         '/^data:image\/(\w+);base64,/',
@@ -350,272 +305,173 @@ class MasterController extends Controller
                         $type
                     )
                 ) {
-
                     $image = substr(
                         $image,
                         strpos($image, ',') + 1
                     );
-
                     $type = strtolower($type[1]);
-
                     $image = base64_decode($image);
-
                     if ($image === false) {
-
                         return response()->json([
-
                             'status' => false,
-
                             'message' => 'Invalid image format'
                         ], 422);
                     }
-
                     $fileName =
                         'premium_' .
                         time() .
                         '.' .
                         $type;
-
                     Storage::disk('public')->put(
                         'premium-payments/' . $fileName,
                         $image
                     );
-
                     $screenshotPath =
                         'premium-payments/' . $fileName;
                 }
             }
-
             /*
         |--------------------------------------------------------------------------
         | Insert Request
         |--------------------------------------------------------------------------
         */
-
-
             $id = DB::table('premium_requests')->insertGetId([
-
                 'firm_id' =>
                 $request->firm_id,
-
-
-
+                'firm_name' =>
+                $request->firm_name,
                 'contact_person' =>
                 $request->contact_person,
-
                 'transaction_id' =>
                 $request->transaction_id,
-
                 'payment_date' =>
                 $request->payment_date,
-
                 'plan' =>
                 $request->plan,
-
+                'amount' =>
+                $request->amount,
                 'screenshot_url' =>
                 $screenshotPath,
-
                 'status' => 'pending',
-
                 'created_at' =>
                 now(),
-
                 'updated_at' =>
                 now(),
             ]);
-
             /*
         |--------------------------------------------------------------------------
         | Get Created Request
         |--------------------------------------------------------------------------
         */
-
             $premiumRequest = DB::table('premium_requests')
-
                 ->where('id', $id)
-
                 ->first();
-
             /*
         |--------------------------------------------------------------------------
         | Response
         |--------------------------------------------------------------------------
         */
-
+            DB::commit();
             return response()->json([
-
                 'status' => true,
-
                 'message' =>
                 'Premium request submitted successfully',
-
                 'data' => [
-
                     'request' =>
                     $premiumRequest
                 ]
             ]);
         } catch (\Exception $e) {
-
+            DB::rollBack();
             Log::error(
                 'Submit Premium Request Error',
                 [
-
                     'message' =>
                     $e->getMessage(),
-
                     'line' =>
                     $e->getLine(),
-
                     'file' =>
                     $e->getFile(),
                 ]
             );
-
             return response()->json([
-
                 'status' => false,
-
                 'message' =>
                 'Unexpected server error'
             ], 500);
         }
     }
-
-
     public function getPremiumRequests(Request $request)
     {
         try {
-
-            /*
-        |--------------------------------------------------------------------------
-        | Authenticate Admin
-        |--------------------------------------------------------------------------
-        */
-
-            $token = $request->cookie('auth_token');
-
+            $token = $request->cookie('admin_token');
             if (!$token) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Unauthorized'
                 ], 401);
             }
-
-            $user = DB::table('users')
-
+            $user = DB::table('admin_users')
                 ->where('api_token', $token)
-
-                ->where('is_deleted', false)
-
+                ->where('is_active', true)
                 ->first();
-
             if (!$user) {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Invalid token'
                 ], 401);
             }
 
-            /*
-        |--------------------------------------------------------------------------
-        | Admin Only
-        |--------------------------------------------------------------------------
-        */
-
             if ($user->role !== 'admin') {
-
                 return response()->json([
-
                     'status' => false,
-
                     'message' => 'Only admin can access premium requests'
                 ], 403);
             }
 
-            /*
-        |--------------------------------------------------------------------------
-        | Fetch Premium Requests
-        |--------------------------------------------------------------------------
-        */
-
             $requests = DB::table('premium_requests as pr')
-
-                ->leftJoin(
-                    'firm_profiles as fp',
-                    'fp.id',
-                    '=',
-                    'pr.firm_id'
-                )
-
+                ->leftJoin('firm_profiles as fp', 'fp.id', '=', 'pr.firm_id')
                 ->select(
-
                     'pr.id',
                     'pr.firm_id',
                     'pr.contact_person',
                     'pr.firm_name',
-                    'pr.plan',
+                    'pr.plan as plan_label',
                     'pr.transaction_id',
+                    'pr.amount',
                     'pr.payment_date',
-                    'pr.screenshot_url',
+                    DB::raw("CONCAT('" . url('/storage') . "/', pr.screenshot_url) as screenshot_url"),
                     'pr.status',
                     'pr.remarks',
                     'pr.created_at',
-
-                    'fp.logo',
+                    'fp.logo_path as logo',
                     'fp.city',
-                    'fp.state'
                 )
-
                 ->orderByDesc('pr.created_at')
-
                 ->get();
 
-            /*
-        |--------------------------------------------------------------------------
-        | Response
-        |--------------------------------------------------------------------------
-        */
-
             return response()->json([
-
                 'status' => true,
-
                 'message' =>
                 'Premium requests fetched successfully',
-
                 'data' => [
-
                     'requests' => $requests
                 ]
             ]);
         } catch (\Exception $e) {
-
             Log::error(
                 'Get Premium Requests Error',
                 [
-
                     'message' =>
                     $e->getMessage(),
-
                     'line' =>
                     $e->getLine(),
-
                     'file' =>
                     $e->getFile(),
                 ]
             );
-
             return response()->json([
-
                 'status' => false,
-
                 'message' =>
                 'Unexpected server error'
             ], 500);

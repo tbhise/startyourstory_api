@@ -85,6 +85,10 @@ class AuthController extends Controller
                     false,       // raw
                     'Lax'        // sameSite
                 );
+
+
+
+                
         } catch (\Exception $e) {
             Log::error('Login Error: ' . $e->getMessage());
 

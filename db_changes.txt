@@ -158,3 +158,11 @@ ALTER TABLE users
 ADD COLUMN referral_code VARCHAR(50) UNIQUE NULL,
 ADD COLUMN referred_by BIGINT UNSIGNED NULL,
 ADD COLUMN referral_count INT DEFAULT 0;
+
+=======================================================
+ALTER TABLE applications
+ADD COLUMN unlocked_by_firm TINYINT(1) DEFAULT 0,
+ADD COLUMN unlocked_at TIMESTAMP NULL;
+
+ALTER TABLE applications
+ADD COLUMN is_visible_to_firm TINYINT(1) DEFAULT 0;

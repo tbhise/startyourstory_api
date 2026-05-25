@@ -11,6 +11,7 @@ use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
+use App\Http\Controllers\API\PaymentController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -84,3 +85,8 @@ Route::post(
     '/admin/premium-requests/{id}/reject',
     [AdminController::class, 'rejectPremiumRequest']
 );
+
+
+Route::post('/payments/create-order', [PaymentController::class, 'createOrder']);
+
+Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);

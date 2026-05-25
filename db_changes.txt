@@ -166,3 +166,207 @@ ADD COLUMN unlocked_at TIMESTAMP NULL;
 
 ALTER TABLE applications
 ADD COLUMN is_visible_to_firm TINYINT(1) DEFAULT 0;
+
+
+-- =========================================
+-- PLANS TABLE
+-- =========================================
+
+CREATE TABLE plans (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    code VARCHAR(100) UNIQUE NOT NULL,
+
+    name VARCHAR(255) NOT NULL,
+
+    description TEXT NULL,
+
+    price DECIMAL(10,2) NOT NULL,
+
+    duration_days INT NOT NULL,
+
+    features JSON NULL,
+
+    is_active TINYINT(1) DEFAULT 1,
+
+    created_at TIMESTAMP NULL DEFAULT NULL,
+
+    updated_at TIMESTAMP NULL DEFAULT NULL
+);
+
+
+
+-- =========================================
+-- INSERT DEFAULT PLANS
+-- =========================================
+
+INSERT INTO plans (
+    code,
+    name,
+    description,
+    price,
+    duration_days
+) VALUES
+
+(
+    'premium-monthly',
+    'Premium Monthly',
+    'Premium membership for 30 days',
+    499,
+    30
+),
+
+(
+    'premium-quarterly',
+    'Premium Quarterly',
+    'Premium membership for 90 days',
+    1299,
+    90
+),
+
+(
+    'premium-yearly',
+    'Premium Yearly',
+    'Premium membership for 365 days',
+    3999,
+    365
+);
+
+
+
+-- =========================================
+-- ALTER EXISTING firm_subscriptions TABLE
+-- =========================================
+
+ALTER TABLE firm_subscriptions
+
+ADD COLUMN amount DECIMAL(10,2) NULL AFTER plan,
+
+ADD COLUMN currency VARCHAR(10) DEFAULT 'INR' AFTER amount,
+
+ADD COLUMN payment_gateway ENUM(
+    'manual',
+    'razorpay'
+) DEFAULT 'manual' AFTER currency,
+
+ADD COLUMN gateway_order_id VARCHAR(255) NULL AFTER payment_gateway,
+
+ADD COLUMN gateway_payment_id VARCHAR(255) NULL AFTER gateway_order_id,
+
+ADD COLUMN gateway_signature TEXT NULL AFTER gateway_payment_id,
+
+ADD COLUMN payment_method VARCHAR(100) NULL AFTER gateway_signature,
+
+ADD COLUMN payment_status ENUM(
+    'pending',
+    'paid',
+    'failed',
+    'manual_verification',
+    'cancelled',
+    'refunded'
+) DEFAULT 'pending' AFTER payment_method,
+
+ADD COLUMN razorpay_response JSON NULL AFTER payment_status,
+
+ADD COLUMN invoice_no VARCHAR(100) NULL AFTER razorpay_response,
+
+ADD COLUMN coupon_code VARCHAR(100) NULL AFTER invoice_no,
+
+ADD COLUMN discount_amount DECIMAL(10,2) DEFAULT 0 AFTER coupon_code;
+
+
+
+-- =========================================
+-- ADD INDEXES
+-- =========================================
+
+ALTER TABLE firm_subscriptions
+
+ADD INDEX idx_firm_id (firm_id),
+
+ADD INDEX idx_gateway_order_id (gateway_order_id),
+
+ADD INDEX idx_gateway_payment_id (gateway_payment_id),
+
+ADD INDEX idx_payment_status (payment_status),
+
+ADD INDEX idx_status (status);
+
+
+
+-- =========================================
+-- PAYMENT LOGS TABLE
+-- =========================================
+
+CREATE TABLE payment_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    firm_subscription_id BIGINT UNSIGNED NULL,
+
+    event_type VARCHAR(255) NOT NULL,
+
+    payload JSON NULL,
+
+    created_at TIMESTAMP NULL DEFAULT NULL,
+
+    INDEX idx_firm_subscription_id (firm_subscription_id)
+);
+
+
+
+-- =========================================
+-- COUPONS TABLE
+-- =========================================
+
+CREATE TABLE coupons (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    code VARCHAR(100) UNIQUE NOT NULL,
+
+    type ENUM(
+        'flat',
+        'percentage'
+    ) NOT NULL,
+
+    value DECIMAL(10,2) NOT NULL,
+
+    max_discount DECIMAL(10,2) NULL,
+
+    usage_limit INT NULL,
+
+    used_count INT DEFAULT 0,
+
+    expires_at DATETIME NULL,
+
+    is_active TINYINT(1) DEFAULT 1,
+
+    created_at TIMESTAMP NULL DEFAULT NULL,
+
+    updated_at TIMESTAMP NULL DEFAULT NULL
+);
+
+
+
+-- =========================================
+-- COUPON USAGES TABLE
+-- =========================================
+
+CREATE TABLE coupon_usages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+
+    coupon_id BIGINT UNSIGNED NOT NULL,
+
+    firm_id BIGINT UNSIGNED NOT NULL,
+
+    firm_subscription_id BIGINT UNSIGNED NOT NULL,
+
+    discount_amount DECIMAL(10,2) NOT NULL,
+
+    created_at TIMESTAMP NULL DEFAULT NULL,
+
+    INDEX idx_coupon_id (coupon_id),
+
+    INDEX idx_firm_id (firm_id),
+
+    INDEX idx_firm_subscription_id (firm_subscription_id)
+);

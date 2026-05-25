@@ -1,0 +1,270 @@
+<?php
+
+namespace App\Http\Controllers\API;
+
+use App\Http\Controllers\Controller;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Razorpay\Api\Api;
+use Illuminate\Support\Facades\Log;
+
+class PaymentController extends Controller
+{
+    // public function createOrder(Request $request)
+    // {
+    //     try {
+
+    //         $plan = $request->plan;
+
+    //         $amount = 9999;
+
+    //         if ($plan === 'premium-yearly') {
+    //             $amount = 9999;
+    //         }
+
+    //         $api = new Api(
+    //             config('services.razorpay.key'),
+    //             config('services.razorpay.secret')
+    //         );
+
+    //         $order = $api->order->create([
+    //             'receipt' => 'receipt_' . time(),
+    //             'amount' => $amount * 100,
+    //             'currency' => 'INR',
+    //         ]);
+
+    //         return response()->json([
+    //             'status' => true,
+    //             'data' => $order,
+    //         ]);
+
+    //     } catch (\Exception $e) {
+
+    //         return response()->json([
+    //             'status' => false,
+    //             'message' => $e->getMessage(),
+    //         ], 500);
+    //     }
+    // }
+
+
+
+    public function createOrder(Request $request)
+    {
+        try {
+
+            /*
+        |--------------------------------------------------------------------------
+        | Get Auth User
+        |--------------------------------------------------------------------------
+        */
+
+            $authUser = $request->attributes->get('auth_token');
+
+            Log::info($authUser);
+            if (!$authUser) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $userId = $authUser->id;
+
+            /*
+        |--------------------------------------------------------------------------
+        | Get Firm Profile
+        |--------------------------------------------------------------------------
+        */
+
+            $firmProfile = DB::table('firm_profiles')
+                ->where('user_id', $userId)
+                ->first();
+
+            if (!$firmProfile) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Firm profile not found',
+                ], 404);
+            }
+
+            /*
+        |--------------------------------------------------------------------------
+        | Get User Details
+        |--------------------------------------------------------------------------
+        */
+
+            $user = DB::table('users')
+                ->where('id', $userId)
+                ->first();
+
+            /*
+        |--------------------------------------------------------------------------
+        | Validate Plan
+        |--------------------------------------------------------------------------
+        */
+
+            $plan = $request->plan_id;
+
+            $plans = [
+
+                'premium-monthly' => [
+                    'amount' => 499,
+                    'days' => 30,
+                ],
+
+                'premium-quarterly' => [
+                    'amount' => 1299,
+                    'days' => 90,
+                ],
+
+                'premium-yearly' => [
+                    'amount' => 9999,
+                    'days' => 365,
+                ],
+            ];
+
+            if (!isset($plans[$plan])) {
+
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid plan selected',
+                ], 422);
+            }
+
+            $amount = $plans[$plan]['amount'];
+
+            /*
+        |--------------------------------------------------------------------------
+        | Create Pending Subscription
+        |--------------------------------------------------------------------------
+        */
+
+            $subscriptionId = DB::table('firm_subscriptions')->insertGetId([
+
+                'firm_id' => $firmProfile->id,
+
+                'contact_person' => $user->name ?? null,
+
+                'plan' => $plan,
+
+                'amount' => $amount,
+
+                'currency' => 'INR',
+
+                'payment_gateway' => 'razorpay',
+
+                'payment_status' => 'pending',
+
+                'status' => 'pending',
+
+                'created_at' => now(),
+
+                'updated_at' => now(),
+            ]);
+
+            /*
+        |--------------------------------------------------------------------------
+        | Create Razorpay Order
+        |--------------------------------------------------------------------------
+        */
+
+            $api = new Api(
+                config('services.razorpay.key'),
+                config('services.razorpay.secret')
+            );
+
+            $order = $api->order->create([
+
+                'receipt' => 'firm_' . $firmProfile->id . '_sub_' . $subscriptionId,
+
+                'amount' => $amount * 100,
+
+                'currency' => 'INR',
+
+                'payment_capture' => 1,
+            ]);
+
+            /*
+        |--------------------------------------------------------------------------
+        | Save Razorpay Order ID
+        |--------------------------------------------------------------------------
+        */
+
+            DB::table('firm_subscriptions')
+                ->where('id', $subscriptionId)
+                ->update([
+
+                    'gateway_order_id' => $order['id'],
+
+                    'updated_at' => now(),
+                ]);
+
+            /*
+        |--------------------------------------------------------------------------
+        | Return Response
+        |--------------------------------------------------------------------------
+        */
+
+            return response()->json([
+
+                'status' => true,
+
+                'id' => $order['id'],
+
+                'amount' => $order['amount'],
+
+                'currency' => $order['currency'],
+
+                'subscription_id' => $subscriptionId,
+            ]);
+        } catch (\Exception $e) {
+
+            Log::error('Create Order Error', [
+
+                'message' => $e->getMessage(),
+
+                'line' => $e->getLine(),
+
+                'file' => $e->getFile(),
+            ]);
+
+            return response()->json([
+                'status' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+
+    public function verifyPayment(Request $request)
+    {
+        try {
+
+            $attributes = [
+                'razorpay_order_id' => $request->razorpay_order_id,
+                'razorpay_payment_id' => $request->razorpay_payment_id,
+                'razorpay_signature' => $request->razorpay_signature,
+            ];
+
+            $api = new Api(
+                config('services.razorpay.key'),
+                config('services.razorpay.secret')
+            );
+
+            $api->utility->verifyPaymentSignature($attributes);
+
+            return response()->json([
+                'status' => true,
+                'message' => 'Payment verified successfully',
+            ]);
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Payment verification failed',
+            ], 500);
+        }
+    }
+}

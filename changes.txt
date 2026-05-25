@@ -1,1 +1,52 @@
+1. SRN - limit 10 chars | unique | Upppercase
+2. Semi & CA - remove it/oc
+3. exposure preference - disabled next button on other
+4. Core Preferences - Show only option selected in Preferences
+5. Industries Served in -> Industries worked in during Experience
+6. Department of Experience - Multiselection
+7. Basic Info - Resendential City
+8. CTC - Actual amount / no lpa
+9. Merge Inter / Resume upload -> Upload Docs
+10. Resume , basic info , prefered location mandatory -- other non mandatory
 
+11. Show passing month to Both inter groups passed candidate other hide | Passing Month - replace to Ca inter Passing Month
+
+12. For unqualified CA
+1) Articleship Firm Name / Current Organization
+2) Industries Served During Experience
+
+13. Required fields mark with *
+
+
+14.For Qualified CA
+1) Year of CA Qualified
+2) SRN repalce to ICAI Membership Number
+
+15.Department > Domain Expertise
+
+
+-----------------
+Firm Profile
+
+1. Services offererd -> internal invalid
+2. Exposure & Opportunities -> Articleship Exposure -> Domain Exposure
+3. Remove Other Links
+4. Firm logo - optional
+
+
+5. Firm Dashboard -
+  Default selected Corfirm - Remove all options
+  Add Filter attempts
+  City -> Preffered City
+  Filter arrangement -> Exposure after city
+
+6. Post Job
+
+   - If job type CA - then no mandatory JD & Req . Qualification
+   - Remove closed status
+   - after req qual -> Give buttons Save as Draft / Post Job    --- no status (take internally )
+
+7. Report Student profile
+
+
+Kingsmen@2026

@@ -11,56 +11,9 @@ use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
-    // public function registerStudent(Request $request)
-    // {
-    //     DB::beginTransaction();
-    //     try {
-    //         $validator = Validator::make($request->all(), [
-    //             'name' => 'required',
-    //             'email' => 'required|email|unique:users,email',
-    //             'mobile' => 'required|unique:users,mobile',
-    //             'password' => 'required|min:6|max:10',
-    //         ]);
-    //         if ($validator->fails()) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => $validator->errors()->first()
-    //             ]);
-    //         }
-    //         $userId = DB::table('users')->insertGetId([
-    //             'name' => $request->name,
-    //             'email' => $request->email,
-    //             'mobile' => $request->mobile,
-    //             'password' => bcrypt($request->password),
-    //             'role' => 'student',
-    //             'created_at' => now(),
-    //             'updated_at' => now()
-    //         ]);
-    //         DB::table('student_profiles')->insert([
-    //             'user_id' => $userId,
-    //             'looking_for' => $request->looking_for,
-    //             'created_at' => now(),
-    //             'updated_at' => now()
-    //         ]);
-    //         DB::commit();
-    //         return response()->json([
-    //             'status' => true,
-    //             'message' => 'Candidate Registration successfull..!'
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         DB::rollBack();
-    //         Log::error('Candidate Registration Error: ' . $e->getMessage());
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' => 'Candidate Registration failed: Server error'
-    //         ]);
-    //     }
-    // }
-
     public function registerStudent(Request $request)
     {
         DB::beginTransaction();
-
         try {
             $validator = Validator::make($request->all(), [
                 'name' => 'required',
@@ -69,22 +22,17 @@ class UserController extends Controller
                 'password' => 'required|min:6|max:10',
                 'referral_code' => 'nullable|string|max:50',
             ]);
-
             if ($validator->fails()) {
                 return response()->json([
                     'status' => false,
                     'message' => $validator->errors()->first()
                 ]);
             }
-
-
             $referrer = null;
-
             if ($request->referral_code) {
                 $referrer = DB::table('users')
                     ->where('referral_code', strtoupper($request->referral_code))
                     ->first();
-
                 if (!$referrer) {
                     return response()->json([
                         'status' => false,
@@ -92,31 +40,21 @@ class UserController extends Controller
                     ]);
                 }
             }
-
             $namePrefix = strtoupper(
                 substr(preg_replace('/[^A-Za-z]/', '', $request->name), 0, 4)
             );
-
-
-
             do {
                 $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-
                 $randomString = '';
-
                 for ($i = 0; $i < 5; $i++) {
-
                     $randomString .= $characters[rand(0, strlen($characters) - 1)];
                 }
-
                 $myReferralCode = $namePrefix . $randomString;
             } while (
                 DB::table('users')
                 ->where('referral_code', $myReferralCode)
                 ->exists()
             );
-
-
             $userId = DB::table('users')
                 ->insertGetId([
                     'name' => $request->name,
@@ -129,8 +67,6 @@ class UserController extends Controller
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
-
-
             DB::table('student_profiles')
                 ->insert([
                     'user_id' => $userId,
@@ -138,14 +74,11 @@ class UserController extends Controller
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
-
             if ($referrer) {
-
                 DB::table('users')
                     ->where('id', $referrer->id)
                     ->increment('referral_count');
             }
-
             DB::commit();
             return response()->json([
                 'status' => true,
@@ -157,52 +90,19 @@ class UserController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Candidate Registration Error: ' . $e->getMessage());
-
             return response()->json([
                 'status' => false,
                 'message' => 'Candidate Registration failed: Server error'
             ]);
         }
     }
-
-
     public function updateProfile(Request $request)
     {
         DB::beginTransaction();
         try {
-            $validator = Validator::make($request->all(), [
-                'looking_for' => 'nullable|string',
-                'srn' => 'nullable|string',
-                'city' => 'nullable|string',
-                'gender' => 'nullable|string',
-                'passing_month' => 'nullable|string',
-                'ca_status' => 'nullable|string',
-                'articleship_status' => 'nullable|string',
-                'preferred_location' => 'nullable|string',
-                'preferred_locations_json' => 'nullable|string',
-                'it_oc_status' => 'nullable|string',
-                'exposure_type' => 'nullable|string',
-                'core_department' => 'nullable|string',
-                'attempts' => 'nullable|string',
-                'linkedin_url' => 'nullable|string',
-                'portfolio_url' => 'nullable|string',
-                'current_firm_id' => 'nullable',
-                'current_firm_name' => 'nullable|string',
-                'experience_years' => 'nullable|string',
-                'industry_worked_in' => 'nullable|string',
-                'experience_department' => 'nullable|string',
-                'why_should_hire_you' => 'nullable|string',
-                'current_ctc' => 'nullable|string',
-                'expected_ctc' => 'nullable|string',
-                'resume_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
-                'marksheet_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
-            ]);
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => false,
-                    'message' => $validator->errors()->first()
-                ]);
-            }
+
+            // Log::info('Update Profile API called', ['request' => $request->all()]);
+
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -220,6 +120,43 @@ class UserController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
+
+
+
+            $validator = Validator::make($request->all(), [
+                'looking_for' => 'nullable|string',
+                'srn' => 'nullable|string|max:10|unique:student_profiles,srn,' . $user->id . ',user_id',
+                'city' => 'nullable|string',
+                'gender' => 'nullable|string',
+                'passing_month' => 'nullable|string',
+                'ca_status' => 'nullable|string',
+                'articleship_status' => 'nullable|string',
+                'preferred_location' => 'nullable|string',
+                'preferred_locations_json' => 'nullable|string',
+                'it_oc_status' => 'nullable|string',
+                'exposure_type' => 'nullable|string',
+                'core_department' => 'nullable|string',
+                'attempts' => 'nullable|string',
+                'linkedin_url' => 'nullable|string',
+                'portfolio_url' => 'nullable|string',
+                'current_firm_id' => 'nullable',
+                'current_firm_name' => 'nullable|string',
+                'experience_years' => 'nullable|string',
+                'industry_worked_in' => 'nullable|string',
+                'experience_department' => 'nullable',
+                'why_should_hire_you' => 'nullable|string',
+                'current_ctc' => 'nullable|string',
+                'expected_ctc' => 'nullable|string',
+                'resume_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+                'marksheet_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
+
             $existingProfile = DB::table('student_profiles')
                 ->where('user_id', $user->id)->first();
             $resumePath = null;
@@ -308,7 +245,10 @@ class UserController extends Controller
                 'current_firm_name' => $request->current_firm_name,
                 'experience_years' => $request->experience_years,
                 'industry_worked_in' => $request->industry_worked_in,
-                'experience_department' => $request->experience_department,
+                
+                'experience_department' => !empty($request->experience_department)
+                    ? json_encode($request->experience_department)
+                    : null,
                 'why_should_hire_you' => $request->why_should_hire_you,
                 'current_ctc' => $request->current_ctc,
                 'expected_ctc' => $request->expected_ctc,
@@ -329,29 +269,79 @@ class UserController extends Controller
                 DB::table('student_profiles')
                     ->insert($profileData);
             }
+            // $isProfileComplete = false;
+            // if ($request->looking_for === 'articleship') {
+            //     $isProfileComplete =
+            //         !empty($request->srn) &&
+            //         !empty($request->city) &&
+            //         !empty($request->gender);
+            //     if ($registrationType === 'confirm') {
+            //         $confirmFieldsComplete =
+            //             !empty($request->preferred_locations_json) &&
+            //             !empty($request->it_oc_status) &&
+            //             !empty($request->exposure_type) &&
+            //             !empty($request->core_department) &&
+            //             (
+            //                 $resumePath ||
+            //                 !empty($existingProfile->resume_path ?? null)
+            //             ) &&
+            //             (
+            //                 $marksheetPath ||
+            //                 !empty($existingProfile->marksheet_path ?? null)
+            //             );
+            //         $isProfileComplete =
+            //             $isProfileComplete &&
+            //             $confirmFieldsComplete;
+            //     }
+            // } elseif (
+            //     in_array(
+            //         $request->looking_for,
+            //         ['semi-qualified', 'qualified']
+            //     )
+            // ) {
+            //     $isProfileComplete =
+            //         !empty($request->srn) &&
+            //         !empty($request->city) &&
+            //         !empty($request->gender) &&
+            //         !empty($request->experience_years) &&
+            //         !empty($request->current_ctc) &&
+            //         !empty($request->expected_ctc) &&
+            //         (
+            //             $resumePath ||
+            //             !empty($existingProfile->resume_path ?? null)
+            //         );
+            // } elseif ($request->looking_for === 'creator') {
+            //     $isProfileComplete = !empty($request->city);
+            // }
+
             $isProfileComplete = false;
+
+            $resumeExists =
+                $resumePath ||
+                !empty($existingProfile->resume_path ?? null);
+
+            $preferredLocationExists =
+                !empty($preferredLocations);
+
+            $basicInfoComplete =
+                !empty($request->city) &&
+                !empty($request->gender);
+
             if ($request->looking_for === 'articleship') {
+
                 $isProfileComplete =
+                    $basicInfoComplete &&
                     !empty($request->srn) &&
-                    !empty($request->city) &&
-                    !empty($request->gender);
+                    $preferredLocationExists &&
+                    $resumeExists;
+
                 if ($registrationType === 'confirm') {
-                    $confirmFieldsComplete =
-                        !empty($request->preferred_locations_json) &&
-                        !empty($request->it_oc_status) &&
-                        !empty($request->exposure_type) &&
-                        !empty($request->core_department) &&
-                        (
-                            $resumePath ||
-                            !empty($existingProfile->resume_path ?? null)
-                        ) &&
-                        (
-                            $marksheetPath ||
-                            !empty($existingProfile->marksheet_path ?? null)
-                        );
+
                     $isProfileComplete =
                         $isProfileComplete &&
-                        $confirmFieldsComplete;
+                        !empty($request->it_oc_status) &&
+                        !empty($request->exposure_type) &&
+                        !empty($request->core_department);
                 }
             } elseif (
                 in_array(
@@ -359,20 +349,23 @@ class UserController extends Controller
                     ['semi-qualified', 'qualified']
                 )
             ) {
+
                 $isProfileComplete =
+                    $basicInfoComplete &&
                     !empty($request->srn) &&
-                    !empty($request->city) &&
-                    !empty($request->gender) &&
-                    !empty($request->experience_years) &&
-                    !empty($request->current_ctc) &&
-                    !empty($request->expected_ctc) &&
-                    (
-                        $resumePath ||
-                        !empty($existingProfile->resume_path ?? null)
-                    );
+                    // !empty($request->experience_years) &&
+
+                    $preferredLocationExists &&
+                    $resumeExists;
             } elseif ($request->looking_for === 'creator') {
-                $isProfileComplete = !empty($request->city);
+
+                $isProfileComplete =
+                    !empty($request->city);
             }
+
+
+
+
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([

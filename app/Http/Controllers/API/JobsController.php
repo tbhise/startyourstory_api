@@ -557,325 +557,7 @@ class JobsController extends Controller
             ], 500);
         }
     }
-    // public function getApplications(Request $request, $jobId = null)
-    // {
-    //     try {
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Authenticate Firm
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $token = $request->cookie('auth_token');
-    //         if (!$token) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Unauthorized'
-    //             ], 401);
-    //         }
-    //         $user = DB::table('users')
-    //             ->where('api_token', $token)
-    //             ->where('is_deleted', false)
-    //             ->first();
-    //         if (!$user) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Invalid token'
-    //             ], 401);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Get Firm Profile
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $firm = DB::table('firm_profiles')
-    //             ->where('user_id', $user->id)
-    //             ->first();
-    //         if (!$firm) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Firm profile not found'
-    //             ], 404);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Verify Job Ownership
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $job = DB::table('jobs')
-    //             ->where('id', $jobId)
-    //             ->where('firm_id', $firm->id)
-    //             ->first();
-    //         if (!$job) {
-    //             return response()->json([
-    //                 'status' => false,
-    //                 'message' => 'Job not found or access denied'
-    //             ], 403);
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Premium Access
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $isPremium =
-    //             \App\Helpers\SubscriptionHelper::isPremiumFirm(
-    //                 $firm->id
-    //             );
-    //         $applicationLimit =
-    //             \App\Helpers\SubscriptionHelper::allowedApplicationLimit(
-    //                 $firm->id
-    //             );
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Base Query
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $query = DB::table('applications')
-    //             ->join(
-    //                 'users',
-    //                 'applications.student_id',
-    //                 '=',
-    //                 'users.id'
-    //             )
-    //             ->leftJoin(
-    //                 'student_profiles',
-    //                 'student_profiles.user_id',
-    //                 '=',
-    //                 'users.id'
-    //             )
-    //             ->join(
-    //                 'jobs',
-    //                 'applications.job_id',
-    //                 '=',
-    //                 'jobs.id'
-    //             )
-    //             ->select(
-    //                 /*
-    //             |--------------------------------------------------------------------------
-    //             | Application
-    //             |--------------------------------------------------------------------------
-    //             */
-    //                 'applications.id',
-    //                 'applications.job_id',
-    //                 'applications.student_id',
-    //                 'applications.recruiter_status',
-    //                 'applications.status',
-    //                 'applications.applied_at',
-    //                 'applications.shortlisted_at',
-    //                 'applications.rejected_at',
-    //                 'applications.interview_requested_at',
-    //                 'applications.interview_responded_at',
-    //                 'applications.selected_at',
-    //                 'applications.interview_date',
-    //                 'applications.interview_mode',
-    //                 'applications.interview_note',
-    //                 'applications.student_interview_response',
-    //                 'applications.student_response_note',
-    //                 'applications.recruiter_notes',
-    //                 /*
-    //             |--------------------------------------------------------------------------
-    //             | User
-    //             |--------------------------------------------------------------------------
-    //             */
-    //                 'users.name',
-    //                 'users.email',
-    //                 'users.profile_image',
-    //                 /*
-    //             |--------------------------------------------------------------------------
-    //             | Student Profile
-    //             |--------------------------------------------------------------------------
-    //             */
-    //                 'student_profiles.city',
-    //                 'student_profiles.gender',
-    //                 'student_profiles.ca_status',
-    //                 'student_profiles.registration_type',
-    //                 'student_profiles.articleship_status',
-    //                 'student_profiles.core_department',
-    //                 'student_profiles.attempts',
-    //                 'student_profiles.experience_years',
-    //                 'student_profiles.industry_worked_in',
-    //                 'student_profiles.experience_department',
-    //                 'student_profiles.resume_path',
-    //                 'student_profiles.linkedin_url',
-    //                 'student_profiles.portfolio_url',
-    //                 /*
-    //             |--------------------------------------------------------------------------
-    //             | Job
-    //             |--------------------------------------------------------------------------
-    //             */
-    //                 'jobs.title as job_title',
-    //                 'jobs.department as job_department',
-    //                 'jobs.location as job_location',
-    //             )
-    //             ->where(
-    //                 'applications.job_id',
-    //                 $jobId
-    //             )
-    //             ->orderBy(
-    //                 'applications.applied_at',
-    //                 'desc'
-    //             );
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Total Applications
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $totalApplications =
-    //             (clone $query)->count();
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Free Plan Restriction
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         if (!$isPremium) {
-    //             $query->limit(
-    //                 $applicationLimit
-    //             );
-    //         }
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Fetch Applications
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $applications =
-    //             $query->get();
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Format Response
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         $formatted = $applications->map(function ($item) {
-    //             return [
-    //                 'id' =>
-    //                 (string) $item->id,
-    //                 'job_id' =>
-    //                 (string) $item->job_id,
-    //                 'student_id' =>
-    //                 (string) $item->student_id,
-    //                 'recruiter_status' =>
-    //                 $item->recruiter_status
-    //                     ?? 'Applied',
-    //                 'applied_at' =>
-    //                 $item->applied_at
-    //                     ? date(
-    //                         'd M Y',
-    //                         strtotime(
-    //                             $item->applied_at
-    //                         )
-    //                     )
-    //                     : null,
-    //                 'interview_date' =>
-    //                 $item->interview_date,
-    //                 'interview_mode' =>
-    //                 $item->interview_mode,
-    //                 'interview_note' =>
-    //                 $item->interview_note,
-    //                 'student_interview_response' =>
-    //                 $item->student_interview_response,
-    //                 'student_response_note' =>
-    //                 $item->student_response_note,
-    //                 'recruiter_notes' =>
-    //                 $item->recruiter_notes,
-    //                 'student' => [
-    //                     'id' =>
-    //                     (string) $item->student_id,
-    //                     'name' =>
-    //                     $item->name,
-    //                     'email' =>
-    //                     $item->email,
-    //                     'city' =>
-    //                     $item->city,
-    //                     'qualification' =>
-    //                     $item->ca_status,
-    //                     'preferred_department' =>
-    //                     $item->core_department,
-    //                     'experience' =>
-    //                     $item->experience_years,
-    //                     'profile_photo' =>
-    //                     !empty($item->profile_image)
-    //                         ? asset(
-    //                             '/storage/'
-    //                                 . $item->profile_image
-    //                         )
-    //                         : null,
-    //                     'resume_path' =>
-    //                     !empty($item->resume_path)
-    //                         ? asset(
-    //                             '/storage/'
-    //                                 . $item->resume_path
-    //                         )
-    //                         : null,
-    //                     'skills' =>
-    //                     array_values(
-    //                         array_filter([
-    //                             $item->core_department,
-    //                             $item->industry_worked_in,
-    //                             $item->experience_department,
-    //                         ])
-    //                     ),
-    //                 ],
-    //                 'job' => [
-    //                     'id' =>
-    //                     (string) $item->job_id,
-    //                     'title' =>
-    //                     $item->job_title,
-    //                     'department' =>
-    //                     $item->job_department,
-    //                     'location' =>
-    //                     $item->job_location,
-    //                 ],
-    //             ];
-    //         });
-    //         /*
-    //     |--------------------------------------------------------------------------
-    //     | Response
-    //     |--------------------------------------------------------------------------
-    //     */
-    //         return response()->json([
-    //             'status' => true,
-    //             'message' =>
-    //             'Applications fetched successfully',
-    //             'data' => [
-    //                 'job' => [
-    //                     'id' =>
-    //                     (string) $job->id,
-    //                     'title' =>
-    //                     $job->title,
-    //                 ],
-    //                 'applications' =>
-    //                 $formatted,
-    //                 'total' =>
-    //                 $totalApplications,
-    //                 'visible_applications' =>
-    //                 $formatted->count(),
-    //                 'locked_applications' =>
-    //                 max(
-    //                     0,
-    //                     $totalApplications
-    //                         - $formatted->count()
-    //                 ),
-    //                 'is_premium' =>
-    //                 $isPremium,
-    //             ]
-    //         ]);
-    //     } catch (\Exception $e) {
-    //         Log::error(
-    //             'Get Applications API Error',
-    //             [
-    //                 'message' =>
-    //                 $e->getMessage(),
-    //                 'line' =>
-    //                 $e->getLine(),
-    //                 'file' =>
-    //                 $e->getFile(),
-    //             ]
-    //         );
-    //         return response()->json([
-    //             'status' => false,
-    //             'message' =>
-    //             'Unexpected server error while fetching applications.',
-    //         ]);
-    //     }
-    // }
+
     public function getApplications(Request $request, $jobId = null)
     {
         try {
@@ -1101,11 +783,29 @@ class JobsController extends Controller
 
                         'skills' => $isLocked
                             ? []
-                            : array_values(array_filter([
-                                $item->core_department,
-                                $item->industry_worked_in,
-                                $item->experience_department,
-                            ])),
+                            : array_values(array_filter(array_merge(
+
+                                [
+                                    $item->core_department,
+                                    $item->industry_worked_in,
+                                ],
+
+                                !empty($item->experience_department)
+                                    ? (
+                                        is_array($item->experience_department)
+
+                                        ? $item->experience_department
+
+                                        : (
+                                            json_decode(
+                                                $item->experience_department,
+                                                true
+                                            ) ?: []
+                                        )
+                                    )
+                                    : []
+
+                            ))),
                     ],
 
                     'job' => [
@@ -1634,11 +1334,29 @@ class JobsController extends Controller
                     !empty($updatedApplication->resume_path)
                         ? asset('/storage/' . $updatedApplication->resume_path)
                         : null,
-                    'skills' => array_values(array_filter([
-                        $updatedApplication->core_department,
-                        $updatedApplication->industry_worked_in,
-                        $updatedApplication->experience_department,
-                    ])),
+                    'skills' => array_values(array_filter(array_merge(
+
+                        [
+                            $updatedApplication->core_department,
+                            $updatedApplication->industry_worked_in,
+                        ],
+
+                        !empty($updatedApplication->experience_department)
+                            ? (
+                                is_array($updatedApplication->experience_department)
+
+                                ? $updatedApplication->experience_department
+
+                                : (
+                                    json_decode(
+                                        $updatedApplication->experience_department,
+                                        true
+                                    ) ?: []
+                                )
+                            )
+                            : []
+
+                    ))),
                 ],
                 'job' => [
                     'id' =>

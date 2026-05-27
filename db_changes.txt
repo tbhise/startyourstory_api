@@ -370,3 +370,10 @@ CREATE TABLE coupon_usages (
 
     INDEX idx_firm_subscription_id (firm_subscription_id)
 );
+
+
+
+====================== 27/05/2026
+
+ALTER TABLE `startyourstory`.`student_profiles`
+CHANGE COLUMN `experience_department` `experience_department` JSON NULL DEFAULT NULL ;

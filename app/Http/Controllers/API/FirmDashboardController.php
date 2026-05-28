@@ -45,7 +45,7 @@ class FirmDashboardController extends Controller
                 $search = trim($request->search);
                 $query->where(function ($q) use ($search) {
                     $q->where('users.name', 'like', "%{$search}%")
-                        ->orWhere('student_profiles.address', 'like', "%{$search}%")
+                        ->orWhere('student_profiles.preferred_location', 'like', "%{$search}%")
                         ->orWhere('student_profiles.core_department', 'like', "%{$search}%");
                 });
             }
@@ -55,13 +55,26 @@ class FirmDashboardController extends Controller
         |--------------------------------------------------------------------------
         */
             if ($request->filled('cities')) {
+
                 $cities = is_array($request->cities)
                     ? $request->cities
                     : [$request->cities];
-                $query->whereIn(
-                    'student_profiles.address',
-                    $cities
-                );
+
+                $cities = array_map(function ($city) {
+
+                    return ucwords(strtolower(trim($city)));
+                }, $cities);
+
+                $query->where(function ($q) use ($cities) {
+
+                    foreach ($cities as $city) {
+
+                        $q->orWhereJsonContains(
+                            'student_profiles.preferred_location',
+                            $city
+                        );
+                    }
+                });
             }
             /*
         |--------------------------------------------------------------------------
@@ -89,6 +102,37 @@ class FirmDashboardController extends Controller
                 $query->whereIn(
                     'student_profiles.core_department',
                     $departments
+                );
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Registered For
+        |--------------------------------------------------------------------------
+        */
+            if ($request->filled('registered_for')) {
+                $registeredFor = is_array($request->registered_for)
+                    ? $request->registered_for
+                    : [$request->registered_for];
+                $query->whereIn(
+                    'student_profiles.looking_for',
+                    $registeredFor
+                );
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Registration type
+        |--------------------------------------------------------------------------
+        */
+            if ($request->filled('registration_type')) {
+
+                $query->where(
+                    'student_profiles.registration_type',
+                    strtolower($request->registration_type)
+                );
+            } else {
+                $query->where(
+                    'student_profiles.registration_type',
+                    'confirm'
                 );
             }
             /*

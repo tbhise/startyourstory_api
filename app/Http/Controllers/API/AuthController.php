@@ -85,10 +85,6 @@ class AuthController extends Controller
                     false,       // raw
                     'Lax'        // sameSite
                 );
-
-
-
-                
         } catch (\Exception $e) {
             Log::error('Login Error: ' . $e->getMessage());
 
@@ -162,6 +158,36 @@ class AuthController extends Controller
                 'status' => false,
                 'message' => 'Server error'
             ], 500);
+        }
+    }
+
+
+    public function logout(Request $request)
+    {
+        try {
+            $token =
+                $request->cookie('auth_token');
+            DB::table('users')
+                ->where(
+                    'api_token',
+                    $token
+                )
+                ->update([
+                    'api_token' => null
+                ]);
+            return response()->json([
+                'status' => true,
+                'message' =>
+                'Logout successful'
+            ])->cookie(
+                'auth_token',
+                '',
+                -1
+            );
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false
+            ]);
         }
     }
 }

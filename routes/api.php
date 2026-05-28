@@ -16,6 +16,7 @@ use App\Http\Controllers\API\PaymentController;
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::post('/login',           [AuthController::class, 'login']);
+Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
 
 

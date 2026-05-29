@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class FirmController extends Controller
 {
-    
+
     public function registerFirm(Request $request)
     {
         DB::beginTransaction();
@@ -281,6 +281,7 @@ class FirmController extends Controller
                 'status' => true,
                 'message' => 'Firm profile updated successfully',
                 'firm_id' => $firmId,
+                'profile_completed' => $isProfileCompleted ? 1 : 0,
                 'profile_image' => isset($userUpdateData['profile_image'])
                     ? asset('storage/' . $userUpdateData['profile_image'])
                     : null,

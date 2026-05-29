@@ -320,6 +320,8 @@ class FirmDashboardController extends Controller
              *
              */
             $is_shortlisted =  DB::table('recruiter_actions')->where('firm_id', $firm->id)->where('student_id', $request->id)->where('action_status', 'shortlisted')->exists();
+            $is_reported =  DB::table('reported_profiles')->where('reported_by', $firm->user_id)->where('student_id', $request->id)->exists();
+
             /*
         |--------------------------------------------------------------------------
         | Response
@@ -334,6 +336,7 @@ class FirmDashboardController extends Controller
                         : null,
                     'is_premium' => $isPremium,
                     'is_shortlisted' => $is_shortlisted ? 'Shortlisted' : null,
+                    'is_reported' => $is_reported,
                 ]
             ]);
         } catch (\Exception $e) {

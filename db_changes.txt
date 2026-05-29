@@ -373,7 +373,30 @@ CREATE TABLE coupon_usages (
 
 
 
-====================== 27/05/2026
+##====================== 27/05/2026
 
 ALTER TABLE `startyourstory`.`student_profiles`
 CHANGE COLUMN `experience_department` `experience_department` JSON NULL DEFAULT NULL ;
+
+
+
+
+
+##================ 29052026
+
+CREATE TABLE reported_profiles (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    student_id BIGINT UNSIGNED NOT NULL,
+    reported_by BIGINT UNSIGNED NOT NULL,
+    reason VARCHAR(100) NOT NULL,
+    remarks TEXT NULL,
+    status ENUM('pending','reviewed','dismissed') DEFAULT 'pending',
+    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_at TIMESTAMP NULL,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL,
+
+    INDEX idx_student(student_id),
+    INDEX idx_reported_by(reported_by),
+    INDEX idx_status(status)
+);

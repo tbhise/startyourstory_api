@@ -100,9 +100,7 @@ class UserController extends Controller
     {
         DB::beginTransaction();
         try {
-
             // Log::info('Update Profile API called', ['request' => $request->all()]);
-
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -120,9 +118,6 @@ class UserController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
-
-
-
             $validator = Validator::make($request->all(), [
                 'looking_for' => 'nullable|string',
                 'srn' => 'nullable|string|max:10|unique:student_profiles,srn,' . $user->id . ',user_id',
@@ -156,7 +151,6 @@ class UserController extends Controller
                     'message' => $validator->errors()->first()
                 ]);
             }
-
             $existingProfile = DB::table('student_profiles')
                 ->where('user_id', $user->id)->first();
             $resumePath = null;
@@ -245,7 +239,6 @@ class UserController extends Controller
                 'current_firm_name' => $request->current_firm_name,
                 'experience_years' => $request->experience_years,
                 'industry_worked_in' => $request->industry_worked_in,
-                
                 'experience_department' => !empty($request->experience_department)
                     ? json_encode($request->experience_department)
                     : null,
@@ -313,30 +306,22 @@ class UserController extends Controller
             // } elseif ($request->looking_for === 'creator') {
             //     $isProfileComplete = !empty($request->city);
             // }
-
             $isProfileComplete = false;
-
             $resumeExists =
                 $resumePath ||
                 !empty($existingProfile->resume_path ?? null);
-
             $preferredLocationExists =
                 !empty($preferredLocations);
-
             $basicInfoComplete =
                 !empty($request->city) &&
                 !empty($request->gender);
-
             if ($request->looking_for === 'articleship') {
-
                 $isProfileComplete =
                     $basicInfoComplete &&
                     !empty($request->srn) &&
                     $preferredLocationExists &&
                     $resumeExists;
-
                 if ($registrationType === 'confirm') {
-
                     $isProfileComplete =
                         $isProfileComplete &&
                         !empty($request->it_oc_status) &&
@@ -349,23 +334,16 @@ class UserController extends Controller
                     ['semi-qualified', 'qualified']
                 )
             ) {
-
                 $isProfileComplete =
                     $basicInfoComplete &&
                     !empty($request->srn) &&
                     // !empty($request->experience_years) &&
-
                     $preferredLocationExists &&
                     $resumeExists;
             } elseif ($request->looking_for === 'creator') {
-
                 $isProfileComplete =
                     !empty($request->city);
             }
-
-
-
-
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
@@ -573,6 +551,74 @@ class UserController extends Controller
                 'status' => false,
                 'message' => 'Unexpected server error while tracking recruiter action.',
             ], 500);
+        }
+    }
+    public function reportStudentProfile(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthorized'
+                ], 401);
+            }
+            $user = DB::table('users')
+                ->where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token'
+                ], 401);
+            }
+            $validator = Validator::make($request->all(), [
+                'student_id' => 'required|exists:users,id',
+                'reason' => 'required|string|max:100',
+                'remarks' => 'nullable|string|max:1000',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first(),
+                ]);
+            }
+            $alreadyReported = DB::table('reported_profiles')
+                ->where('student_id', $request->student_id)
+                ->where('reported_by', $user->id)
+                ->exists();
+            if ($alreadyReported) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'You have already reported this profile.'
+                ]);
+            }
+            DB::table('reported_profiles')->insert([
+                'student_id' => $request->student_id,
+                'reported_by' => $user->id,
+                'reason' => $request->reason,
+                'remarks' => $request->remarks,
+                'status' => 'pending',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::commit();
+            return response()->json([
+                'status' => true,
+                'message' => 'Profile reported successfully.'
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Report Profile Error', [
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Something went wrong.'
+            ]);
         }
     }
 }

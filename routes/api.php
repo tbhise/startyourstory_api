@@ -21,10 +21,14 @@ Route::get('/me',               [AuthController::class, 'me']);
 
 
 Route::middleware([ApiAuthMiddleware::class])->group(function () {
-    Route::post('/updateProfile',    [UserController::class, 'updateProfile']);
-    Route::post('/getProfile',       [UserController::class, 'getProfile']);
+    Route::post('/updateProfile',            [UserController::class, 'updateProfile']);
+    Route::post('/getProfile',               [UserController::class, 'getProfile']);
     Route::post('/updateProfileImage',       [UserController::class, 'updateProfileImage']);
     Route::post('/students/{id}/track-recruiter-action',       [UserController::class, 'trackRecruiterAction']);
+
+    Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
+
+
 
     Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
     Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
@@ -91,3 +95,4 @@ Route::post(
 Route::post('/payments/create-order', [PaymentController::class, 'createOrder']);
 
 Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
+Route::post('//payments/failure', [PaymentController::class, 'paymentFailure']);

@@ -14,7 +14,7 @@ class SubscriptionHelper
         }
         return DB::table('firm_subscriptions')
             ->where('firm_id', $firmId)
-            ->where('plan', 'premium')
+            ->where('plan', 'like', '%premium%')
             ->where('status', 'active')
             ->where(function ($query) {
                 $query->whereNull('expires_at')

@@ -400,3 +400,25 @@ CREATE TABLE reported_profiles (
     INDEX idx_reported_by(reported_by),
     INDEX idx_status(status)
 );
+
+
+===============================
+ALTER TABLE firm_subscriptions
+MODIFY status ENUM(
+    'pending',
+    'active',
+    'expired',
+    'cancelled'
+) DEFAULT 'pending';
+
+
+ALTER TABLE `startyourstory`.`payment_logs`
+ADD COLUMN `firm_subscription_id` BIGINT NULL AFTER `id`,
+DROP INDEX `idx_payment_id` ,
+ADD INDEX `idx_payment_id` (`payment_id` ASC, `firm_subscription_id` ASC) VISIBLE;
+;
+
+
+
+ALTER TABLE firm_subscriptions
+ADD COLUMN razorpay_response JSON NULL AFTER payment_method;

@@ -19,7 +19,7 @@ class UserController extends Controller
                 'name' => 'required',
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
-                'password' => 'required|min:6|max:10',
+                'password' => 'required|min:6|max:15',
                 'referral_code' => 'nullable|string|max:50',
             ]);
             if ($validator->fails()) {

@@ -19,7 +19,7 @@ class FirmController extends Controller
             $validator = Validator::make($request->all(), [
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
-                'password' => 'required|min:6|max:10',
+                'password' => 'required|min:6|max:15',
                 'firmName' => 'required',
                 'city' => 'required',
                 'referral_code' => 'nullable|string|max:50',

@@ -15,6 +15,7 @@ class FirmController extends Controller
     public function registerFirm(Request $request)
     {
         DB::beginTransaction();
+
         try {
             $validator = Validator::make($request->all(), [
                 'email' => 'required|email|unique:users,email',

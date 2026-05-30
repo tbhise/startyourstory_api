@@ -14,6 +14,8 @@ class UserController extends Controller
     public function registerStudent(Request $request)
     {
         DB::beginTransaction();
+
+
         try {
             $validator = Validator::make($request->all(), [
                 'name' => 'required',
@@ -21,6 +23,7 @@ class UserController extends Controller
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:15',
                 'referral_code' => 'nullable|string|max:50',
+                ''
             ]);
             if ($validator->fails()) {
                 return response()->json([

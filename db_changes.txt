@@ -422,3 +422,32 @@ ADD INDEX `idx_payment_id` (`payment_id` ASC, `firm_subscription_id` ASC) VISIBL
 
 ALTER TABLE firm_subscriptions
 ADD COLUMN razorpay_response JSON NULL AFTER payment_method;
+
+---------------------------------31/05/2026
+
+CREATE TABLE queue_jobs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    queue VARCHAR(255) NOT NULL,
+    payload LONGTEXT NOT NULL,
+    attempts TINYINT UNSIGNED NOT NULL,
+    reserved_at INT UNSIGNED NULL,
+    available_at INT UNSIGNED NOT NULL,
+    created_at INT UNSIGNED NOT NULL
+);
+
+CREATE TABLE failed_jobs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    uuid VARCHAR(255) NOT NULL UNIQUE,
+    connection TEXT NOT NULL,
+    queue TEXT NOT NULL,
+    payload LONGTEXT NOT NULL,
+    exception LONGTEXT NOT NULL,
+    failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+ALTER TABLE `startyourstory`.`users`
+ADD COLUMN `email_verified_at` DATETIME NULL AFTER `referral_count`,
+DROP INDEX `index` ,
+ADD INDEX `index` (`id` ASC, `is_deleted` ASC, `token_expires_at` ASC, `api_token` ASC, `email_verified_at` ASC) INVISIBLE;
+;

@@ -19,6 +19,14 @@ Route::post('/login',           [AuthController::class, 'login']);
 Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
 
+Route::post(
+    '/email/send-verification-link',
+    [UserController::class, 'sendVerificationLink']
+);
+Route::get(
+    '/email/verification-status',
+    [UserController::class, 'verificationStatus']
+);
 
 Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfile',            [UserController::class, 'updateProfile']);

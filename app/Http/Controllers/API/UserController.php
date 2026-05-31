@@ -8,22 +8,23 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use App\Jobs\SendWelcomeEmailJob;
+use App\Jobs\SendVerificationEmailJob;
+use App\Models\User;
 
 class UserController extends Controller
 {
     public function registerStudent(Request $request)
     {
         DB::beginTransaction();
-
-
         try {
             $validator = Validator::make($request->all(), [
                 'name' => 'required',
-                'email' => 'required|email|unique:users,email',
+                // 'email' => 'required|email|unique:users,email,',
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:15',
                 'referral_code' => 'nullable|string|max:50',
-                ''
+
             ]);
             if ($validator->fails()) {
                 return response()->json([
@@ -82,7 +83,34 @@ class UserController extends Controller
                     ->where('id', $referrer->id)
                     ->increment('referral_count');
             }
+
+
+
+            if ($request->looking_for === 'creator') {
+                $userType = 'creator';
+            } else {
+                $userType = 'student';
+            }
+
+
+
+
+
+
+
             DB::commit();
+
+
+            $user = User::where('id', $userId)->first();
+            SendVerificationEmailJob::dispatch($user);
+            //  SendWelcomeEmailJob::dispatch(
+            //                 $request->email,
+            //                 $request->name,
+            //                 $myReferralCode,
+            //                 $userType
+            //             );
+
+
             return response()->json([
                 'status' => true,
                 'message' => 'Candidate Registration successful..!',
@@ -395,6 +423,7 @@ class UserController extends Controller
             return response()->json([
                 'status' => true,
                 'data' => [
+                    'email_verified_at' => $user->email_verified_at,
                     'user' => $userId,
                     'profile' => $profile
                 ]
@@ -623,5 +652,89 @@ class UserController extends Controller
                 'message' => 'Something went wrong.'
             ]);
         }
+    }
+
+    public function sendVerificationLink(Request $request)
+    {
+
+        try {
+
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthorized'
+                ], 401);
+            }
+            $user = User::where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token'
+                ], 401);
+            }
+            Log::alert('Send Verification Link API called', ['user_id' => $user->id, 'email' => $user->email]);
+            if ($user->hasVerifiedEmail()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Email already verified.',
+                ], 422);
+            }
+            SendVerificationEmailJob::dispatch($user);
+            return response()->json([
+                'status' => true,
+                'message' => 'Verification link sent successfully.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Send Verification Link API Error', [
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Unexpected server error while sending verification link.',
+            ], 500);
+        }
+    }
+
+
+
+
+    public function verificationStatus(Request $request)
+    {
+        $token = $request->cookie('auth_token');
+
+        if (!$token) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Unauthorized',
+            ], 401);
+        }
+
+        $user = User::where('api_token', $token)
+            ->where('is_deleted', false)
+            ->first();
+
+        if (!$user) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid token',
+            ], 401);
+        }
+
+
+
+
+
+        return response()->json([
+            'status' => true,
+            'verified' => !is_null($user->email_verified_at),
+            'email_verified_at' => $user->email_verified_at,
+            'email' => $user->email,
+            'looking_for' => $user->looking_for,
+        ]);
     }
 }

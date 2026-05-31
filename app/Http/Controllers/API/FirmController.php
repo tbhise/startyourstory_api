@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use App\Jobs\SendWelcomeEmailJob;
 
 class FirmController extends Controller
 {
@@ -88,6 +89,19 @@ class FirmController extends Controller
                     ->increment('referral_count');
             }
             DB::commit();
+
+            $userType = 'firm';
+
+            SendWelcomeEmailJob::dispatch(
+                $request->email,
+                $request->firmName,
+                $myReferralCode,
+                $userType
+            );
+
+
+
+
             return response()->json([
                 'status' => true,
                 'message' => 'Firm Registration successful..!',

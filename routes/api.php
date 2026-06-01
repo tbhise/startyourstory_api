@@ -13,6 +13,8 @@ use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\PaymentController;
 
+use App\Http\Controllers\API\TrainingPartnerController;
+
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::post('/login',           [AuthController::class, 'login']);
@@ -100,7 +102,34 @@ Route::post(
 );
 
 
+
+Route::prefix('admin/training-partners')->group(function () {
+
+    Route::get('/', [TrainingPartnerController::class, 'index']);
+
+    Route::get('/{id}', [TrainingPartnerController::class, 'show']);
+
+    Route::post('/', [TrainingPartnerController::class, 'store']);
+
+    Route::post('/{id}', [TrainingPartnerController::class, 'update']);
+
+    Route::delete('/{id}', [TrainingPartnerController::class, 'destroy']);
+
+    Route::post('/{id}/toggle-active', [TrainingPartnerController::class, 'toggleActive']);
+});
+
+
+
+  Route::put(
+        '/admin/training-partners/{id}',
+        [TrainingPartnerController::class, 'update']
+    );
+
+
+    Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
+
+
 Route::post('/payments/create-order', [PaymentController::class, 'createOrder']);
 
 Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
-Route::post('//payments/failure', [PaymentController::class, 'paymentFailure']);
+Route::post('/payments/failure', [PaymentController::class, 'paymentFailure']);

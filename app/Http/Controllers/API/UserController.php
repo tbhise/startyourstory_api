@@ -20,7 +20,7 @@ class UserController extends Controller
         try {
             $validator = Validator::make($request->all(), [
                 'name' => 'required',
-                // 'email' => 'required|email|unique:users,email,',
+                'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:15',
                 'referral_code' => 'nullable|string|max:50',
@@ -101,8 +101,14 @@ class UserController extends Controller
             DB::commit();
 
 
+
             $user = User::where('id', $userId)->first();
+
             SendVerificationEmailJob::dispatch($user);
+
+
+
+
             //  SendWelcomeEmailJob::dispatch(
             //                 $request->email,
             //                 $request->name,
@@ -654,6 +660,12 @@ class UserController extends Controller
         }
     }
 
+    /**
+     *  Mail Services
+     */
+
+
+
     public function sendVerificationLink(Request $request)
     {
 
@@ -736,5 +748,77 @@ class UserController extends Controller
             'email' => $user->email,
             'looking_for' => $user->looking_for,
         ]);
+    }
+
+
+
+
+    public function verify(Request $request, $id, $hash)
+    {
+
+        if (! $request->hasValidSignature()) {
+
+            return redirect()->away(
+                env('FRONTEND_URL')
+                    . '/email-verification-result?status=failed'
+            );
+        }
+
+        $user = User::find($id);
+
+        if (! $user) {
+
+            return redirect()->away(
+                env('FRONTEND_URL')
+                    . '/email-verification-result?status=failed'
+            );
+        }
+
+        if (! hash_equals(
+            sha1($user->email),
+            $hash
+        )) {
+
+            return redirect()->away(
+                env('FRONTEND_URL')
+                    . '/email-verification-result?status=failed'
+            );
+        }
+
+        if (is_null($user->email_verified_at)) {
+
+            $user->email_verified_at = now();
+            $user->save();
+
+            $role = $user->role;
+            $myReferralCode = $user->referral_code;
+
+            if ($role === 'firm') {
+                $userType = 'firm';
+            } else {
+
+
+                $lookingFor = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
+
+
+                if ($lookingFor === 'creator') {
+                    $userType = 'creator';
+                } else {
+                    $userType = 'student';
+                }
+            }
+
+            SendWelcomeEmailJob::dispatch(
+                $user->email,
+                $user->name,
+                $myReferralCode,
+                $userType
+            )->delay(now()->addMinutes(2));
+        }
+
+        return redirect()->away(
+            env('FRONTEND_URL')
+                . '/email-verification-result?status=success'
+        );
     }
 }

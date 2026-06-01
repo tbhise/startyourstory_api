@@ -6,7 +6,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 
-class WelcomeEmail extends Mailable implements ShouldQueue
+class WelcomeEmail extends Mailable
 {
     use Queueable;
 

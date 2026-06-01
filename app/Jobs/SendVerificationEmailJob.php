@@ -8,7 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
-
+use Illuminate\Support\Facades\Log;
 class SendVerificationEmailJob implements ShouldQueue
 {
     use Dispatchable;
@@ -17,8 +17,10 @@ class SendVerificationEmailJob implements ShouldQueue
         public User $user
     ) {}
 
+ 
     public function handle(): void
     {
+        Log::info('Preparing to send verification email to user ID: ' . $this->user->id);
         $verificationUrl = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
@@ -35,5 +37,6 @@ class SendVerificationEmailJob implements ShouldQueue
                     $verificationUrl
                 )
             );
+        Log::info('Verification email sent to user ID: ' . $this->user->id);
     }
 }

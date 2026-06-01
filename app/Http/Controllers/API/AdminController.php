@@ -179,8 +179,8 @@ class AdminController extends Controller
         try {
             $search = trim($request->search ?? '');
             $query = DB::table('firm_subscriptions')
-                ->join('firm_profiles', 'firm_subscriptions.firm_id', '=', 'firm_profiles.user_id')
-                ->join('users', 'firm_profiles.user_id', '=', 'users.id')
+                ->leftJoin('firm_profiles', 'firm_subscriptions.firm_id', '=', 'firm_profiles.user_id')
+                ->leftJoin('users', 'firm_profiles.user_id', '=', 'users.id')
                 ->select(
                     'firm_subscriptions.id',
                     'firm_subscriptions.firm_id',
@@ -203,6 +203,11 @@ class AdminController extends Controller
                 });
             }
             $subscriptions = $query->get();
+
+
+            $totalFirms = DB::table('firm_profiles')->count();
+
+
             $formatted =
                 $subscriptions->map(function ($item) {
                     return [
@@ -225,7 +230,7 @@ class AdminController extends Controller
                 'Subscriptions fetched successfully',
                 'data' => [
                     'subscriptions' => $formatted,
-                    'total' => $formatted->count(),
+                    'total' => $totalFirms,
                 ]
             ]);
         } catch (\Exception $e) {

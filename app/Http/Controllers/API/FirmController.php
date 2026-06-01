@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Jobs\SendWelcomeEmailJob;
+use App\Jobs\SendVerificationEmailJob;
+use App\Models\User;
 
 class FirmController extends Controller
 {
@@ -90,14 +92,23 @@ class FirmController extends Controller
             }
             DB::commit();
 
-            $userType = 'firm';
 
-            SendWelcomeEmailJob::dispatch(
-                $request->email,
-                $request->firmName,
-                $myReferralCode,
-                $userType
-            );
+
+
+
+
+            $user = User::where('id', $userId)->first();
+
+            SendVerificationEmailJob::dispatch($user);
+
+              // $userType = 'firm';
+
+            // SendWelcomeEmailJob::dispatch(
+            //     $request->email,
+            //     $request->firmName,
+            //     $myReferralCode,
+            //     $userType
+            // );
 
 
 

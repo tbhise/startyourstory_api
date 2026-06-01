@@ -184,10 +184,10 @@
                 <tr>
                     <td class="header">
 
-                        <img
+                        {{-- <img
                             src="https://startyourstory.in/assets/sys-logo-Ol8kKW1e.webp"
                             alt="Start Your Story"
-                            class="logo">
+                            class="logo"> --}}
 
                         <h1 class="heading">
                             {{ $heading ?? 'Start Your Story' }}

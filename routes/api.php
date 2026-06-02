@@ -12,6 +12,7 @@ use App\Http\Controllers\API\JobsController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\PaymentController;
+use App\Http\Middleware\FirmVerifiedMiddleware;
 
 use App\Http\Controllers\API\TrainingPartnerController;
 
@@ -31,52 +32,51 @@ Route::get(
 );
 
 Route::middleware([ApiAuthMiddleware::class])->group(function () {
-    Route::post('/updateProfile',            [UserController::class, 'updateProfile']);
-    Route::post('/getProfile',               [UserController::class, 'getProfile']);
-    Route::post('/updateProfileImage',       [UserController::class, 'updateProfileImage']);
-    Route::post('/students/{id}/track-recruiter-action',       [UserController::class, 'trackRecruiterAction']);
 
+    // ── Available to all authenticated users (no firm-verification gate) ──
+    Route::post('/updateProfile',        [UserController::class, 'updateProfile']);
+    Route::post('/getProfile',           [UserController::class, 'getProfile']);
+    Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
+    Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
 
+    // Firm profile setup & public browsing — accessible even while pending
+    Route::post('/firm_profile_update',    [FirmController::class, 'firm_profile_update']);
+    Route::post('/getFirmProfileDetails',  [FirmController::class, 'getFirmProfileDetails']);
+    Route::post('/getCompanies',           [FirmController::class, 'getCompanies']);
+    Route::post('/getCompanyDetails/{id}', [FirmController::class, 'getCompanyDetails']);
+    Route::post('/searchFirms',            [FirmController::class, 'searchFirms']);
+    Route::get('/getJobs',                 [FirmController::class, 'getJobs']);
 
+    // Student job actions
+    Route::post('/jobs/{id}/apply',                          [JobsController::class, 'applyJob']);
+    Route::post('/jobs/{id}/save',                           [JobsController::class, 'saveJob']);
+    Route::delete('/jobs/{id}/save',                         [JobsController::class, 'saveJob']);
+    Route::post('/getAppliedJobs',                           [JobsController::class, 'getAppliedJobs']);
+    Route::post('/getSavedJobs',                             [JobsController::class, 'getSavedJobs']);
+    Route::post('/applications/{id}/respondInterview',       [JobsController::class, 'respondInterview']);
 
-    Route::post('/candidates',       [FirmDashboardController::class, 'getCandidates']);
-    Route::post('/candidate/{id}',   [FirmDashboardController::class, 'candidateDetail']);
-    Route::post('/downloadFile',     [FirmDashboardController::class, 'downloadFile']);
-    Route::post('/notifications',     [FirmDashboardController::class, 'getNotifications']);
+    Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
 
-    Route::post('/firm_profile_update',       [FirmController::class, 'firm_profile_update']);
-    Route::post('/getFirmProfileDetails',     [FirmController::class, 'getFirmProfileDetails']);
-    Route::post('/getCompanies',              [FirmController::class, 'getCompanies']);
-    Route::post('/getCompanyDetails/{id}',    [FirmController::class, 'getCompanyDetails']);
-    Route::post('/createJob',                 [FirmController::class, 'createJob']);
-    Route::post('/getFirmJobs',               [FirmController::class, 'getFirmJobs']);
-    Route::get('/getJobs',                    [FirmController::class, 'getJobs']);
+    // ── Firm dashboard routes — require manual verification approval ──
+    Route::middleware([FirmVerifiedMiddleware::class])->group(function () {
+        Route::post('/candidates',                           [FirmDashboardController::class, 'getCandidates']);
+        Route::post('/candidate/{id}',                       [FirmDashboardController::class, 'candidateDetail']);
+        Route::post('/downloadFile',                         [FirmDashboardController::class, 'downloadFile']);
+        Route::post('/notifications',                        [FirmDashboardController::class, 'getNotifications']);
 
+        Route::post('/createJob',                            [FirmController::class, 'createJob']);
+        Route::post('/getFirmJobs',                          [FirmController::class, 'getFirmJobs']);
+        Route::post('/getFirmJobDetails/{id}',               [FirmController::class, 'getFirmJobDetails']);
+        Route::post('/updateJobStatus/{id}',                 [FirmController::class, 'updateJobStatus']);
+        Route::post('/deleteFirmJob/{id}',                   [FirmController::class, 'deleteFirmJob']);
+        Route::post('/updateJob/{id}',                       [FirmController::class, 'updateJob']);
 
-
-    Route::post('/getFirmJobDetails/{id}',    [FirmController::class, 'getFirmJobDetails']);
-    Route::post('/updateJobStatus/{id}',      [FirmController::class, 'updateJobStatus']);
-    Route::post('/deleteFirmJob/{id}',        [FirmController::class, 'deleteFirmJob']);
-    Route::post('/updateJob/{id}',            [FirmController::class, 'updateJob']);
-    Route::post('/searchFirms',               [FirmController::class, 'searchFirms']);
-
-
-    // Jobs
-
-    Route::post('/jobs/{id}/apply',                     [JobsController::class, 'applyJob']);
-    Route::post('/jobs/{id}/save',                      [JobsController::class, 'saveJob']);
-    Route::delete('/jobs/{id}/save',                    [JobsController::class, 'saveJob']);
-    Route::post('/getAppliedJobs',                      [JobsController::class, 'getAppliedJobs']);
-    Route::post('/getSavedJobs',                        [JobsController::class, 'getSavedJobs']);
-    Route::post('/getApplications/{id}',                [JobsController::class, 'getApplications']);
-    Route::post('/applications/{id}/updateStatus',      [JobsController::class, 'updateApplicationStatus']);
-    Route::post('/applications/{id}/schedule-interview',     [JobsController::class, 'scheduleInterview']);
-    Route::post('/getRecruiterActions',                        [JobsController::class, 'getRecruiterActions']);
-    Route::post('/applications/{id}/respondInterview',                 [JobsController::class, 'respondInterview']);
-
-
-    Route::post('/mark-read',        [NotificationController::class, 'markAsRead']);
+        Route::post('/getApplications/{id}',                 [JobsController::class, 'getApplications']);
+        Route::post('/applications/{id}/updateStatus',       [JobsController::class, 'updateApplicationStatus']);
+        Route::post('/applications/{id}/schedule-interview', [JobsController::class, 'scheduleInterview']);
+        Route::post('/getRecruiterActions',                  [JobsController::class, 'getRecruiterActions']);
+    });
 });
 
 
@@ -87,6 +87,11 @@ Route::post('/admin/logout',  [AdminController::class, 'logout']);
 
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);
+
+// Admin — firm manual verification
+Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
+Route::post('/admin/firms/{id}/approve',   [AdminController::class, 'approveFirm']);
+Route::post('/admin/firms/{id}/reject',    [AdminController::class, 'rejectFirm']);
 
 Route::post('/admin/subscriptions',        [AdminController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [AdminController::class, 'addSubscriptions']);

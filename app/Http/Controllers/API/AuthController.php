@@ -51,6 +51,18 @@ class AuthController extends Controller
                     'token_expires_at' => now()->addDays(7),
                     'updated_at' => now()
                 ]);
+
+            $verificationStatus = null;
+            $rejectionReason = null;
+            if ($user->role === 'firm') {
+                $firmProfile = DB::table('firm_profiles')
+                    ->where('user_id', $user->id)
+                    ->select('verification_status', 'rejection_reason')
+                    ->first();
+                $verificationStatus = $firmProfile->verification_status ?? 'pending';
+                $rejectionReason = $firmProfile->rejection_reason ?? null;
+            }
+
             return response()
                 ->json([
                     'status' => true,
@@ -65,6 +77,8 @@ class AuthController extends Controller
                         'profile_image' => $user->profile_image
                             ? asset('storage/' . $user->profile_image)
                             : null,
+                        'verification_status' => $verificationStatus,
+                        'rejection_reason' => $rejectionReason,
                     ]
                 ])
                 ->cookie(
@@ -120,6 +134,17 @@ class AuthController extends Controller
                     'message' => 'Token expired'
                 ], 401);
             }
+            $verificationStatus = null;
+            $rejectionReason = null;
+            if ($user->role === 'firm') {
+                $firmProfile = DB::table('firm_profiles')
+                    ->where('user_id', $user->id)
+                    ->select('verification_status', 'rejection_reason')
+                    ->first();
+                $verificationStatus = $firmProfile->verification_status ?? 'pending';
+                $rejectionReason = $firmProfile->rejection_reason ?? null;
+            }
+
             return response()->json([
                 'status' => true,
                 'data' => [
@@ -133,6 +158,8 @@ class AuthController extends Controller
                     'profile_image' => $user->profile_image
                         ? asset('storage/' . $user->profile_image)
                         : null,
+                    'verification_status' => $verificationStatus,
+                    'rejection_reason' => $rejectionReason,
                 ]
             ]);
         } catch (\Exception $e) {

@@ -451,3 +451,15 @@ ADD COLUMN `email_verified_at` DATETIME NULL AFTER `referral_count`,
 DROP INDEX `index` ,
 ADD INDEX `index` (`id` ASC, `is_deleted` ASC, `token_expires_at` ASC, `api_token` ASC, `email_verified_at` ASC) INVISIBLE;
 ;
+
+
+======================== All Done on production =================
+
+## ======================== 02/06/2026 - Firm Manual Verification ========================
+
+ALTER TABLE firm_profiles
+ADD COLUMN verification_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending' AFTER updated_at,
+ADD COLUMN rejection_reason TEXT NULL AFTER verification_status;
+
+-- Existing firms: set to approved so they are not locked out
+UPDATE firm_profiles SET verification_status = 'approved' WHERE verification_status = 'pending';

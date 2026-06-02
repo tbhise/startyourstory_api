@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Log;
 use Vinkla\Hashids\Facades\Hashids;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\FirmApprovedMail;
+use App\Mail\FirmRejectedMail;
 
 class AdminController extends Controller
 {
@@ -720,6 +723,129 @@ class AdminController extends Controller
             ], 500);
         }
     }
+    public function getPendingFirms(Request $request)
+    {
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            $admin = DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+
+            $status = $request->input('status', 'pending');
+
+            $firms = DB::table('firm_profiles as fp')
+                ->join('users as u', 'u.id', '=', 'fp.user_id')
+                ->where('fp.verification_status', $status)
+                ->select(
+                    'fp.user_id as id',
+                    'fp.firm_name',
+                    'fp.frn',
+                    'fp.hr_name',
+                    'fp.firm_type',
+                    'fp.city',
+                    'fp.address',
+                    'fp.about',
+                    'fp.linkedin_url',
+                    'fp.website_url',
+                    'fp.verification_status',
+                    'fp.rejection_reason',
+                    'fp.created_at',
+                    'u.email',
+                    'u.mobile',
+                    DB::raw("CASE WHEN fp.logo_path IS NOT NULL THEN CONCAT('" . url('/storage') . "/', fp.logo_path) ELSE NULL END as logo_url")
+                )
+                ->orderByDesc('fp.created_at')
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => ['firms' => $firms, 'total' => $firms->count()]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getPendingFirms Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    public function approveFirm(Request $request, $firmId)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            $admin = DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+
+            $firm = DB::table('firm_profiles')->where('user_id', $firmId)->first();
+            if (!$firm) return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
+
+            if ($firm->verification_status === 'approved') {
+                return response()->json(['status' => false, 'message' => 'Firm already approved'], 422);
+            }
+
+            DB::table('firm_profiles')
+                ->where('user_id', $firmId)
+                ->update([
+                    'verification_status' => 'approved',
+                    'rejection_reason' => null,
+                    'updated_at' => now(),
+                ]);
+
+            $user = DB::table('users')->where('id', $firmId)->first();
+            if ($user) {
+                Mail::to($user->email)->send(new FirmApprovedMail($firm->firm_name ?? $user->name));
+            }
+
+            DB::commit();
+            return response()->json(['status' => true, 'message' => 'Firm approved successfully']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('approveFirm Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    public function rejectFirm(Request $request, $firmId)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            $admin = DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+
+            $validator = Validator::make($request->all(), [
+                'reason' => 'required|string|max:1000',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $firm = DB::table('firm_profiles')->where('user_id', $firmId)->first();
+            if (!$firm) return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
+
+            DB::table('firm_profiles')
+                ->where('user_id', $firmId)
+                ->update([
+                    'verification_status' => 'rejected',
+                    'rejection_reason' => $request->reason,
+                    'updated_at' => now(),
+                ]);
+
+            $user = DB::table('users')->where('id', $firmId)->first();
+            if ($user) {
+                Mail::to($user->email)->send(new FirmRejectedMail($firm->firm_name ?? $user->name, $request->reason));
+            }
+
+            DB::commit();
+            return response()->json(['status' => true, 'message' => 'Firm rejected successfully']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('rejectFirm Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     public function rejectPremiumRequest(
         Request $request,
         $encId = null

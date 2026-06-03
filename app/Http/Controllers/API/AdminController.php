@@ -297,6 +297,13 @@ class AdminController extends Controller
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+            // Sync is_premium flag on firm_profiles
+            $isPremiumPlan = str_contains($request->plan, 'premium') && $request->status === 'active';
+            DB::table('firm_profiles')
+                ->where('id', $firm->id)
+                ->update(['is_premium' => $isPremiumPlan ? 1 : 0, 'updated_at' => now()]);
+
             $subscription =
                 DB::table('firm_subscriptions')
                 ->where('id', $subscriptionId)
@@ -681,6 +688,11 @@ class AdminController extends Controller
                     'approved_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+            // Sync is_premium flag on firm_profiles
+            DB::table('firm_profiles')
+                ->where('id', $premiumRequest->firm_id)
+                ->update(['is_premium' => 1, 'updated_at' => now()]);
             $updatedRequest =
                 DB::table('premium_requests')
                 ->select(

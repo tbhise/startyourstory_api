@@ -261,6 +261,10 @@ class PaymentController extends Controller
                     'expires_at' => now()->addDays($days),
                     'updated_at' => now(),
                 ]);
+
+            DB::table('firm_profiles')
+                ->where('id', $subscription->firm_id)
+                ->update(['is_premium' => 1, 'updated_at' => now()]);
             /*
         |--------------------------------------------------------------------------
         | Log Success

@@ -15,6 +15,9 @@ use App\Http\Controllers\API\PaymentController;
 use App\Http\Middleware\FirmVerifiedMiddleware;
 
 use App\Http\Controllers\API\TrainingPartnerController;
+use App\Http\Controllers\API\CompanyEmployeeController;
+use App\Http\Controllers\API\WalletController;
+use App\Http\Controllers\API\AdminWalletController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -39,6 +42,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
+    Route::post('/student/directory-visibility', [UserController::class, 'updateDirectoryVisibility']);
+
+    // Company employee directory (verified members working at a firm)
+    Route::post('/companies/{id}/employees/preview',         [CompanyEmployeeController::class, 'getPreview']);
+    Route::post('/companies/{id}/employees',                 [CompanyEmployeeController::class, 'getDirectory']);
+    Route::post('/companies/{id}/employees/category-counts', [CompanyEmployeeController::class, 'getCategoryCounts']);
 
     // Firm profile setup & public browsing — accessible even while pending
     Route::post('/firm_profile_update',    [FirmController::class, 'firm_profile_update']);
@@ -57,6 +66,14 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/applications/{id}/respondInterview',       [JobsController::class, 'respondInterview']);
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
+
+    // ── Student wallet ──
+    Route::post('/wallet',                          [WalletController::class, 'getWallet']);
+    Route::post('/wallet/ledger',                   [WalletController::class, 'getLedger']);
+    Route::post('/wallet/recharges',                [WalletController::class, 'getRechargeHistory']);
+    Route::post('/wallet/recharge/order',           [WalletController::class, 'createOrder']);
+    Route::post('/wallet/recharge/verify',          [WalletController::class, 'verifyPayment']);
+    Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge']);
 
     // ── Firm dashboard routes — require manual verification approval ──
     Route::middleware([FirmVerifiedMiddleware::class])->group(function () {
@@ -92,6 +109,11 @@ Route::post('/master/companies',           [MasterController::class, 'getCompani
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
 Route::post('/admin/firms/{id}/approve',   [AdminController::class, 'approveFirm']);
 Route::post('/admin/firms/{id}/reject',    [AdminController::class, 'rejectFirm']);
+
+// Admin — student wallet recharges
+Route::post('/admin/wallet/recharges',                   [AdminWalletController::class, 'getRecharges']);
+Route::post('/admin/wallet/recharges/{id}/approve',      [AdminWalletController::class, 'approveRecharge']);
+Route::post('/admin/wallet/recharges/{id}/reject',       [AdminWalletController::class, 'rejectRecharge']);
 
 Route::post('/admin/subscriptions',        [AdminController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [AdminController::class, 'addSubscriptions']);

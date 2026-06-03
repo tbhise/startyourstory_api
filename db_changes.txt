@@ -463,3 +463,259 @@ ADD COLUMN rejection_reason TEXT NULL AFTER verification_status;
 
 -- Existing firms: set to approved so they are not locked out
 UPDATE firm_profiles SET verification_status = 'approved' WHERE verification_status = 'pending';
+
+
+=========================
+ALTER TABLE `startyourstory`.`student_profiles`
+ADD COLUMN `show_in_directory` TINYINT(1) NULL AFTER `marksheet_path`,
+DROP INDEX `idx_student_passing_month` ,
+ADD INDEX `idx_student_passing_month` (`passing_month` ASC, `show_in_directory` ASC) VISIBLE;
+;
+
+
+ALTER TABLE `startyourstory`.`student_profiles`
+CHANGE COLUMN `show_in_directory` `show_in_directory` TINYINT(1) NULL DEFAULT 1 ;
+
+
+-- current_firm_id / current_firm_name were missing — profile updates were failing silently
+ALTER TABLE `startyourstory`.`student_profiles`
+ADD COLUMN `current_firm_id`   BIGINT UNSIGNED NULL AFTER `portfolio_url`,
+ADD COLUMN `current_firm_name` VARCHAR(255)     NULL AFTER `current_firm_id`,
+ADD COLUMN `experience_years`  VARCHAR(50)      NULL AFTER `current_firm_name`,
+ADD COLUMN `industry_worked_in` VARCHAR(255)    NULL AFTER `experience_years`,
+ADD COLUMN `why_should_hire_you` TEXT           NULL AFTER `industry_worked_in`,
+ADD COLUMN `current_ctc`       VARCHAR(100)     NULL AFTER `why_should_hire_you`,
+ADD COLUMN `expected_ctc`      VARCHAR(100)     NULL AFTER `current_ctc`;
+
+
+-- Backfill is_premium on firm_profiles for all currently active subscriptions.
+-- Run once after deploying the SubscriptionHelper changes. After this runs,
+-- the firm_subscriptions fallback query in isPremiumFirm() is never hit.
+UPDATE firm_profiles fp
+JOIN firm_subscriptions fs ON fs.firm_id = fp.id
+SET fp.is_premium = 1, fp.updated_at = NOW()
+WHERE fs.status = 'active'
+  AND (fs.expires_at IS NULL OR fs.expires_at > NOW());
+
+
+## ======================== Student Wallet Monetization System ========================
+## Run all sections in order.
+## Each section is independent — safe to run section by section.
+
+
+## ── SECTION 1: Student Wallets ──────────────────────────────────────────────────────
+## Core wallet table. One row per student. Tracks available, hold, and consumed balances
+## separately so the UI can show all three without extra queries.
+
+CREATE TABLE student_wallets (
+    id                      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id                 BIGINT UNSIGNED NOT NULL,
+    available_balance       DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
+    hold_balance            DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
+    consumed_balance        DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
+    free_applications_used  INT             NOT NULL DEFAULT 0,
+    free_applications_limit INT             NOT NULL DEFAULT 3,
+    created_at              TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_user_id (user_id),
+    INDEX idx_user_id (user_id)
+);
+
+
+## ── SECTION 2: Wallet Transaction Ledger ────────────────────────────────────────────
+## Permanent, append-only ledger. Every balance movement creates one row.
+## Never update or delete rows — this is the source of truth for auditing.
+##
+## type values:
+##   credit  – wallet recharged (online or manual approval)
+##   hold    – amount reserved when student applies for a job
+##   release – hold returned to available (rejection / auto-expiry)
+##   consume – hold finalised as spent (interview confirmed/accepted)
+##   refund  – exceptional manual refund by admin
+
+CREATE TABLE wallet_transactions (
+    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id          BIGINT UNSIGNED NOT NULL,
+    amount           DECIMAL(10,2)   NOT NULL,
+    type             ENUM('credit','hold','release','consume','refund') NOT NULL,
+    reference_type   VARCHAR(50)     NULL COMMENT 'recharge | application',
+    reference_id     BIGINT UNSIGNED NULL COMMENT 'wallet_recharges.id or application_holds.id',
+    job_id           BIGINT UNSIGNED NULL,
+    application_id   BIGINT UNSIGNED NULL,
+    description      VARCHAR(255)    NULL,
+    balance_before   DECIMAL(10,2)   NULL COMMENT 'available_balance before this operation',
+    balance_after    DECIMAL(10,2)   NULL COMMENT 'available_balance after this operation',
+    created_at       TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id       (user_id),
+    INDEX idx_type          (type),
+    INDEX idx_ref           (reference_type, reference_id),
+    INDEX idx_application   (application_id),
+    INDEX idx_job           (job_id)
+);
+
+
+## ── SECTION 3: Wallet Recharge Packs ────────────────────────────────────────────────
+## Admin-configurable recharge amounts shown on the recharge screen.
+## Adding a new pack = inserting a row; no code change needed.
+
+CREATE TABLE wallet_recharge_packs (
+    id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    amount     DECIMAL(10,2) NOT NULL,
+    label      VARCHAR(100)  NOT NULL,
+    is_active  TINYINT(1)    NOT NULL DEFAULT 1,
+    sort_order INT           NOT NULL DEFAULT 0,
+    created_at TIMESTAMP     NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP     NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_active_sort (is_active, sort_order)
+);
+
+-- Default packs
+INSERT INTO wallet_recharge_packs (amount, label, is_active, sort_order) VALUES
+(150,  '₹150',  1, 1),
+(300,  '₹300',  1, 2),
+(500,  '₹500',  1, 3),
+(1000, '₹1000', 1, 4);
+
+
+## ── SECTION 4: Wallet Recharges ─────────────────────────────────────────────────────
+## Mirrors firm_subscriptions / premium_requests pattern.
+## Handles both Razorpay (online) and manual payment flows in one table.
+## payment_method keeps gateway logic decoupled from wallet credit logic.
+##
+## status values:
+##   pending  – awaiting payment or admin approval
+##   approved – wallet has been credited
+##   rejected – admin rejected manual payment proof
+##   expired  – online payment order expired without completion
+
+CREATE TABLE wallet_recharges (
+    id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id             BIGINT UNSIGNED NOT NULL,
+    amount              DECIMAL(10,2)   NOT NULL,
+    payment_method      ENUM('razorpay','manual') NOT NULL DEFAULT 'razorpay',
+    status              ENUM('pending','approved','rejected','expired') NOT NULL DEFAULT 'pending',
+
+    -- Online payment (Razorpay / any future gateway)
+    gateway_order_id    VARCHAR(255) NULL,
+    gateway_payment_id  VARCHAR(255) NULL,
+    gateway_signature   TEXT         NULL,
+    payment_status      ENUM('pending','paid','failed') NULL DEFAULT 'pending',
+    razorpay_response   JSON         NULL,
+    payment_method_used VARCHAR(100) NULL COMMENT 'upi, card, netbanking etc.',
+
+    -- Manual payment proof
+    utr_number          VARCHAR(100) NULL,
+    reference_number    VARCHAR(100) NULL,
+    screenshot_url      TEXT         NULL,
+    payment_date        DATE         NULL,
+
+    -- Admin processing
+    remarks             TEXT         NULL,
+    approved_by         BIGINT UNSIGNED NULL,
+    approved_at         TIMESTAMP    NULL,
+    rejected_at         TIMESTAMP    NULL,
+
+    -- Ledger link – set after wallet is credited
+    wallet_transaction_id BIGINT UNSIGNED NULL,
+
+    created_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id           (user_id),
+    INDEX idx_status            (status),
+    INDEX idx_payment_method    (payment_method),
+    INDEX idx_gateway_order     (gateway_order_id),
+    INDEX idx_gateway_payment   (gateway_payment_id)
+);
+
+
+## ── SECTION 5: Application Holds ────────────────────────────────────────────────────
+## One row per paid application (free applications do not create a hold row).
+## Tracks the full lifecycle: held → consumed | released | expired.
+##
+## status values:
+##   held      – amount reserved; application in progress
+##   consumed  – interview confirmed/accepted; amount spent
+##   released  – application rejected; amount returned to available
+##   expired   – no recruiter action within 10 days; amount returned
+
+CREATE TABLE application_holds (
+    id                    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id               BIGINT UNSIGNED NOT NULL,
+    application_id        BIGINT UNSIGNED NOT NULL,
+    job_id                BIGINT UNSIGNED NOT NULL,
+    amount                DECIMAL(10,2)   NOT NULL DEFAULT 49.00,
+    status                ENUM('held','consumed','released','expired') NOT NULL DEFAULT 'held',
+    held_at               TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at            TIMESTAMP       NULL COMMENT 'held_at + 10 days; used by auto-expiry job',
+    consumed_at           TIMESTAMP       NULL,
+    released_at           TIMESTAMP       NULL,
+    release_reason        VARCHAR(100)    NULL COMMENT 'rejected | auto_expired | refund',
+
+    -- Ledger links
+    hold_transaction_id   BIGINT UNSIGNED NULL COMMENT 'wallet_transactions.id for the hold entry',
+    settle_transaction_id BIGINT UNSIGNED NULL COMMENT 'wallet_transactions.id for consume/release/expire',
+
+    created_at            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_application (application_id),
+    INDEX idx_user_id     (user_id),
+    INDEX idx_status      (status),
+    INDEX idx_expires_at  (expires_at, status) COMMENT 'used by auto-expiry scheduler'
+);
+
+
+## ── SECTION 6: Extend applications Table ────────────────────────────────────────────
+## Adds wallet-related columns to the existing applications table.
+## is_free_application lets us skip wallet checks for the first 3 applications.
+## application_fee stores the fee at time of apply (future-proof if cost changes).
+
+ALTER TABLE applications
+ADD COLUMN is_free_application TINYINT(1)      NOT NULL DEFAULT 0     AFTER is_visible_to_firm,
+ADD COLUMN application_fee     DECIMAL(10,2)   NOT NULL DEFAULT 0.00  AFTER is_free_application,
+ADD COLUMN wallet_hold_id      BIGINT UNSIGNED NULL                    AFTER application_fee;
+
+-- Index for hold lookups
+ALTER TABLE applications
+ADD INDEX idx_wallet_hold (wallet_hold_id);
+
+
+## ── SECTION 7: Backfill — Wallets for Existing Students ─────────────────────────────
+## Creates wallet rows for all existing students so they start with the
+## 3 free application quota. Run once after SECTION 1 is executed.
+## New students get their wallet created at registration time (in code).
+
+INSERT INTO student_wallets (user_id, available_balance, hold_balance, consumed_balance,
+                             free_applications_used, free_applications_limit,
+                             created_at, updated_at)
+SELECT u.id, 0.00, 0.00, 0.00, 0, 3, NOW(), NOW()
+FROM users u
+WHERE u.role = 'student'
+  AND u.is_deleted = 0
+  AND NOT EXISTS (
+      SELECT 1 FROM student_wallets sw WHERE sw.user_id = u.id
+  );
+
+-- Backfill free_applications_used for students who have already applied
+-- (so existing applicants don't get a surprise extra free quota)
+UPDATE student_wallets sw
+JOIN (
+    SELECT student_id, COUNT(*) AS total_apps
+    FROM applications
+    GROUP BY student_id
+) app_counts ON app_counts.student_id = sw.user_id
+SET sw.free_applications_used = LEAST(app_counts.total_apps, 3);
+
+
+## ── SECTION 8: Indexes for Performance ──────────────────────────────────────────────
+## Extra compound indexes used by the auto-expiry scheduler and wallet dashboard.
+
+ALTER TABLE wallet_transactions
+ADD INDEX idx_user_type_created (user_id, type, created_at);
+
+ALTER TABLE wallet_recharges
+ADD INDEX idx_user_status_created (user_id, status, created_at);

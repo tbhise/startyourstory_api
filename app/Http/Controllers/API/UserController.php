@@ -179,6 +179,7 @@ class UserController extends Controller
                 'why_should_hire_you' => 'nullable|string',
                 'current_ctc' => 'nullable|string',
                 'expected_ctc' => 'nullable|string',
+                'show_in_directory' => 'nullable|boolean',
                 'resume_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
                 'marksheet_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
             ]);
@@ -282,6 +283,9 @@ class UserController extends Controller
                 'why_should_hire_you' => $request->why_should_hire_you,
                 'current_ctc' => $request->current_ctc,
                 'expected_ctc' => $request->expected_ctc,
+                'show_in_directory' => $request->has('show_in_directory')
+                    ? (bool) $request->show_in_directory
+                    : ($existingProfile->show_in_directory ?? true),
                 'updated_at' => now(),
             ];
             if ($resumePath) {
@@ -402,6 +406,46 @@ class UserController extends Controller
             ]);
         }
     }
+    public function updateDirectoryVisibility(Request $request)
+    {
+        try {
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
+            }
+            $user = DB::table('users')
+                ->where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'show_in_directory' => 'required|boolean',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()]);
+            }
+
+            DB::table('student_profiles')
+                ->where('user_id', $user->id)
+                ->update([
+                    'show_in_directory' => (bool) $request->show_in_directory,
+                    'updated_at'        => now(),
+                ]);
+
+            return response()->json([
+                'status'            => true,
+                'message'           => 'Directory visibility updated',
+                'show_in_directory' => (bool) $request->show_in_directory,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('updateDirectoryVisibility: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     public function getProfile(Request $request)
     {
         try {

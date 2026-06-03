@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
+use App\Helpers\WalletHelper;
 
 
 class JobsController extends Controller
@@ -58,13 +59,40 @@ class JobsController extends Controller
                     'message' => 'You already applied for this job'
                 ], 409);
             }
-            DB::table('applications')->insert([
-                'job_id' => $id,
-                'student_id' => $user->id,
-                'status' => 'Applied',
-                'applied_at' => now(),
-                'updated_at' => now(),
+
+            /*
+        |--------------------------------------------------------------------------
+        | Wallet check — free quota or sufficient balance
+        |--------------------------------------------------------------------------
+        */
+            $isFree = WalletHelper::isFreeApplication($user->id);
+            if (!$isFree && !WalletHelper::hasEnoughBalance($user->id)) {
+                return response()->json([
+                    'status'               => false,
+                    'message'              => 'Insufficient wallet balance. Recharge to continue applying.',
+                    'insufficient_balance' => true,
+                    'application_fee'      => WalletHelper::APPLICATION_FEE,
+                ]);
+            }
+
+            $applicationId = DB::table('applications')->insertGetId([
+                'job_id'                => $id,
+                'student_id'            => $user->id,
+                'status'                => 'Applied',
+                'is_free_application'   => $isFree ? 1 : 0,
+                'application_fee'       => $isFree ? 0.00 : WalletHelper::APPLICATION_FEE,
+                'applied_at'            => now(),
+                'updated_at'            => now(),
             ]);
+
+            if ($isFree) {
+                WalletHelper::incrementFreeUsage($user->id);
+            } else {
+                $holdId = WalletHelper::hold($user->id, $applicationId, $job->id);
+                DB::table('applications')
+                    ->where('id', $applicationId)
+                    ->update(['wallet_hold_id' => $holdId]);
+            }
             $firm = DB::table('firm_profiles')
                 ->where('id', $job->firm_id)
                 ->first();
@@ -608,7 +636,7 @@ class JobsController extends Controller
 
             $isPremium = SubscriptionHelper::isPremiumFirm($firm->id);
 
-            $applicationLimit = SubscriptionHelper::allowedApplicationLimit($firm->id);
+            $applicationLimit = $isPremium ? 999999 : 2;
 
             $alreadyVisibleApplications = 0;
 
@@ -663,6 +691,7 @@ class JobsController extends Controller
                     'jobs.title as job_title',
                     'jobs.department as job_department',
                     'jobs.location as job_location',
+                    'users.email_verified_at',
                 )
                 ->where('applications.job_id', $jobId)
                 ->orderBy('applications.applied_at', 'desc');
@@ -780,6 +809,8 @@ class JobsController extends Controller
                                 ? asset('/storage/' . $item->resume_path)
                                 : null
                             ),
+
+                        'is_verified' => !$isLocked && !empty($item->email_verified_at),
 
                         'skills' => $isLocked
                             ? []
@@ -976,6 +1007,12 @@ class JobsController extends Controller
             DB::table('applications')
                 ->where('id', $applicationId)
                 ->update($updateData);
+
+            // Wallet: release hold on rejection
+            if ($status === 'Rejected') {
+                WalletHelper::release((int) $applicationId, 'rejected');
+            }
+
             /*
         |--------------------------------------------------------------------------
         | Prevent Duplicate Recruiter Actions
@@ -1735,6 +1772,12 @@ class JobsController extends Controller
             DB::table('applications')
                 ->where('id', $applicationId)
                 ->update($updateData);
+
+            // Wallet: consume hold when student accepts interview
+            if ($request->response === 'Accepted') {
+                WalletHelper::consume((int) $applicationId);
+            }
+
             /*
         |--------------------------------------------------------------------------
         | Recruiter Action Type

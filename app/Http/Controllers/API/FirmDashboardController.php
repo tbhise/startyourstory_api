@@ -31,7 +31,8 @@ class FirmDashboardController extends Controller
                     'student_profiles.registration_type',
                     DB::raw("
                     CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE recruiter_actions.student_id = users.id AND recruiter_actions.firm_id = {$firm->id}
-                            AND recruiter_actions.action_type = 'candidate_saved') THEN 1 ELSE 0 END as is_saved")
+                            AND recruiter_actions.action_type = 'candidate_saved') THEN 1 ELSE 0 END as is_saved"),
+                    DB::raw('IF(users.email_verified_at IS NOT NULL, 1, 0) as is_verified')
                 )
                 ->leftJoin('student_profiles', 'users.id', '=', 'student_profiles.user_id')
                 ->where('users.is_deleted', false)
@@ -327,16 +328,27 @@ class FirmDashboardController extends Controller
         | Response
         |--------------------------------------------------------------------------
         */
+            $data = (array) $users;
+            unset(
+                $data['password'],
+                $data['api_token'],
+                $data['token_expires_at'],
+                $data['is_deleted'],
+                $data['referred_by'],
+                $data['user_id']
+            );
+
             return response()->json([
                 'status' => true,
                 'data' => [
-                    ...((array) $users),
+                    ...$data,
                     'profile_image' => $users->profile_image
                         ? asset('storage/' . $users->profile_image)
                         : null,
                     'is_premium' => $isPremium,
                     'is_shortlisted' => $is_shortlisted ? 'Shortlisted' : null,
                     'is_reported' => $is_reported,
+                    'is_verified' => !empty($users->email_verified_at),
                 ]
             ]);
         } catch (\Exception $e) {

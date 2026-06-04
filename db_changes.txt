@@ -719,3 +719,158 @@ ADD INDEX idx_user_type_created (user_id, type, created_at);
 
 ALTER TABLE wallet_recharges
 ADD INDEX idx_user_status_created (user_id, status, created_at);
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## MESSAGING SYSTEM — added 2026-06-04
+## ═══════════════════════════════════════════════════════════════════════════════
+
+-- ── messaging_settings ────────────────────────────────────────────────────────
+-- Per-firm toggle: whether the firm accepts direct messages from candidates.
+-- Default false — firm must opt-in.
+
+CREATE TABLE `messaging_settings` (
+  `id`                     BIGINT NOT NULL AUTO_INCREMENT,
+  `firm_id`                BIGINT NOT NULL,
+  `accept_direct_messages` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at`             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_messaging_settings_firm` (`firm_id`),
+  CONSTRAINT `fk_messaging_settings_firm`
+    FOREIGN KEY (`firm_id`) REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ── messaging_limits ──────────────────────────────────────────────────────────
+-- Tracks lifetime and monthly usage for free firms (and premium anti-spam).
+-- Reset monthly_conversations_started each billing period via cron / admin action.
+
+CREATE TABLE `messaging_limits` (
+  `id`                              BIGINT NOT NULL AUTO_INCREMENT,
+  `firm_id`                         BIGINT NOT NULL,
+  `lifetime_conversations_started`  INT NOT NULL DEFAULT 0,
+  `lifetime_requests_unlocked`      INT NOT NULL DEFAULT 0,
+  `monthly_conversations_started`   INT NOT NULL DEFAULT 0,
+  `current_period_start`            DATE NOT NULL,
+  `current_period_end`              DATE NOT NULL,
+  `created_at`                      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`                      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_messaging_limits_firm` (`firm_id`),
+  CONSTRAINT `fk_messaging_limits_firm`
+    FOREIGN KEY (`firm_id`) REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ── conversations ─────────────────────────────────────────────────────────────
+-- One row per unique candidate ↔ firm thread.
+
+CREATE TABLE `conversations` (
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `candidate_id`    BIGINT NOT NULL,       -- users.id (role=student)
+  `firm_id`         BIGINT NOT NULL,       -- firm_profiles.id
+  `initiated_by`    ENUM('candidate','firm') NOT NULL,
+  `status`          ENUM('pending','active','ignored','blocked') NOT NULL DEFAULT 'pending',
+  `last_message_at` DATETIME NULL,
+  `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_conversation_pair` (`candidate_id`, `firm_id`),
+  KEY `idx_conv_firm`      (`firm_id`, `status`, `last_message_at`),
+  KEY `idx_conv_candidate` (`candidate_id`, `status`, `last_message_at`),
+  CONSTRAINT `fk_conv_candidate` FOREIGN KEY (`candidate_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_conv_firm`      FOREIGN KEY (`firm_id`)      REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ── messages ──────────────────────────────────────────────────────────────────
+
+CREATE TABLE `messages` (
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `conversation_id` BIGINT NOT NULL,
+  `sender_id`       BIGINT NOT NULL,       -- users.id
+  `sender_type`     ENUM('candidate','firm') NOT NULL,
+  `message`         TEXT NOT NULL,
+  `is_read`         TINYINT(1) NOT NULL DEFAULT 0,
+  `read_at`         DATETIME NULL,
+  `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_messages_conv_created` (`conversation_id`, `created_at`),
+  KEY `idx_messages_sender`       (`sender_id`, `sender_type`),
+  KEY `idx_messages_unread`       (`conversation_id`, `is_read`),
+  CONSTRAINT `fk_messages_conv` FOREIGN KEY (`conversation_id`) REFERENCES `conversations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ── message_requests ──────────────────────────────────────────────────────────
+-- Tracks the initial request state before the recipient replies.
+
+CREATE TABLE `message_requests` (
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `conversation_id` BIGINT NOT NULL,
+  `recipient_id`    BIGINT NOT NULL,       -- users.id of the recipient
+  `recipient_type`  ENUM('candidate','firm') NOT NULL,
+  `status`          ENUM('pending','accepted','ignored') NOT NULL DEFAULT 'pending',
+  `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_request_conv` (`conversation_id`),
+  KEY `idx_request_recipient` (`recipient_id`, `recipient_type`, `status`),
+  CONSTRAINT `fk_request_conv` FOREIGN KEY (`conversation_id`) REFERENCES `conversations` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ── Seed: backfill messaging_settings for all existing firms ──────────────────
+INSERT INTO messaging_settings (firm_id, accept_direct_messages, created_at, updated_at)
+SELECT id, 0, NOW(), NOW()
+FROM firm_profiles
+WHERE id NOT IN (SELECT firm_id FROM messaging_settings);
+
+
+-- ── Seed: backfill messaging_limits for all existing firms ────────────────────
+INSERT INTO messaging_limits (
+  firm_id,
+  lifetime_conversations_started,
+  lifetime_requests_unlocked,
+  monthly_conversations_started,
+  current_period_start,
+  current_period_end,
+  created_at, updated_at
+)
+SELECT
+  id, 0, 0, 0,
+  DATE_FORMAT(NOW(), '%Y-%m-01'),
+  LAST_DAY(NOW()),
+  NOW(), NOW()
+FROM firm_profiles
+WHERE id NOT IN (SELECT firm_id FROM messaging_limits);
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## ERROR LOGS — added 2026-06-04
+## ═══════════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE `error_logs` (
+  `id`         BIGINT NOT NULL AUTO_INCREMENT,
+  `source`     ENUM('api','frontend') NOT NULL,
+  `message`    TEXT NOT NULL,
+  `status`     SMALLINT NULL,
+  `url`        VARCHAR(500) NULL,
+  `stack`      TEXT NULL,
+  `user_id`    BIGINT NULL,
+  `user_role`  VARCHAR(20) NULL,
+  `user_agent` VARCHAR(500) NULL,
+  `ip`         VARCHAR(45) NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_error_source_created` (`source`, `created_at`),
+  KEY `idx_error_status`         (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK: DROP TABLE IF EXISTS `error_logs`;
+
+
+
+-- =============================================== All Done On production server | 04-06-2026 ================================

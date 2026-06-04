@@ -179,11 +179,14 @@ class WalletController extends Controller
                 ->update(['gateway_order_id' => $order['id'], 'updated_at' => now()]);
 
             return response()->json([
-                'status'      => true,
-                'id'          => $order['id'],
-                'amount'      => $order['amount'],
-                'currency'    => $order['currency'],
-                'recharge_id' => $rechargeId,
+                'status'  => true,
+                'message' => 'Order created',
+                'data'    => [
+                    'id'          => $order['id'],
+                    'amount'      => $order['amount'],
+                    'currency'    => $order['currency'],
+                    'recharge_id' => $rechargeId,
+                ],
             ]);
         } catch (\Exception $e) {
             Log::error('WalletController@createOrder: ' . $e->getMessage());

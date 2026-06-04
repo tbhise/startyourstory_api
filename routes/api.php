@@ -18,6 +18,9 @@ use App\Http\Controllers\API\TrainingPartnerController;
 use App\Http\Controllers\API\CompanyEmployeeController;
 use App\Http\Controllers\API\WalletController;
 use App\Http\Controllers\API\AdminWalletController;
+use App\Http\Controllers\API\MessagingController;
+use App\Http\Controllers\API\AdminMessagingController;
+use App\Http\Controllers\API\ErrorLogController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -160,3 +163,38 @@ Route::post('/payments/create-order', [PaymentController::class, 'createOrder'])
 
 Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
 Route::post('/payments/failure', [PaymentController::class, 'paymentFailure']);
+
+// ── Messaging ─────────────────────────────────────────────────────────────────
+Route::middleware([ApiAuthMiddleware::class])->prefix('messaging')->group(function () {
+    Route::get('/conversations',                              [MessagingController::class, 'getConversations']);
+    Route::post('/conversations',                             [MessagingController::class, 'startConversation']);
+    Route::get('/conversations/{id}/messages',                [MessagingController::class, 'getMessages']);
+    Route::post('/conversations/{id}/messages',               [MessagingController::class, 'sendMessage']);
+    Route::post('/conversations/{id}/ignore',                 [MessagingController::class, 'ignoreRequest']);
+    Route::post('/conversations/{id}/mark-read',              [MessagingController::class, 'markRead']);
+    Route::get('/unread-count',                               [MessagingController::class, 'getUnreadCount']);
+    Route::get('/settings',                                   [MessagingController::class, 'getSettings']);
+    Route::post('/settings',                                  [MessagingController::class, 'updateSettings']);
+    Route::get('/firm/{firmId}/status',                       [MessagingController::class, 'getFirmMessagingStatus']);
+    Route::get('/candidate/{candidateId}/status',             [MessagingController::class, 'getCandidateMessagingStatus']);
+});
+
+// ── Admin Messaging ───────────────────────────────────────────────────────────
+Route::prefix('admin/messaging')->group(function () {
+    Route::get('/stats',                                      [AdminMessagingController::class, 'getStats']);
+    Route::get('/conversations',                              [AdminMessagingController::class, 'getConversations']);
+    Route::get('/conversations/{id}/messages',                [AdminMessagingController::class, 'getConversationMessages']);
+    Route::post('/conversations/{id}/block',                  [AdminMessagingController::class, 'blockConversation']);
+    Route::post('/conversations/{id}/unblock',                [AdminMessagingController::class, 'unblockConversation']);
+    Route::get('/limits',                                     [AdminMessagingController::class, 'getLimits']);
+    Route::post('/limits/{firmId}/reset-monthly',             [AdminMessagingController::class, 'resetMonthlyLimit']);
+});
+
+// ── Error Logging ─────────────────────────────────────────────────────────────
+// Public — no auth required so errors during login/registration are captured too
+Route::post('/error-logs',                [ErrorLogController::class, 'store']);
+
+// Admin — viewing and managing logs
+Route::get('/admin/error-logs',           [ErrorLogController::class, 'index']);
+Route::get('/admin/error-logs/stats',     [ErrorLogController::class, 'stats']);
+Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']);

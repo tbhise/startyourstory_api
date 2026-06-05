@@ -2,10 +2,15 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Contracts\PaymentGateway;
 use App\Http\Controllers\Controller;
+use App\Services\Payment\PaymentGatewayFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -924,11 +929,35 @@ class CreatorMarketplaceController extends Controller
             unset($engagement->firm_name);
         }
 
+        // Attach payment summary visible to both parties
+        $payment = DB::table('creator_engagement_payments')
+            ->where('engagement_id', $id)
+            ->first();
+
+        $paymentData = null;
+        if ($payment) {
+            $paymentData = [
+                'id'             => $payment->id,
+                'status'         => $payment->status,
+                'payment_method' => $payment->payment_method,
+                'amount'         => (float) $payment->amount,
+                'created_at'     => $payment->created_at,
+            ];
+            if ($isFirm) {
+                $paymentData['utr_number']        = $payment->utr_number;
+                $paymentData['payment_reference'] = $payment->payment_reference;
+                $paymentData['payment_date']      = $payment->payment_date;
+                $paymentData['admin_remarks']      = $payment->admin_remarks;
+                $paymentData['reviewed_at']        = $payment->reviewed_at;
+            }
+        }
+
         return response()->json([
             'status' => true,
             'data'   => [
                 'engagement'   => $engagement,
                 'viewer_role'  => $isFirm ? 'firm' : 'creator',
+                'payment'      => $paymentData,
             ],
         ]);
     }
@@ -1043,6 +1072,1021 @@ class CreatorMarketplaceController extends Controller
             ->update(['read_at' => now(), 'updated_at' => now()]);
 
         return response()->json(['status' => true, 'message' => 'All notifications marked as read']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Initiate Razorpay payment for an engagement
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function initiatePayment(Request $request, $engagementId): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $engagementId)
+                ->where('firm_id', $firmProfile->id)
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            if ($engagement->status !== 'awaiting_payment') {
+                return response()->json(['status' => false, 'message' => 'Payment not required for this engagement'], 422);
+            }
+
+            // Cancel any stale pending Razorpay orders before creating a new one
+            DB::table('creator_engagement_payments')
+                ->where('engagement_id', $engagementId)
+                ->where('payment_method', 'razorpay')
+                ->where('status', 'pending')
+                ->delete();
+
+            // Block if a manual payment is already under review or verified
+            $blocking = DB::table('creator_engagement_payments')
+                ->where('engagement_id', $engagementId)
+                ->whereIn('status', ['awaiting_verification', 'verified', 'escrow_held'])
+                ->first();
+
+            if ($blocking) {
+                return response()->json(['status' => false, 'message' => 'A payment is already in progress'], 422);
+            }
+
+            $gateway = PaymentGatewayFactory::make('razorpay');
+            $receipt = 'eng_' . $engagementId . '_firm_' . $firmProfile->id . '_' . time();
+
+            $order = $gateway->createOrder((float) $engagement->accepted_bid_amount, $receipt, [
+                'engagement_id' => (string) $engagementId,
+            ]);
+
+            $paymentId = DB::table('creator_engagement_payments')->insertGetId([
+                'engagement_id'    => $engagementId,
+                'firm_id'          => $firmProfile->id,
+                'amount'           => $engagement->accepted_bid_amount,
+                'currency'         => 'INR',
+                'payment_method'   => 'razorpay',
+                'status'           => 'pending',
+                'gateway_order_id' => $order['order_id'],
+                'created_at'       => now(),
+                'updated_at'       => now(),
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'payment_id'   => $paymentId,
+                    'order_id'     => $order['order_id'],
+                    'amount'       => $order['amount'],
+                    'currency'     => $order['currency'],
+                    'key'          => config('services.razorpay.key'),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@initiatePayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Could not create payment order'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Verify Razorpay payment signature and activate engagement
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function verifyEngagementPayment(Request $request, $engagementId): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'razorpay_order_id'   => 'required|string',
+                'razorpay_payment_id' => 'required|string',
+                'razorpay_signature'  => 'required|string',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $payment = DB::table('creator_engagement_payments')
+                ->where('engagement_id', $engagementId)
+                ->where('firm_id', $firmProfile->id)
+                ->where('gateway_order_id', $request->razorpay_order_id)
+                ->first();
+
+            if (! $payment) {
+                return response()->json(['status' => false, 'message' => 'Payment record not found'], 404);
+            }
+
+            if ($payment->status === 'escrow_held') {
+                return response()->json(['status' => true, 'message' => 'Payment already processed']);
+            }
+
+            $gateway = PaymentGatewayFactory::make('razorpay');
+
+            if (! $gateway->verifySignature([
+                'order_id'   => $request->razorpay_order_id,
+                'payment_id' => $request->razorpay_payment_id,
+                'signature'  => $request->razorpay_signature,
+            ])) {
+                return response()->json(['status' => false, 'message' => 'Payment verification failed'], 422);
+            }
+
+            $paymentDetails = $gateway->fetchPayment($request->razorpay_payment_id);
+
+            DB::table('creator_engagement_payments')
+                ->where('id', $payment->id)
+                ->update([
+                    'status'             => 'escrow_held',
+                    'gateway_payment_id' => $request->razorpay_payment_id,
+                    'gateway_signature'  => $request->razorpay_signature,
+                    'gateway_response'   => json_encode($paymentDetails),
+                    'updated_at'         => now(),
+                ]);
+
+            DB::table('creator_engagements')
+                ->where('id', $engagementId)
+                ->update(['status' => 'active', 'updated_at' => now()]);
+
+            // Notify creator that project is now active
+            $engagement = DB::table('creator_engagements')->where('id', $engagementId)->first();
+            $project    = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+
+            DB::table('creator_marketplace_notifications')->insert([
+                'user_id'    => $engagement->creator_id,
+                'type'       => 'payment_received',
+                'title'      => 'Payment received — project is now active!',
+                'body'       => "The firm has paid for \"{$project->title}\". Your project is now active.",
+                'data'       => json_encode(['engagement_id' => (int) $engagementId]),
+                'read_at'    => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return response()->json(['status' => true, 'message' => 'Payment verified. Project is now active!']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@verifyEngagementPayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Verification error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Handle Razorpay checkout failure
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function engagementPaymentFailure(Request $request, $engagementId): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            // Delete the stale pending record so the firm can try again
+            DB::table('creator_engagement_payments')
+                ->where('engagement_id', $engagementId)
+                ->where('firm_id', $firmProfile->id)
+                ->where('payment_method', 'razorpay')
+                ->where('status', 'pending')
+                ->delete();
+
+            return response()->json(['status' => true, 'message' => 'Payment attempt logged.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@engagementPaymentFailure: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Submit manual payment proof
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function submitManualPayment(Request $request, $engagementId): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $engagementId)
+                ->where('firm_id', $firmProfile->id)
+                ->whereIn('status', ['awaiting_payment', 'payment_pending'])
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found or payment not applicable'], 404);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'utr_number'        => 'nullable|string|max:100',
+                'payment_reference' => 'required|string|max:255',
+                'payment_date'      => 'required|date',
+                'screenshot'        => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $screenshotUrl = null;
+            if ($request->hasFile('screenshot')) {
+                $file          = $request->file('screenshot');
+                $screenshotUrl = $file->storeAs(
+                    'creator_payments',
+                    'eng_' . $engagementId . '_' . time() . '.' . $file->getClientOriginalExtension(),
+                    'public'
+                );
+            }
+
+            // Upsert: replace any previous pending/awaiting_verification record
+            $existing = DB::table('creator_engagement_payments')
+                ->where('engagement_id', $engagementId)
+                ->whereIn('status', ['pending', 'awaiting_verification'])
+                ->first();
+
+            if ($existing) {
+                DB::table('creator_engagement_payments')
+                    ->where('id', $existing->id)
+                    ->update([
+                        'payment_method'    => 'manual',
+                        'status'            => 'awaiting_verification',
+                        'utr_number'        => $request->utr_number,
+                        'payment_reference' => $request->payment_reference,
+                        'screenshot_url'    => $screenshotUrl ?? $existing->screenshot_url,
+                        'payment_date'      => $request->payment_date,
+                        'admin_remarks'     => null,
+                        'reviewed_by'       => null,
+                        'reviewed_at'       => null,
+                        'updated_at'        => now(),
+                    ]);
+            } else {
+                DB::table('creator_engagement_payments')->insertGetId([
+                    'engagement_id'     => $engagementId,
+                    'firm_id'           => $firmProfile->id,
+                    'amount'            => $engagement->accepted_bid_amount,
+                    'currency'          => 'INR',
+                    'payment_method'    => 'manual',
+                    'status'            => 'awaiting_verification',
+                    'utr_number'        => $request->utr_number,
+                    'payment_reference' => $request->payment_reference,
+                    'screenshot_url'    => $screenshotUrl,
+                    'payment_date'      => $request->payment_date,
+                    'created_at'        => now(),
+                    'updated_at'        => now(),
+                ]);
+            }
+
+            DB::table('creator_engagements')
+                ->where('id', $engagementId)
+                ->update(['status' => 'payment_pending', 'updated_at' => now()]);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Payment proof submitted. Admin will review within 24 hours.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@submitManualPayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SHARED — Get payment details for an engagement
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getEngagementPayment(Request $request, $engagementId): JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+
+        $engagement = DB::table('creator_engagements')->where('id', $engagementId)->first();
+
+        if (! $engagement) {
+            return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+        }
+
+        $firmUserId = DB::table('firm_profiles')->where('id', $engagement->firm_id)->value('user_id');
+        $isFirm     = ($user->id === (int) $firmUserId);
+        $isCreator  = ($user->id === (int) $engagement->creator_id);
+
+        if (! $isFirm && ! $isCreator) {
+            return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $payment = DB::table('creator_engagement_payments')
+            ->where('engagement_id', $engagementId)
+            ->first();
+
+        if (! $payment) {
+            return response()->json(['status' => true, 'data' => ['payment' => null]]);
+        }
+
+        $data = [
+            'id'             => $payment->id,
+            'status'         => $payment->status,
+            'payment_method' => $payment->payment_method,
+            'amount'         => (float) $payment->amount,
+            'currency'       => $payment->currency,
+            'created_at'     => $payment->created_at,
+            'updated_at'     => $payment->updated_at,
+        ];
+
+        if ($isFirm) {
+            $data['utr_number']        = $payment->utr_number;
+            $data['payment_reference'] = $payment->payment_reference;
+            $data['screenshot_url']    = $payment->screenshot_url
+                ? asset('storage/' . $payment->screenshot_url)
+                : null;
+            $data['payment_date']      = $payment->payment_date;
+            $data['admin_remarks']     = $payment->admin_remarks;
+            $data['reviewed_at']       = $payment->reviewed_at;
+        }
+
+        return response()->json(['status' => true, 'data' => ['payment' => $data]]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // WORKSPACE — Full workspace data (brief, submissions, timeline)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getWorkspace(Request $request, $id): JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+
+        $engagement = DB::table('creator_engagements')->where('id', $id)->first();
+
+        if (! $engagement) {
+            return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+        }
+
+        $firmUserId = DB::table('firm_profiles')->where('id', $engagement->firm_id)->value('user_id');
+        $isFirm     = ($user->id === (int) $firmUserId);
+        $isCreator  = ($user->id === (int) $engagement->creator_id);
+
+        if (! $isFirm && ! $isCreator) {
+            return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        $workspaceStatuses = ['active', 'submitted', 'revision_requested', 'resubmitted', 'approved', 'payout_pending', 'completed'];
+        if (! in_array($engagement->status, $workspaceStatuses)) {
+            return response()->json(['status' => false, 'message' => 'Workspace not available yet'], 422);
+        }
+
+        // Brief
+        $brief     = DB::table('engagement_briefs')->where('engagement_id', $id)->first();
+        $briefData = null;
+        if ($brief) {
+            $attachments = DB::table('engagement_brief_attachments')
+                ->where('engagement_id', $id)
+                ->orderBy('created_at')
+                ->get()
+                ->map(function ($a) {
+                    $a->url = asset('storage/' . $a->file_path);
+                    return $a;
+                });
+
+            $briefData = [
+                'id'               => $brief->id,
+                'detailed_brief'   => $brief->detailed_brief,
+                'additional_notes' => $brief->additional_notes,
+                'attachments'      => $attachments,
+                'updated_at'       => $brief->updated_at,
+            ];
+        }
+
+        // Submissions (all rounds, oldest first)
+        $submissions = DB::table('engagement_submissions')
+            ->where('engagement_id', $id)
+            ->orderBy('revision_round')
+            ->get();
+
+        foreach ($submissions as $sub) {
+            $sub->files = DB::table('engagement_submission_files')
+                ->where('submission_id', $sub->id)
+                ->get()
+                ->map(function ($f) {
+                    $f->url = $f->file_path ? asset('storage/' . $f->file_path) : null;
+                    return $f;
+                });
+        }
+
+        // Timeline (newest first, capped at 100)
+        $timeline = DB::table('engagement_timeline as t')
+            ->leftJoin('users as u', 'u.id', '=', 't.user_id')
+            ->where('t.engagement_id', $id)
+            ->orderByDesc('t.created_at')
+            ->limit(100)
+            ->select(['t.*', 'u.name as actor_name'])
+            ->get()
+            ->map(function ($t) {
+                $t->meta = $t->meta ? json_decode($t->meta) : null;
+                return $t;
+            });
+
+        $project = DB::table('creator_projects')
+            ->where('id', $engagement->creator_requirement_id)
+            ->select(['title', 'category'])
+            ->first();
+
+        return response()->json([
+            'status' => true,
+            'data'   => [
+                'engagement'  => [
+                    'id'                  => (int) $engagement->id,
+                    'status'              => $engagement->status,
+                    'accepted_bid_amount' => (float) $engagement->accepted_bid_amount,
+                    'delivery_days'       => (int) $engagement->delivery_days,
+                    'creator_id'          => (int) $engagement->creator_id,
+                    'firm_id'             => (int) $engagement->firm_id,
+                    'project_title'       => $project?->title,
+                    'category'            => $project?->category,
+                ],
+                'viewer_role' => $isFirm ? 'firm' : 'creator',
+                'brief'       => $briefData,
+                'submissions' => $submissions,
+                'timeline'    => $timeline,
+            ],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Save / update project brief (upsert + append new attachments)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function saveBrief(Request $request, $id): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $id)
+                ->where('firm_id', $firmProfile->id)
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            $allowed = ['active', 'submitted', 'revision_requested', 'resubmitted', 'approved'];
+            if (! in_array($engagement->status, $allowed)) {
+                return response()->json(['status' => false, 'message' => 'Cannot edit brief at this stage'], 422);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'detailed_brief'   => 'required|string|max:10000',
+                'additional_notes' => 'nullable|string|max:5000',
+                'attachments'      => 'nullable|array|max:10',
+                'attachments.*'    => 'file|mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,zip,txt|max:10240',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $existing = DB::table('engagement_briefs')->where('engagement_id', $id)->first();
+            $isNew    = ! $existing;
+
+            if ($existing) {
+                DB::table('engagement_briefs')->where('id', $existing->id)->update([
+                    'detailed_brief'   => $request->detailed_brief,
+                    'additional_notes' => $request->additional_notes,
+                    'updated_by'       => $user->id,
+                    'updated_at'       => now(),
+                ]);
+            } else {
+                DB::table('engagement_briefs')->insert([
+                    'engagement_id'    => $id,
+                    'detailed_brief'   => $request->detailed_brief,
+                    'additional_notes' => $request->additional_notes,
+                    'updated_by'       => $user->id,
+                    'created_at'       => now(),
+                    'updated_at'       => now(),
+                ]);
+            }
+
+            // Append any newly uploaded files
+            if ($request->hasFile('attachments')) {
+                foreach ($request->file('attachments') as $file) {
+                    $path = $file->storeAs(
+                        'workspace_briefs',
+                        'eng_' . $id . '_' . time() . '_' . Str::random(6) . '.' . $file->getClientOriginalExtension(),
+                        'public'
+                    );
+                    DB::table('engagement_brief_attachments')->insert([
+                        'engagement_id' => $id,
+                        'file_path'     => $path,
+                        'original_name' => $file->getClientOriginalName(),
+                        'mime_type'     => $file->getMimeType(),
+                        'file_size'     => $file->getSize(),
+                        'uploaded_by'   => $user->id,
+                        'created_at'    => now(),
+                    ]);
+                }
+            }
+
+            $this->addTimeline($id, $user->id, 'firm', $isNew ? 'brief_published' : 'brief_updated');
+
+            // Notify creator only on first publish
+            if ($isNew) {
+                $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+                $this->notify(
+                    $engagement->creator_id,
+                    'brief_shared',
+                    'Project brief is ready',
+                    "The firm shared a brief for \"{$project->title}\".",
+                    ['engagement_id' => (int) $id]
+                );
+            }
+
+            return response()->json(['status' => true, 'message' => $isNew ? 'Brief published.' : 'Brief updated.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@saveBrief: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Delete a single brief attachment
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function deleteBriefAttachment(Request $request, $id, $attachmentId): JsonResponse
+    {
+        $user        = $request->attributes->get('auth_user');
+        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+        if (! $firmProfile) {
+            return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+        }
+
+        // Verify firm owns this engagement
+        $owns = DB::table('creator_engagements')
+            ->where('id', $id)
+            ->where('firm_id', $firmProfile->id)
+            ->exists();
+
+        if (! $owns) {
+            return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+        }
+
+        $attachment = DB::table('engagement_brief_attachments')
+            ->where('id', $attachmentId)
+            ->where('engagement_id', $id)
+            ->first();
+
+        if (! $attachment) {
+            return response()->json(['status' => false, 'message' => 'Attachment not found'], 404);
+        }
+
+        Storage::disk('public')->delete($attachment->file_path);
+        DB::table('engagement_brief_attachments')->where('id', $attachmentId)->delete();
+
+        return response()->json(['status' => true, 'message' => 'Attachment deleted.']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CREATOR — Submit deliverable (new round each call)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function submitDeliverable(Request $request, $id): JsonResponse
+    {
+        try {
+            $user = $request->attributes->get('auth_user');
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $id)
+                ->where('creator_id', $user->id)
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            if (! in_array($engagement->status, ['active', 'revision_requested'])) {
+                return response()->json(['status' => false, 'message' => 'Cannot submit work at this stage'], 422);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'notes'         => 'nullable|string|max:5000',
+                'files'         => 'nullable|array|max:10',
+                'files.*'       => 'file|mimes:pdf,doc,docx,zip,jpg,jpeg,png,gif,webp|max:51200',
+                'video_links'   => 'nullable|array|max:10',
+                'video_links.*' => 'url|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $hasFiles  = $request->hasFile('files') && count($request->file('files')) > 0;
+            $hasVideos = ! empty(array_filter($request->input('video_links', [])));
+
+            if (! $hasFiles && ! $hasVideos) {
+                return response()->json(['status' => false, 'message' => 'Upload at least one file or add a video link'], 422);
+            }
+
+            $isRevision   = $engagement->status === 'revision_requested';
+            $round        = DB::table('engagement_submissions')->where('engagement_id', $id)->count() + 1;
+            $submissionId = DB::table('engagement_submissions')->insertGetId([
+                'engagement_id'  => $id,
+                'creator_id'     => $user->id,
+                'notes'          => $request->notes,
+                'revision_round' => $round,
+                'status'         => 'submitted',
+                'created_at'     => now(),
+                'updated_at'     => now(),
+            ]);
+
+            // Physical files
+            if ($request->hasFile('files')) {
+                foreach ($request->file('files') as $file) {
+                    $path = $file->storeAs(
+                        'workspace_deliverables',
+                        'eng_' . $id . '_sub_' . $submissionId . '_' . Str::random(8) . '.' . $file->getClientOriginalExtension(),
+                        'public'
+                    );
+                    DB::table('engagement_submission_files')->insert([
+                        'submission_id' => $submissionId,
+                        'engagement_id' => $id,
+                        'file_path'     => $path,
+                        'original_name' => $file->getClientOriginalName(),
+                        'mime_type'     => $file->getMimeType(),
+                        'file_size'     => $file->getSize(),
+                        'video_link'    => null,
+                        'created_at'    => now(),
+                    ]);
+                }
+            }
+
+            // Video links
+            foreach ($request->input('video_links', []) as $link) {
+                if (! filter_var($link, FILTER_VALIDATE_URL)) {
+                    continue;
+                }
+                DB::table('engagement_submission_files')->insert([
+                    'submission_id' => $submissionId,
+                    'engagement_id' => $id,
+                    'file_path'     => null,
+                    'original_name' => null,
+                    'mime_type'     => null,
+                    'file_size'     => null,
+                    'video_link'    => $link,
+                    'created_at'    => now(),
+                ]);
+            }
+
+            $newStatus = $isRevision ? 'resubmitted' : 'submitted';
+            DB::table('creator_engagements')->where('id', $id)->update([
+                'status'     => $newStatus,
+                'updated_at' => now(),
+            ]);
+
+            $this->addTimeline(
+                $id, $user->id, 'creator',
+                $isRevision ? 'work_resubmitted' : 'work_submitted',
+                $request->notes,
+                ['round' => $round]
+            );
+
+            // Notify firm
+            $firmProfile = DB::table('firm_profiles')->where('id', $engagement->firm_id)->first();
+            $project     = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+
+            if ($firmProfile) {
+                $this->notify(
+                    $firmProfile->user_id,
+                    'work_submitted',
+                    $isRevision ? 'Creator resubmitted work' : 'Creator submitted work',
+                    $isRevision
+                        ? "Work resubmitted (round {$round}) for \"{$project->title}\". Please review."
+                        : "Work submitted for \"{$project->title}\". Please review and approve.",
+                    ['engagement_id' => (int) $id]
+                );
+            }
+
+            return response()->json(['status' => true, 'message' => 'Work submitted successfully.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@submitDeliverable: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Request revision on the latest submission
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function requestRevision(Request $request, $id): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $id)
+                ->where('firm_id', $firmProfile->id)
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            if (! in_array($engagement->status, ['submitted', 'resubmitted'])) {
+                return response()->json(['status' => false, 'message' => 'No submitted work to review'], 422);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'revision_notes' => 'required|string|max:5000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $latest = DB::table('engagement_submissions')
+                ->where('engagement_id', $id)
+                ->orderByDesc('revision_round')
+                ->first();
+
+            if ($latest) {
+                DB::table('engagement_submissions')->where('id', $latest->id)->update([
+                    'status'         => 'revision_requested',
+                    'revision_notes' => $request->revision_notes,
+                    'reviewed_by'    => $user->id,
+                    'reviewed_at'    => now(),
+                    'updated_at'     => now(),
+                ]);
+            }
+
+            DB::table('creator_engagements')->where('id', $id)->update([
+                'status'     => 'revision_requested',
+                'updated_at' => now(),
+            ]);
+
+            $this->addTimeline($id, $user->id, 'firm', 'revision_requested', $request->revision_notes);
+
+            $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+            $this->notify(
+                $engagement->creator_id,
+                'revision_requested',
+                'Revision requested',
+                "The firm requested changes on \"{$project->title}\".",
+                ['engagement_id' => (int) $id]
+            );
+
+            return response()->json(['status' => true, 'message' => 'Revision requested.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@requestRevision: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIRM — Approve the latest submission
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function approveDeliverable(Request $request, $id): JsonResponse
+    {
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $engagement = DB::table('creator_engagements')
+                ->where('id', $id)
+                ->where('firm_id', $firmProfile->id)
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            if (! in_array($engagement->status, ['submitted', 'resubmitted'])) {
+                return response()->json(['status' => false, 'message' => 'No submitted work to approve'], 422);
+            }
+
+            $latest = DB::table('engagement_submissions')
+                ->where('engagement_id', $id)
+                ->orderByDesc('revision_round')
+                ->first();
+
+            if ($latest) {
+                DB::table('engagement_submissions')->where('id', $latest->id)->update([
+                    'status'      => 'approved',
+                    'reviewed_by' => $user->id,
+                    'reviewed_at' => now(),
+                    'updated_at'  => now(),
+                ]);
+            }
+
+            DB::table('creator_engagements')->where('id', $id)->update([
+                'status'     => 'approved',
+                'updated_at' => now(),
+            ]);
+
+            $this->addTimeline($id, $user->id, 'firm', 'work_approved');
+
+            $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+            $this->notify(
+                $engagement->creator_id,
+                'work_approved',
+                'Your work has been approved!',
+                "The firm approved your deliverable for \"{$project->title}\".",
+                ['engagement_id' => (int) $id]
+            );
+
+            return response()->json(['status' => true, 'message' => 'Deliverable approved.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@approveDeliverable: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CREATOR — Bank details for payout
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getBankDetails(Request $request): JsonResponse
+    {
+        $user    = $request->attributes->get('auth_user');
+        $details = DB::table('creator_bank_details')
+            ->where('creator_id', $user->id)
+            ->first();
+
+        if (! $details) {
+            return response()->json(['status' => true, 'data' => ['bank_details' => null]]);
+        }
+
+        $accountMasked = '';
+        try {
+            $decrypted     = Crypt::decryptString($details->account_number);
+            $accountMasked = '••••' . substr($decrypted, -4);
+        } catch (\Exception $e) {
+            $accountMasked = '••••' . substr($details->account_number, -4);
+        }
+
+        $ifsc = '';
+        try {
+            $ifsc = Crypt::decryptString($details->ifsc_code);
+        } catch (\Exception $e) {
+            $ifsc = $details->ifsc_code;
+        }
+
+        return response()->json([
+            'status' => true,
+            'data'   => [
+                'bank_details' => [
+                    'id'                  => $details->id,
+                    'account_holder_name' => $details->account_holder_name,
+                    'bank_name'           => $details->bank_name,
+                    'account_number'      => $accountMasked,
+                    'ifsc_code'           => $ifsc,
+                    'is_verified'         => (bool) $details->is_verified,
+                    'updated_at'          => $details->updated_at,
+                ],
+            ],
+        ]);
+    }
+
+    public function saveBankDetails(Request $request): JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+
+        $validator = Validator::make($request->all(), [
+            'account_holder_name' => 'required|string|max:255',
+            'bank_name'           => 'required|string|max:255',
+            'account_number'      => 'required|string|min:9|max:20',
+            'ifsc_code'           => ['required', 'string', 'regex:/^[A-Z]{4}0[A-Z0-9]{6}$/i'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+        }
+
+        $encryptedAccount = Crypt::encryptString($request->account_number);
+        $encryptedIfsc    = Crypt::encryptString(strtoupper($request->ifsc_code));
+
+        $existing = DB::table('creator_bank_details')
+            ->where('creator_id', $user->id)
+            ->first();
+
+        if ($existing) {
+            DB::table('creator_bank_details')->where('id', $existing->id)->update([
+                'account_holder_name' => $request->account_holder_name,
+                'bank_name'           => $request->bank_name,
+                'account_number'      => $encryptedAccount,
+                'ifsc_code'           => $encryptedIfsc,
+                'is_verified'         => 0,
+                'updated_at'          => now(),
+            ]);
+        } else {
+            DB::table('creator_bank_details')->insert([
+                'creator_id'          => $user->id,
+                'account_holder_name' => $request->account_holder_name,
+                'bank_name'           => $request->bank_name,
+                'account_number'      => $encryptedAccount,
+                'ifsc_code'           => $encryptedIfsc,
+                'is_verified'         => 0,
+                'created_at'          => now(),
+                'updated_at'          => now(),
+            ]);
+        }
+
+        return response()->json(['status' => true, 'message' => 'Bank details saved.']);
+    }
+
+    public function getPayoutStatus(Request $request, $engagementId): JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+
+        $engagement = DB::table('creator_engagements')
+            ->where('id', $engagementId)
+            ->where('creator_id', $user->id)
+            ->first();
+
+        if (! $engagement) {
+            return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+        }
+
+        $payout = DB::table('creator_payouts')
+            ->where('engagement_id', $engagementId)
+            ->first();
+
+        $hasBankDetails = DB::table('creator_bank_details')
+            ->where('creator_id', $user->id)
+            ->exists();
+
+        return response()->json([
+            'status' => true,
+            'data'   => [
+                'payout'           => $payout ? [
+                    'id'             => $payout->id,
+                    'gross_amount'   => (float) $payout->gross_amount,
+                    'commission_rate'   => (float) $payout->commission_rate,
+                    'commission_amount' => (float) $payout->commission_amount,
+                    'net_amount'     => (float) $payout->net_amount,
+                    'status'         => $payout->status,
+                    'paid_at'        => $payout->paid_at,
+                    'created_at'     => $payout->created_at,
+                ] : null,
+                'has_bank_details' => $hasBankDetails,
+            ],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function notify(int $userId, string $type, string $title, string $body, array $data = []): void
+    {
+        DB::table('creator_marketplace_notifications')->insert([
+            'user_id'    => $userId,
+            'type'       => $type,
+            'title'      => $title,
+            'body'       => $body,
+            'data'       => json_encode($data),
+            'read_at'    => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function addTimeline(int $engagementId, ?int $userId, string $role, string $event, ?string $note = null, ?array $meta = null): void
+    {
+        DB::table('engagement_timeline')->insert([
+            'engagement_id' => $engagementId,
+            'user_id'       => $userId,
+            'role'          => $role,
+            'event'         => $event,
+            'note'          => $note,
+            'meta'          => $meta ? json_encode($meta) : null,
+            'created_at'    => now(),
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -1067,3 +1067,176 @@ CREATE TABLE `creator_marketplace_notifications` (
   KEY `idx_cmn_user_created` (`user_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- ROLLBACK: DROP TABLE IF EXISTS `creator_marketplace_notifications`;
+
+
+-- ============================================================
+-- Phase 5: Project Workspace (2026-06-05)
+-- ============================================================
+
+-- Add 'resubmitted' to engagement status lifecycle
+ALTER TABLE creator_engagements
+MODIFY COLUMN status ENUM(
+    'awaiting_payment','payment_pending','active',
+    'submitted','revision_requested','resubmitted','approved',
+    'payout_pending','completed','cancelled'
+) NOT NULL DEFAULT 'awaiting_payment';
+-- ROLLBACK: remove 'resubmitted' from enum
+
+-- engagement_briefs: firm's project brief (one per engagement)
+CREATE TABLE `engagement_briefs` (
+  `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `engagement_id`    BIGINT UNSIGNED NOT NULL,
+  `detailed_brief`   TEXT            NOT NULL,
+  `additional_notes` TEXT            NULL,
+  `updated_by`       BIGINT UNSIGNED NOT NULL,
+  `created_at`       TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_eb_engagement` (`engagement_id`),
+  CONSTRAINT `fk_eb_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `engagement_briefs`;
+
+-- engagement_brief_attachments: files attached to the brief
+CREATE TABLE `engagement_brief_attachments` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `engagement_id` BIGINT UNSIGNED NOT NULL,
+  `file_path`     VARCHAR(500)    NOT NULL,
+  `original_name` VARCHAR(255)    NOT NULL,
+  `mime_type`     VARCHAR(100)    NULL,
+  `file_size`     INT UNSIGNED    NULL,
+  `uploaded_by`   BIGINT UNSIGNED NOT NULL,
+  `created_at`    TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_eba_engagement` (`engagement_id`),
+  CONSTRAINT `fk_eba_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `engagement_brief_attachments`;
+
+-- engagement_submissions: one record per submission round
+CREATE TABLE `engagement_submissions` (
+  `id`             BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  `engagement_id`  BIGINT UNSIGNED  NOT NULL,
+  `creator_id`     BIGINT UNSIGNED  NOT NULL,
+  `notes`          TEXT             NULL,
+  `revision_round` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `status`         ENUM('submitted','revision_requested','approved') NOT NULL DEFAULT 'submitted',
+  `revision_notes` TEXT             NULL,
+  `reviewed_by`    BIGINT UNSIGNED  NULL,
+  `reviewed_at`    TIMESTAMP        NULL,
+  `created_at`     TIMESTAMP        NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`     TIMESTAMP        NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_es_engagement` (`engagement_id`),
+  KEY `idx_es_creator`    (`creator_id`),
+  CONSTRAINT `fk_es_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `engagement_submissions`;
+
+-- engagement_submission_files: physical files and video links per submission
+CREATE TABLE `engagement_submission_files` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `submission_id` BIGINT UNSIGNED NOT NULL,
+  `engagement_id` BIGINT UNSIGNED NOT NULL,
+  `file_path`     VARCHAR(500)    NULL,
+  `original_name` VARCHAR(255)    NULL,
+  `mime_type`     VARCHAR(100)    NULL,
+  `file_size`     INT UNSIGNED    NULL,
+  `video_link`    VARCHAR(1000)   NULL,
+  `created_at`    TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_esf_submission` (`submission_id`),
+  KEY `idx_esf_engagement` (`engagement_id`),
+  CONSTRAINT `fk_esf_submission` FOREIGN KEY (`submission_id`)
+    REFERENCES `engagement_submissions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `engagement_submission_files`;
+
+-- engagement_timeline: append-only event log for all workspace activity
+CREATE TABLE `engagement_timeline` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `engagement_id` BIGINT UNSIGNED NOT NULL,
+  `user_id`       BIGINT UNSIGNED NULL,
+  `role`          ENUM('firm','creator','system') NOT NULL,
+  `event`         VARCHAR(100)    NOT NULL,
+  `note`          TEXT            NULL,
+  `meta`          JSON            NULL,
+  `created_at`    TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_et_engagement` (`engagement_id`, `created_at`),
+  CONSTRAINT `fk_et_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `engagement_timeline`;
+
+
+-- ============================================================
+-- Phase 4: Payment Collection (2026-06-05)
+-- ============================================================
+
+-- creator_engagement_payments: payment records for engagements
+CREATE TABLE `creator_engagement_payments` (
+  `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `engagement_id`       BIGINT UNSIGNED NOT NULL,
+  `firm_id`             BIGINT UNSIGNED NOT NULL,
+  `amount`              DECIMAL(12,2)   NOT NULL,
+  `currency`            VARCHAR(10)     NOT NULL DEFAULT 'INR',
+  `payment_method`      ENUM('razorpay','manual') NOT NULL,
+  `status`              ENUM('pending','paid','awaiting_verification','verified','escrow_held','refunded')
+                        NOT NULL DEFAULT 'pending',
+
+  -- Online gateway fields (Razorpay / future providers)
+  `gateway_order_id`    VARCHAR(255)    NULL,
+  `gateway_payment_id`  VARCHAR(255)    NULL,
+  `gateway_signature`   TEXT            NULL,
+  `gateway_response`    JSON            NULL,
+
+  -- Manual payment proof fields
+  `utr_number`          VARCHAR(100)    NULL,
+  `payment_reference`   VARCHAR(255)    NULL,
+  `screenshot_url`      TEXT            NULL,
+  `payment_date`        DATE            NULL,
+
+  -- Admin review fields
+  `admin_remarks`       TEXT            NULL,
+  `reviewed_by`         BIGINT UNSIGNED NULL,
+  `reviewed_at`         TIMESTAMP       NULL,
+
+  `created_at`          TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`          TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cep_engagement`   (`engagement_id`),
+  KEY `idx_cep_firm_status`        (`firm_id`, `status`),
+  KEY `idx_cep_gateway_order`      (`gateway_order_id`),
+  KEY `idx_cep_status`             (`status`),
+
+  CONSTRAINT `fk_cep_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `creator_engagement_payments`;
+
+
+-- ============================================================
+-- Phase 6: Auto-Approval Workflow (2026-06-05)
+-- ============================================================
+-- No new tables required. All data is stored in existing tables:
+--   engagement_submissions  (status updated to 'approved')
+--   creator_engagements     (status transitions: approved → payout_pending)
+--   engagement_timeline     (events: auto_approved, payout_queued)
+--   creator_marketplace_notifications (types: work_approved, auto_approved, payout_queued)
+--
+-- Scheduler jobs added to routes/console.php:
+--   auto-approve-creator-engagements (daily 02:00)
+--     → AutoApproveEngagementsJob: finds submitted/resubmitted engagements
+--       whose latest submission is >7 days old without firm review,
+--       sets submission.status = 'approved', engagement.status = 'approved',
+--       inserts timeline event 'auto_approved', notifies creator + firm.
+--
+--   queue-creator-payouts (daily 02:15)
+--     → Inline Schedule::call: moves all 'approved' engagements to
+--       'payout_pending', inserts timeline event 'payout_queued',
+--       notifies creator.

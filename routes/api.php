@@ -21,6 +21,7 @@ use App\Http\Controllers\API\AdminWalletController;
 use App\Http\Controllers\API\MessagingController;
 use App\Http\Controllers\API\AdminMessagingController;
 use App\Http\Controllers\API\ErrorLogController;
+use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
@@ -208,13 +209,26 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // Engagements
     Route::get('/creator-marketplace/engagements/{id}',      [CreatorMarketplaceController::class, 'getEngagement']);
     Route::get('/creator-marketplace/my-engagements',        [CreatorMarketplaceController::class, 'getMyEngagements']);
+    // Payment — readable by both parties
+    Route::get('/creator-marketplace/engagements/{engagementId}/payment', [CreatorMarketplaceController::class, 'getEngagementPayment']);
+    // Workspace — role verified in controller; creator uses submit-work, firm uses brief/approve/revision
+    Route::get('/creator-marketplace/engagements/{id}/workspace',                           [CreatorMarketplaceController::class, 'getWorkspace']);
+    Route::post('/creator-marketplace/engagements/{id}/brief',                              [CreatorMarketplaceController::class, 'saveBrief']);
+    Route::delete('/creator-marketplace/engagements/{id}/brief/attachments/{attachmentId}', [CreatorMarketplaceController::class, 'deleteBriefAttachment']);
+    Route::post('/creator-marketplace/engagements/{id}/submit-work',                        [CreatorMarketplaceController::class, 'submitDeliverable']);
+    Route::post('/creator-marketplace/engagements/{id}/request-revision',                   [CreatorMarketplaceController::class, 'requestRevision']);
+    Route::post('/creator-marketplace/engagements/{id}/approve',                            [CreatorMarketplaceController::class, 'approveDeliverable']);
     // Notifications
     Route::get('/creator-marketplace/notifications',                     [CreatorMarketplaceController::class, 'getMarketplaceNotifications']);
     Route::post('/creator-marketplace/notifications/read-all',           [CreatorMarketplaceController::class, 'markAllNotificationsRead']);
     Route::post('/creator-marketplace/notifications/{id}/read',          [CreatorMarketplaceController::class, 'markNotificationRead']);
+    // Bank details + payout status (creator)
+    Route::get('/creator-marketplace/bank-details',                       [CreatorMarketplaceController::class, 'getBankDetails']);
+    Route::post('/creator-marketplace/bank-details',                      [CreatorMarketplaceController::class, 'saveBankDetails']);
+    Route::get('/creator-marketplace/engagements/{engagementId}/payout',  [CreatorMarketplaceController::class, 'getPayoutStatus']);
 });
 
-// Firm-verified — project management
+// Firm-verified — project management + payments
 Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->group(function () {
     Route::get('/creator-marketplace/dashboard',                  [CreatorMarketplaceController::class, 'getDashboardStats']);
     Route::post('/creator-marketplace/projects',                  [CreatorMarketplaceController::class, 'createProject']);
@@ -226,7 +240,25 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/bids/{bidId}/status',       [CreatorMarketplaceController::class, 'updateBidStatus']);
     Route::post('/creator-marketplace/bids/{bidId}/accept-creator',[CreatorMarketplaceController::class, 'acceptCreator']);
     Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
+    // Payment — firm-only actions
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/initiate', [CreatorMarketplaceController::class, 'initiatePayment']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/verify',   [CreatorMarketplaceController::class, 'verifyEngagementPayment']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/failure',  [CreatorMarketplaceController::class, 'engagementPaymentFailure']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',   [CreatorMarketplaceController::class, 'submitManualPayment']);
 });
+
+// ── Admin — Creator Marketplace Payments ─────────────────────────────────────
+Route::get('/admin/creator-payments',                  [AdminController::class, 'getCreatorPayments']);
+Route::post('/admin/creator-payments/{id}/approve',    [AdminController::class, 'approveCreatorPayment']);
+Route::post('/admin/creator-payments/{id}/reject',     [AdminController::class, 'rejectCreatorPayment']);
+
+// ── Admin — Creator Payouts ───────────────────────────────────────────────────
+Route::get('/admin/creator-payouts',                   [AdminPayoutsController::class, 'getPayouts']);
+Route::get('/admin/creator-payouts/stats',             [AdminPayoutsController::class, 'getStats']);
+Route::post('/admin/creator-payouts/{id}/mark-paid',   [AdminPayoutsController::class, 'markPaid']);
+Route::post('/admin/creator-payouts/{id}/mark-failed', [AdminPayoutsController::class, 'markFailed']);
+Route::get('/admin/commission-rate',                   [AdminPayoutsController::class, 'getCommissionRate']);
+Route::post('/admin/commission-rate',                  [AdminPayoutsController::class, 'updateCommissionRate']);
 
 // ── Error Logging ─────────────────────────────────────────────────────────────
 // Public — no auth required so errors during login/registration are captured too

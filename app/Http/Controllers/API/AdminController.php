@@ -1020,4 +1020,191 @@ class AdminController extends Controller
             ], 500);
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN — Creator Marketplace Payments
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private function adminFromRequest(Request $request): ?object
+    {
+        $token = $request->cookie('admin_token');
+        if (! $token) return null;
+        return DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+    }
+
+    public function getCreatorPayments(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $status = $request->input('status', 'awaiting_verification');
+
+            $payments = DB::table('creator_engagement_payments as p')
+                ->join('creator_engagements as e',   'e.id',  '=', 'p.engagement_id')
+                ->join('creator_projects as proj',    'proj.id','=', 'e.creator_requirement_id')
+                ->join('firm_profiles as fp',         'fp.id', '=', 'p.firm_id')
+                ->join('users as fu',                 'fu.id', '=', 'fp.user_id')
+                ->join('users as cu',                 'cu.id', '=', 'e.creator_id')
+                ->select([
+                    'p.id', 'p.status', 'p.payment_method', 'p.amount', 'p.currency',
+                    'p.utr_number', 'p.payment_reference', 'p.payment_date',
+                    'p.admin_remarks', 'p.reviewed_at', 'p.created_at',
+                    DB::raw("CASE WHEN p.screenshot_url IS NOT NULL THEN CONCAT('" . url('/storage') . "/', p.screenshot_url) ELSE NULL END as screenshot_url"),
+                    'p.engagement_id',
+                    'proj.title as project_title',
+                    'fp.firm_name', 'fu.email as firm_email',
+                    'cu.name as creator_name',
+                    'e.status as engagement_status',
+                ])
+                ->when($status !== 'all', fn($q) => $q->where('p.status', $status))
+                ->orderByDesc('p.created_at')
+                ->paginate(20);
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'payments'   => $payments->items(),
+                    'total'      => $payments->total(),
+                    'page'       => $payments->currentPage(),
+                    'last_page'  => $payments->lastPage(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin@getCreatorPayments: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    public function approveCreatorPayment(Request $request, $paymentId)
+    {
+        DB::beginTransaction();
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $payment = DB::table('creator_engagement_payments')->where('id', $paymentId)->first();
+            if (! $payment) return response()->json(['status' => false, 'message' => 'Payment not found'], 404);
+
+            if ($payment->status !== 'awaiting_verification') {
+                return response()->json(['status' => false, 'message' => 'Payment is not awaiting verification'], 422);
+            }
+
+            DB::table('creator_engagement_payments')
+                ->where('id', $paymentId)
+                ->update([
+                    'status'      => 'escrow_held',
+                    'reviewed_by' => $admin->id,
+                    'reviewed_at' => now(),
+                    'updated_at'  => now(),
+                ]);
+
+            $engagement = DB::table('creator_engagements')->where('id', $payment->engagement_id)->first();
+
+            DB::table('creator_engagements')
+                ->where('id', $payment->engagement_id)
+                ->update(['status' => 'active', 'updated_at' => now()]);
+
+            $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+
+            // Notify creator
+            DB::table('creator_marketplace_notifications')->insert([
+                'user_id'    => $engagement->creator_id,
+                'type'       => 'payment_received',
+                'title'      => 'Payment verified — project is now active!',
+                'body'       => "Manual payment for \"{$project->title}\" has been verified. Your project is now active.",
+                'data'       => json_encode(['engagement_id' => (int) $payment->engagement_id]),
+                'read_at'    => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            // Notify firm
+            $firmUserId = DB::table('firm_profiles')->where('id', $payment->firm_id)->value('user_id');
+            if ($firmUserId) {
+                DB::table('creator_marketplace_notifications')->insert([
+                    'user_id'    => $firmUserId,
+                    'type'       => 'payment_verified',
+                    'title'      => 'Payment verified — project is now active!',
+                    'body'       => "Your manual payment for \"{$project->title}\" has been approved.",
+                    'data'       => json_encode(['engagement_id' => (int) $payment->engagement_id]),
+                    'read_at'    => null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['status' => true, 'message' => 'Payment approved. Project is now active.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Admin@approveCreatorPayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    public function rejectCreatorPayment(Request $request, $paymentId)
+    {
+        DB::beginTransaction();
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $validator = Validator::make($request->all(), [
+                'remarks' => 'required|string|max:1000',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $payment = DB::table('creator_engagement_payments')->where('id', $paymentId)->first();
+            if (! $payment) return response()->json(['status' => false, 'message' => 'Payment not found'], 404);
+
+            if ($payment->status !== 'awaiting_verification') {
+                return response()->json(['status' => false, 'message' => 'Payment is not awaiting verification'], 422);
+            }
+
+            // Reset to pending so firm can resubmit with corrected proof
+            DB::table('creator_engagement_payments')
+                ->where('id', $paymentId)
+                ->update([
+                    'status'       => 'pending',
+                    'admin_remarks'=> $request->remarks,
+                    'reviewed_by'  => $admin->id,
+                    'reviewed_at'  => now(),
+                    'updated_at'   => now(),
+                ]);
+
+            DB::table('creator_engagements')
+                ->where('id', $payment->engagement_id)
+                ->update(['status' => 'awaiting_payment', 'updated_at' => now()]);
+
+            // Notify firm
+            $firmUserId = DB::table('firm_profiles')->where('id', $payment->firm_id)->value('user_id');
+            $project    = DB::table('creator_projects')
+                ->join('creator_engagements', 'creator_engagements.creator_requirement_id', '=', 'creator_projects.id')
+                ->where('creator_engagements.id', $payment->engagement_id)
+                ->value('creator_projects.title');
+
+            if ($firmUserId) {
+                DB::table('creator_marketplace_notifications')->insert([
+                    'user_id'    => $firmUserId,
+                    'type'       => 'payment_rejected',
+                    'title'      => 'Payment proof rejected',
+                    'body'       => "Your manual payment proof for \"{$project}\" was rejected: {$request->remarks}",
+                    'data'       => json_encode(['engagement_id' => (int) $payment->engagement_id]),
+                    'read_at'    => null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['status' => true, 'message' => 'Payment rejected. Firm can resubmit proof.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Admin@rejectCreatorPayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
 }

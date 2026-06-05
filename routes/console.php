@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\AutoApproveEngagementsJob;
 use App\Jobs\SendHourlyApplicationDigestJob;
 use App\Jobs\SendInterviewReminder1HourJob;
 use App\Jobs\SendInterviewReminder24HoursJob;
@@ -93,6 +94,97 @@ Schedule::job(new SendInterviewReminder1HourJob())
     ->everyThirtyMinutes()
     ->name('send-interview-reminder-1h')
     ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Auto-approve creator engagement submissions after 7 days
+|--------------------------------------------------------------------------
+| Prevents firms from downloading work and ghosting creators.
+| If the latest submission remains unreviewed for > 7 days the engagement
+| is automatically approved and both parties are notified.
+*/
+Schedule::job(new AutoApproveEngagementsJob())
+    ->dailyAt('02:00')
+    ->name('auto-approve-creator-engagements')
+    ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Transition approved creator engagements to payout_pending
+|--------------------------------------------------------------------------
+| Runs daily at 02:15 (after auto-approve) so that auto-approved
+| engagements are also caught in the same cycle.
+| - Reads current commission_percentage from platform_settings
+| - Creates a creator_payouts record (gross, commission, net)
+| - Moves engagement to 'payout_pending'
+| - Notifies creator
+*/
+Schedule::call(function () {
+    $commissionRate = (float) (DB::table('platform_settings')
+        ->where('key', 'commission_percentage')
+        ->value('value') ?? '10');
+
+    $approved = DB::table('creator_engagements')
+        ->where('status', 'approved')
+        ->get(['id', 'creator_id', 'creator_requirement_id', 'accepted_bid_amount']);
+
+    foreach ($approved as $eng) {
+        // Skip if a payout record already exists (idempotency)
+        $alreadyExists = DB::table('creator_payouts')
+            ->where('engagement_id', $eng->id)
+            ->exists();
+
+        if (! $alreadyExists) {
+            $gross      = (float) $eng->accepted_bid_amount;
+            $commission = round($gross * $commissionRate / 100, 2);
+            $net        = round($gross - $commission, 2);
+
+            DB::table('creator_payouts')->insert([
+                'engagement_id'     => $eng->id,
+                'creator_id'        => $eng->creator_id,
+                'gross_amount'      => $gross,
+                'commission_rate'   => $commissionRate,
+                'commission_amount' => $commission,
+                'net_amount'        => $net,
+                'status'            => 'pending',
+                'created_at'        => now(),
+                'updated_at'        => now(),
+            ]);
+        }
+
+        DB::table('creator_engagements')->where('id', $eng->id)->update([
+            'status'     => 'payout_pending',
+            'updated_at' => now(),
+        ]);
+
+        DB::table('engagement_timeline')->insert([
+            'engagement_id' => $eng->id,
+            'user_id'       => null,
+            'role'          => 'system',
+            'event'         => 'payout_queued',
+            'note'          => null,
+            'meta'          => json_encode(['commission_rate' => $commissionRate]),
+            'created_at'    => now(),
+        ]);
+
+        $title = DB::table('creator_projects')
+            ->where('id', $eng->creator_requirement_id)
+            ->value('title') ?? 'your project';
+
+        $net = round((float) $eng->accepted_bid_amount * (1 - $commissionRate / 100), 2);
+
+        DB::table('creator_marketplace_notifications')->insert([
+            'user_id'    => $eng->creator_id,
+            'type'       => 'payout_queued',
+            'title'      => 'Payout queued',
+            'body'       => "Your payout of ₹" . number_format($net, 2) . " for \"{$title}\" has been queued for processing.",
+            'data'       => json_encode(['engagement_id' => (int) $eng->id]),
+            'read_at'    => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+})->dailyAt('02:15')->name('queue-creator-payouts')->withoutOverlapping();
 
 /*
 |--------------------------------------------------------------------------

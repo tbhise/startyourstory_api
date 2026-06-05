@@ -21,6 +21,7 @@ use App\Http\Controllers\API\AdminWalletController;
 use App\Http\Controllers\API\MessagingController;
 use App\Http\Controllers\API\AdminMessagingController;
 use App\Http\Controllers\API\ErrorLogController;
+use App\Http\Controllers\API\CreatorMarketplaceController;
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -188,6 +189,43 @@ Route::prefix('admin/messaging')->group(function () {
     Route::post('/conversations/{id}/unblock',                [AdminMessagingController::class, 'unblockConversation']);
     Route::get('/limits',                                     [AdminMessagingController::class, 'getLimits']);
     Route::post('/limits/{firmId}/reset-monthly',             [AdminMessagingController::class, 'resetMonthlyLimit']);
+});
+
+// ── Creator Marketplace ───────────────────────────────────────────────────────
+// Public — browse without login
+Route::get('/creator-marketplace/projects',           [CreatorMarketplaceController::class, 'browseProjects']);
+Route::get('/creator-marketplace/projects/{id}',      [CreatorMarketplaceController::class, 'publicProjectDetails']);
+
+// Authenticated — any logged-in user
+Route::middleware([ApiAuthMiddleware::class])->group(function () {
+    // Creator bid actions
+    Route::get('/creator-marketplace/my-bids',               [CreatorMarketplaceController::class, 'getMyBids']);
+    Route::post('/creator-marketplace/bids/{projectId}',     [CreatorMarketplaceController::class, 'submitBid']);
+    Route::post('/creator-marketplace/bids/{bidId}/withdraw',[CreatorMarketplaceController::class, 'withdrawBid']);
+    // Creator acceptance workflow
+    Route::get('/creator-marketplace/bids/{bidId}/contract', [CreatorMarketplaceController::class, 'getSelectedBidDetails']);
+    Route::post('/creator-marketplace/bids/{bidId}/respond', [CreatorMarketplaceController::class, 'creatorRespondToBid']);
+    // Engagements
+    Route::get('/creator-marketplace/engagements/{id}',      [CreatorMarketplaceController::class, 'getEngagement']);
+    Route::get('/creator-marketplace/my-engagements',        [CreatorMarketplaceController::class, 'getMyEngagements']);
+    // Notifications
+    Route::get('/creator-marketplace/notifications',                     [CreatorMarketplaceController::class, 'getMarketplaceNotifications']);
+    Route::post('/creator-marketplace/notifications/read-all',           [CreatorMarketplaceController::class, 'markAllNotificationsRead']);
+    Route::post('/creator-marketplace/notifications/{id}/read',          [CreatorMarketplaceController::class, 'markNotificationRead']);
+});
+
+// Firm-verified — project management
+Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->group(function () {
+    Route::get('/creator-marketplace/dashboard',                  [CreatorMarketplaceController::class, 'getDashboardStats']);
+    Route::post('/creator-marketplace/projects',                  [CreatorMarketplaceController::class, 'createProject']);
+    Route::post('/creator-marketplace/my-projects',               [CreatorMarketplaceController::class, 'getMyProjects']);
+    Route::get('/creator-marketplace/my-projects/{id}',           [CreatorMarketplaceController::class, 'getMyProjectDetails']);
+    Route::post('/creator-marketplace/projects/{id}/update',      [CreatorMarketplaceController::class, 'updateProject']);
+    Route::post('/creator-marketplace/projects/{id}/close',       [CreatorMarketplaceController::class, 'closeProject']);
+    Route::get('/creator-marketplace/projects/{id}/bids',         [CreatorMarketplaceController::class, 'getProjectBids']);
+    Route::post('/creator-marketplace/bids/{bidId}/status',       [CreatorMarketplaceController::class, 'updateBidStatus']);
+    Route::post('/creator-marketplace/bids/{bidId}/accept-creator',[CreatorMarketplaceController::class, 'acceptCreator']);
+    Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
 });
 
 // ── Error Logging ─────────────────────────────────────────────────────────────

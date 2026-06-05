@@ -2,10 +2,12 @@
 
 namespace App\Mail;
 
+use App\Contracts\Mail\HasEmailPurpose;
+use App\Enums\EmailPurpose;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 
-class FirmRejectedMail extends Mailable
+class FirmRejectedMail extends Mailable implements HasEmailPurpose
 {
     use Queueable;
 
@@ -13,6 +15,11 @@ class FirmRejectedMail extends Mailable
         public string $firmName,
         public string $reason
     ) {}
+
+    public function emailPurpose(): EmailPurpose
+    {
+        return EmailPurpose::FIRM_REJECTED;
+    }
 
     public function build()
     {

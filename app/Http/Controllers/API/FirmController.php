@@ -8,9 +8,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use App\Jobs\SendWelcomeEmailJob;
-use App\Jobs\SendVerificationEmailJob;
 use App\Models\User;
+use App\Services\Notifications\EmailNotificationService;
 
 class FirmController extends Controller
 {
@@ -99,7 +98,7 @@ class FirmController extends Controller
 
             $user = User::where('id', $userId)->first();
 
-            SendVerificationEmailJob::dispatch($user);
+            app(EmailNotificationService::class)->sendVerificationEmail($user);
 
               // $userType = 'firm';
 

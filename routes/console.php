@@ -1,5 +1,8 @@
 <?php
 
+use App\Jobs\SendHourlyApplicationDigestJob;
+use App\Jobs\SendInterviewReminder1HourJob;
+use App\Jobs\SendInterviewReminder24HoursJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -64,3 +67,43 @@ Schedule::call(function () {
         );
     }
 })->hourly()->name('expire-application-holds')->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Send 24-hour interview reminders
+|--------------------------------------------------------------------------
+| Runs every hour. Finds interviews due in ~24 hours and sends one reminder
+| per confirmed/pending application. Duplicate protection via
+| applications.reminder_24h_sent_at.
+*/
+Schedule::job(new SendInterviewReminder24HoursJob())
+    ->hourly()
+    ->name('send-interview-reminder-24h')
+    ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Send 1-hour interview reminders
+|--------------------------------------------------------------------------
+| Runs every 30 minutes. Finds interviews due in 45–90 minutes and sends
+| one reminder per application. Duplicate protection via
+| applications.reminder_1h_sent_at.
+*/
+Schedule::job(new SendInterviewReminder1HourJob())
+    ->everyThirtyMinutes()
+    ->name('send-interview-reminder-1h')
+    ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Send hourly application digest emails to firms
+|--------------------------------------------------------------------------
+| Runs every hour. Finds firms with un-notified applications (digest_notified_at
+| IS NULL) and dispatches one SendApplicationDigestJob per firm. The worker
+| job marks applications after a successful send to ensure each application
+| appears in exactly one digest email.
+*/
+Schedule::job(new SendHourlyApplicationDigestJob())
+    ->hourly()
+    ->name('send-hourly-application-digest')
+    ->withoutOverlapping();

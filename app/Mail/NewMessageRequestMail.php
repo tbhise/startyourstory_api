@@ -2,22 +2,29 @@
 
 namespace App\Mail;
 
+use App\Contracts\Mail\HasEmailPurpose;
+use App\Enums\EmailPurpose;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-class NewMessageRequestMail extends Mailable
+class NewMessageRequestMail extends Mailable implements HasEmailPurpose
 {
     use Queueable, SerializesModels;
 
     public function __construct(
-        public readonly object $recipient,
+        public readonly object  $recipient,
         public readonly ?object $firmProfile,
-        public readonly string $messagePreview,
+        public readonly string  $messagePreview,
         public readonly ?object $candidateUser = null
     ) {}
+
+    public function emailPurpose(): EmailPurpose
+    {
+        return EmailPurpose::MESSAGE_REQUEST;
+    }
 
     public function envelope(): Envelope
     {

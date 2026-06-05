@@ -874,3 +874,196 @@ CREATE TABLE `error_logs` (
 
 
 -- =============================================== All Done On production server | 04-06-2026 ================================
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## EMAIL SYSTEM REFACTOR & EXPANSION — added 2026-06-05
+## ═══════════════════════════════════════════════════════════════════════════════
+##
+## Introduces:
+##   - email_logs table          (tracks every email attempt with status)
+##   - applications tracking cols (prevents duplicate interview reminders
+##                                 and duplicate digest inclusions)
+##
+## Migration files:
+##   database/migrations/2026_06_05_000001_create_email_logs_table.php
+##   database/migrations/2026_06_05_000002_add_email_tracking_to_applications.php
+## ═══════════════════════════════════════════════════════════════════════════════
+
+-- ── email_logs ─────────────────────────────────────────────────────────────────
+-- Logs every email attempt. Status transitions: pending → sent | failed.
+-- sender_identity maps to a key in config/email.php (verify, interview, etc.)
+
+CREATE TABLE `email_logs` (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT,
+  `recipient_email`  VARCHAR(255)  NOT NULL,
+  `recipient_type`   VARCHAR(20)   NOT NULL COMMENT 'student | firm | admin | user',
+  `email_purpose`    VARCHAR(100)  NOT NULL COMMENT 'EmailPurpose enum value',
+  `template_name`    VARCHAR(100)  NOT NULL COMMENT 'Mail class short name',
+  `sender_identity`  VARCHAR(100)  NOT NULL COMMENT 'Sender key from config/email.php',
+  `subject`          VARCHAR(500)  NOT NULL,
+  `status`           ENUM('pending','sent','failed') NOT NULL DEFAULT 'pending',
+  `error_message`    TEXT          NULL,
+  `sent_at`          DATETIME      NULL,
+  `created_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_email_purpose_status`  (`email_purpose`, `status`),
+  KEY `idx_recipient_created`     (`recipient_email`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK: DROP TABLE IF EXISTS `email_logs`;
+
+
+-- ── applications — email tracking columns ────────────────────────────────────
+-- reminder_24h_sent_at : set when the 24-hour pre-interview reminder is sent.
+--                        NULL = not yet sent. Prevents duplicate 24h reminders.
+-- reminder_1h_sent_at  : set when the 1-hour pre-interview reminder is sent.
+--                        NULL = not yet sent. Prevents duplicate 1h reminders.
+-- digest_notified_at   : set by SendApplicationDigestJob after a successful
+--                        digest email send. NULL = not yet included in any digest.
+--                        Ensures each application appears in exactly one digest.
+
+ALTER TABLE `applications`
+  ADD COLUMN `reminder_24h_sent_at` DATETIME NULL AFTER `interview_responded_at`,
+  ADD COLUMN `reminder_1h_sent_at`  DATETIME NULL AFTER `reminder_24h_sent_at`,
+  ADD COLUMN `digest_notified_at`   DATETIME NULL AFTER `reminder_1h_sent_at`,
+  ADD INDEX  `idx_reminder_24h`     (`reminder_24h_sent_at`),
+  ADD INDEX  `idx_reminder_1h`      (`reminder_1h_sent_at`),
+  ADD INDEX  `idx_digest_notified`  (`digest_notified_at`);
+
+-- ROLLBACK:
+-- ALTER TABLE `applications`
+--   DROP INDEX  `idx_reminder_24h`,
+--   DROP INDEX  `idx_reminder_1h`,
+--   DROP INDEX  `idx_digest_notified`,
+--   DROP COLUMN `reminder_24h_sent_at`,
+--   DROP COLUMN `reminder_1h_sent_at`,
+--   DROP COLUMN `digest_notified_at`;
+
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- CREATOR MARKETPLACE — Phase 1                              Added: 05-06-2026
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- New tables:
+--   - creator_projects        (firm-owned project briefs for creators to bid on)
+--   - creator_project_bids    (creator bids on a project)
+--
+-- Migration files:
+--   database/migrations/2026_06_05_000003_create_creator_projects_table.php
+--   database/migrations/2026_06_05_000004_create_creator_project_bids_table.php
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- ── creator_projects ───────────────────────────────────────────────────────────
+CREATE TABLE `creator_projects` (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT,
+  `firm_id`          BIGINT        NOT NULL,
+  `title`            VARCHAR(255)  NOT NULL,
+  `slug`             VARCHAR(300)  NOT NULL,
+  `description`      TEXT          NOT NULL,
+  `category`         VARCHAR(100)  NOT NULL,
+  `budget_type`      ENUM('fixed','range','negotiable') NOT NULL DEFAULT 'fixed',
+  `budget_min`       DECIMAL(12,2) NULL,
+  `budget_max`       DECIMAL(12,2) NULL,
+  `delivery_days`    SMALLINT UNSIGNED NULL,
+  `skills_required`  JSON          NULL,
+  `attachments`      JSON          NULL,
+  `status`           ENUM('draft','published','closed','cancelled') NOT NULL DEFAULT 'draft',
+  `published_at`     DATETIME      NULL,
+  `closed_at`        DATETIME      NULL,
+  `created_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_creator_projects_slug` (`slug`),
+  KEY `idx_firm_status`     (`firm_id`, `status`),
+  KEY `idx_status_category` (`status`, `category`),
+  KEY `idx_published_at`    (`published_at`),
+  CONSTRAINT `fk_creator_projects_firm` FOREIGN KEY (`firm_id`)
+    REFERENCES `firm_profiles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK: DROP TABLE IF EXISTS `creator_projects`;
+
+
+-- ── creator_project_bids ───────────────────────────────────────────────────────
+CREATE TABLE `creator_project_bids` (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT,
+  `project_id`       BIGINT        NOT NULL,
+  `creator_id`       BIGINT        NOT NULL COMMENT 'users.id of the bidding creator',
+  `bid_amount`       DECIMAL(12,2) NOT NULL,
+  `delivery_days`    SMALLINT UNSIGNED NOT NULL,
+  `proposal`         TEXT          NOT NULL,
+  `portfolio_links`  JSON          NULL,
+  `status`           ENUM('pending','shortlisted','selected','rejected','withdrawn') NOT NULL DEFAULT 'pending',
+  `created_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_project_creator` (`project_id`, `creator_id`),
+  KEY `idx_creator_status` (`creator_id`, `status`),
+  KEY `idx_project_status` (`project_id`, `status`),
+  CONSTRAINT `fk_cpb_project` FOREIGN KEY (`project_id`)
+    REFERENCES `creator_projects` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_cpb_creator` FOREIGN KEY (`creator_id`)
+    REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK: DROP TABLE IF EXISTS `creator_project_bids`;
+
+
+-- ============================================================
+-- Phase 3: Creator Acceptance Workflow (2026-06-05)
+-- ============================================================
+
+-- Alter bid status enum: add creator_declined
+ALTER TABLE `creator_project_bids`
+  MODIFY COLUMN `status`
+    ENUM('pending','shortlisted','selected','rejected','withdrawn','creator_declined')
+    NOT NULL DEFAULT 'pending';
+-- ROLLBACK: MODIFY back to original 5-value enum (remove creator_declined)
+
+-- creator_engagements: accepted project contracts
+CREATE TABLE `creator_engagements` (
+  `id`                      BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `creator_requirement_id`  BIGINT UNSIGNED NOT NULL,
+  `bid_id`                  BIGINT UNSIGNED NOT NULL,
+  `creator_id`              BIGINT UNSIGNED NOT NULL,
+  `firm_id`                 BIGINT UNSIGNED NOT NULL,
+  `accepted_bid_amount`     DECIMAL(12,2)   NOT NULL,
+  `delivery_days`           SMALLINT UNSIGNED NOT NULL DEFAULT 7,
+  `status` ENUM(
+    'awaiting_payment','payment_pending','active',
+    'submitted','revision_requested','approved',
+    'payout_pending','completed','cancelled'
+  ) NOT NULL DEFAULT 'awaiting_payment',
+  `creator_accepted_at`     TIMESTAMP NULL,
+  `created_at`              TIMESTAMP NULL,
+  `updated_at`              TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_engagement_bid`      (`bid_id`),
+  KEY `idx_ce_creator_status`         (`creator_id`, `status`),
+  KEY `idx_ce_firm_status`            (`firm_id`, `status`),
+  KEY `idx_ce_req`                    (`creator_requirement_id`),
+  CONSTRAINT `fk_ce_req` FOREIGN KEY (`creator_requirement_id`)
+    REFERENCES `creator_projects`(`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ce_bid` FOREIGN KEY (`bid_id`)
+    REFERENCES `creator_project_bids`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `creator_engagements`;
+
+-- creator_marketplace_notifications: in-app notifications
+CREATE TABLE `creator_marketplace_notifications` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`     BIGINT UNSIGNED NOT NULL,
+  `type`        VARCHAR(80)     NOT NULL,
+  `title`       VARCHAR(255)    NOT NULL,
+  `body`        TEXT            NULL,
+  `data`        JSON            NULL,
+  `read_at`     TIMESTAMP       NULL,
+  `created_at`  TIMESTAMP       NULL,
+  `updated_at`  TIMESTAMP       NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_cmn_user_unread`  (`user_id`, `read_at`),
+  KEY `idx_cmn_user_created` (`user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `creator_marketplace_notifications`;

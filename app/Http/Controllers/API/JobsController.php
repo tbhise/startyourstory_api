@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\Notifications\EmailNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -1408,6 +1409,29 @@ class JobsController extends Controller
             ];
             /*
         |--------------------------------------------------------------------------
+        | Send Interview Scheduled Email (queued)
+        |--------------------------------------------------------------------------
+        */
+            try {
+                $interviewDateFormatted = date('D, d M Y \a\t h:i A', strtotime($request->interview_date));
+                app(EmailNotificationService::class)->sendInterviewScheduled(
+                    $updatedApplication->email,
+                    $updatedApplication->name,
+                    $firm->firm_name,
+                    $updatedApplication->job_title,
+                    $interviewDateFormatted,
+                    $request->interview_mode,
+                    $request->interview_note,
+                    (int) $applicationId
+                );
+            } catch (\Throwable $e) {
+                Log::error('Failed to queue interview scheduled email', [
+                    'application_id' => $applicationId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            /*
+        |--------------------------------------------------------------------------
         | Success Response
         |--------------------------------------------------------------------------
         */
@@ -1839,6 +1863,59 @@ class JobsController extends Controller
                 'created_at' =>
                 now(),
             ]);
+            /*
+        |--------------------------------------------------------------------------
+        | Send Firm Notification Email (queued)
+        |--------------------------------------------------------------------------
+        */
+            if (in_array($request->response, ['Accepted', 'Rejected'], true)) {
+                try {
+                    $firmUser = DB::table('firm_profiles')
+                        ->join('users', 'firm_profiles.user_id', '=', 'users.id')
+                        ->where('firm_profiles.id', $application->firm_id)
+                        ->select('users.email as firm_email', 'firm_profiles.firm_name')
+                        ->first();
+
+                    $jobRecord = DB::table('jobs')
+                        ->where('id', $application->job_id)
+                        ->select('title')
+                        ->first();
+
+                    if ($firmUser && $jobRecord) {
+                        $base        = config('app.frontend_url', 'https://startyourstory.in');
+                        $viewUrl     = "{$base}/firm/applications";
+                        $emailSvc    = app(EmailNotificationService::class);
+
+                        if ($request->response === 'Accepted') {
+                            $interviewDateFormatted = date(
+                                'D, d M Y \a\t h:i A',
+                                strtotime($application->interview_date)
+                            );
+                            $emailSvc->sendInterviewAccepted(
+                                $firmUser->firm_email,
+                                $user->name,
+                                $jobRecord->title,
+                                $interviewDateFormatted,
+                                $application->interview_mode ?? '',
+                                $viewUrl
+                            );
+                        } else {
+                            $emailSvc->sendInterviewRejected(
+                                $firmUser->firm_email,
+                                $user->name,
+                                $jobRecord->title,
+                                $viewUrl
+                            );
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('Failed to queue interview response email', [
+                        'application_id' => $applicationId,
+                        'response'       => $request->response,
+                        'error'          => $e->getMessage(),
+                    ]);
+                }
+            }
             /*
         |--------------------------------------------------------------------------
         | Success

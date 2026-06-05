@@ -12,9 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Vinkla\Hashids\Facades\Hashids;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Mail;
-use App\Mail\FirmApprovedMail;
-use App\Mail\FirmRejectedMail;
+use App\Services\Notifications\EmailNotificationService;
 
 class AdminController extends Controller
 {
@@ -805,7 +803,10 @@ class AdminController extends Controller
 
             $user = DB::table('users')->where('id', $firmId)->first();
             if ($user) {
-                Mail::to($user->email)->send(new FirmApprovedMail($firm->firm_name ?? $user->name));
+                app(EmailNotificationService::class)->sendFirmApproved(
+                    $user->email,
+                    $firm->firm_name ?? $user->name
+                );
             }
 
             DB::commit();
@@ -846,7 +847,11 @@ class AdminController extends Controller
 
             $user = DB::table('users')->where('id', $firmId)->first();
             if ($user) {
-                Mail::to($user->email)->send(new FirmRejectedMail($firm->firm_name ?? $user->name, $request->reason));
+                app(EmailNotificationService::class)->sendFirmRejected(
+                    $user->email,
+                    $firm->firm_name ?? $user->name,
+                    $request->reason ?? ''
+                );
             }
 
             DB::commit();

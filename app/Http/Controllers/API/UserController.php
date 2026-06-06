@@ -434,6 +434,7 @@ class UserController extends Controller
 
     public function dismissApplyLimitModal(Request $request)
     {
+        try {
         $token = $request->cookie('auth_token');
         if (!$token) {
             return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
@@ -448,6 +449,10 @@ class UserController extends Controller
             ->update(['apply_limit_modal_dismissed' => 1, 'updated_at' => now()]);
 
         return response()->json(['status' => true, 'message' => 'Dismissed.']);
+        } catch (\Exception $e) {
+            Log::error('UserController@dismissApplyLimitModal: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function updateDirectoryVisibility(Request $request)
@@ -805,6 +810,7 @@ class UserController extends Controller
 
     public function verificationStatus(Request $request)
     {
+        try {
         $token = $request->cookie('auth_token');
 
         if (!$token) {
@@ -836,6 +842,10 @@ class UserController extends Controller
             'email' => $user->email,
             'looking_for' => $user->looking_for,
         ]);
+        } catch (\Exception $e) {
+            Log::error('UserController@verificationStatus: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
 

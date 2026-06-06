@@ -203,6 +203,7 @@ class WalletController extends Controller
                 ->where('status', 'pending')
                 ->delete();
 
+            DB::beginTransaction();
             $rechargeId = DB::table('wallet_recharges')->insertGetId([
                 'user_id'        => $user->id,
                 'amount'         => $amount,
@@ -225,6 +226,7 @@ class WalletController extends Controller
                 ->where('id', $rechargeId)
                 ->update(['gateway_order_id' => $order['id'], 'updated_at' => now()]);
 
+            DB::commit();
             return response()->json([
                 'status'  => true,
                 'message' => 'Order created',
@@ -236,6 +238,7 @@ class WalletController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('WalletController@createOrder: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => $e->getMessage()], 500);
         }
@@ -273,6 +276,7 @@ class WalletController extends Controller
 
             $payment = $api->payment->fetch($request->razorpay_payment_id);
 
+            DB::beginTransaction();
             DB::table('wallet_recharges')
                 ->where('id', $recharge->id)
                 ->update([
@@ -288,6 +292,7 @@ class WalletController extends Controller
 
             WalletHelper::credit($user->id, (float) $recharge->amount, $recharge->id);
 
+            DB::commit();
             $wallet = WalletHelper::getOrCreate($user->id);
 
             return response()->json([
@@ -298,6 +303,7 @@ class WalletController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('WalletController@verifyPayment: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Payment verification failed'], 500);
         }

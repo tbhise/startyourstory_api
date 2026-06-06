@@ -25,6 +25,7 @@ use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
 use App\Http\Controllers\API\PublicController;
 use App\Http\Controllers\API\AdminSettingsController;
+use App\Http\Controllers\API\AdminUserController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
@@ -117,6 +118,13 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 Route::post('/admin/login',   [AdminController::class, 'login']);
 Route::get('/admin/me',       [AdminController::class, 'me']);
 Route::post('/admin/logout',  [AdminController::class, 'logout']);
+
+// Admin — admin user management (CRUD)
+Route::get('/admin/users',                        [AdminUserController::class, 'index']);
+Route::post('/admin/users',                       [AdminUserController::class, 'store']);
+Route::post('/admin/users/{id}',                  [AdminUserController::class, 'update']);
+Route::delete('/admin/users/{id}',                [AdminUserController::class, 'destroy']);
+Route::post('/admin/users/{id}/toggle-active',    [AdminUserController::class, 'toggleActive']);
 
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);

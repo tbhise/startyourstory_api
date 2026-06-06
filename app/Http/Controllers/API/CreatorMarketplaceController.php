@@ -22,66 +22,71 @@ class CreatorMarketplaceController extends Controller
 
     public function getDashboardStats(Request $request): JsonResponse
     {
-        $user     = $request->attributes->get('auth_user');
-        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        try {
+            $user     = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
-        if (! $firmProfile) {
-            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
-        }
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
 
-        $firmId = $firmProfile->id;
+            $firmId = $firmProfile->id;
 
-        $activeProjects    = DB::table('creator_projects')
-            ->where('firm_id', $firmId)
-            ->where('status', 'published')
-            ->count();
-
-        $openProjects      = DB::table('creator_projects')
-            ->where('firm_id', $firmId)
-            ->whereIn('status', ['draft', 'published'])
-            ->count();
-
-        $completedProjects = DB::table('creator_projects')
-            ->where('firm_id', $firmId)
-            ->where('status', 'closed')
-            ->count();
-
-        $totalBids = DB::table('creator_project_bids')
-            ->join('creator_projects', 'creator_project_bids.project_id', '=', 'creator_projects.id')
-            ->where('creator_projects.firm_id', $firmId)
-            ->count();
-
-        $selectedCreators = DB::table('creator_project_bids')
-            ->join('creator_projects', 'creator_project_bids.project_id', '=', 'creator_projects.id')
-            ->where('creator_projects.firm_id', $firmId)
-            ->where('creator_project_bids.status', 'selected')
-            ->count();
-
-        $recentProjects = DB::table('creator_projects')
-            ->where('firm_id', $firmId)
-            ->whereNotIn('status', ['cancelled'])
-            ->orderByDesc('created_at')
-            ->limit(5)
-            ->get(['id', 'title', 'category', 'status', 'budget_type', 'budget_min', 'budget_max', 'delivery_days', 'created_at']);
-
-        foreach ($recentProjects as $p) {
-            $p->bid_count = DB::table('creator_project_bids')
-                ->where('project_id', $p->id)
+            $activeProjects    = DB::table('creator_projects')
+                ->where('firm_id', $firmId)
+                ->where('status', 'published')
                 ->count();
-        }
 
-        return response()->json([
-            'status'  => true,
-            'message' => 'Dashboard stats loaded',
-            'data'    => [
-                'active_projects'    => $activeProjects,
-                'open_projects'      => $openProjects,
-                'total_bids'         => $totalBids,
-                'selected_creators'  => $selectedCreators,
-                'completed_projects' => $completedProjects,
-                'recent_projects'    => $recentProjects,
-            ],
-        ]);
+            $openProjects      = DB::table('creator_projects')
+                ->where('firm_id', $firmId)
+                ->whereIn('status', ['draft', 'published'])
+                ->count();
+
+            $completedProjects = DB::table('creator_projects')
+                ->where('firm_id', $firmId)
+                ->where('status', 'closed')
+                ->count();
+
+            $totalBids = DB::table('creator_project_bids')
+                ->join('creator_projects', 'creator_project_bids.project_id', '=', 'creator_projects.id')
+                ->where('creator_projects.firm_id', $firmId)
+                ->count();
+
+            $selectedCreators = DB::table('creator_project_bids')
+                ->join('creator_projects', 'creator_project_bids.project_id', '=', 'creator_projects.id')
+                ->where('creator_projects.firm_id', $firmId)
+                ->where('creator_project_bids.status', 'selected')
+                ->count();
+
+            $recentProjects = DB::table('creator_projects')
+                ->where('firm_id', $firmId)
+                ->whereNotIn('status', ['cancelled'])
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get(['id', 'title', 'category', 'status', 'budget_type', 'budget_min', 'budget_max', 'delivery_days', 'created_at']);
+
+            foreach ($recentProjects as $p) {
+                $p->bid_count = DB::table('creator_project_bids')
+                    ->where('project_id', $p->id)
+                    ->count();
+            }
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Dashboard stats loaded',
+                'data'    => [
+                    'active_projects'    => $activeProjects,
+                    'open_projects'      => $openProjects,
+                    'total_bids'         => $totalBids,
+                    'selected_creators'  => $selectedCreators,
+                    'completed_projects' => $completedProjects,
+                    'recent_projects'    => $recentProjects,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getDashboardStats: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -90,60 +95,65 @@ class CreatorMarketplaceController extends Controller
 
     public function createProject(Request $request): JsonResponse
     {
-        $user = $request->attributes->get('auth_user');
-        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        try {
+            $user = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
-        if (! $firmProfile) {
-            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
-        }
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
 
-        $validator = Validator::make($request->all(), [
-            'title'           => 'required|string|max:255',
-            'description'     => 'required|string',
-            'category'        => 'required|string|max:100',
-            'budget_type'     => 'required|in:fixed,range,negotiable',
-            'budget_min'      => 'nullable|numeric|min:0',
-            'budget_max'      => 'nullable|numeric|min:0',
-            'delivery_days'   => 'nullable|integer|min:1',
-            'skills_required' => 'nullable|array',
-            'skills_required.*' => 'string|max:100',
-            'status'          => 'nullable|in:draft,published',
-        ]);
+            $validator = Validator::make($request->all(), [
+                'title'           => 'required|string|max:255',
+                'description'     => 'required|string',
+                'category'        => 'required|string|max:100',
+                'budget_type'     => 'required|in:fixed,range,negotiable',
+                'budget_min'      => 'nullable|numeric|min:0',
+                'budget_max'      => 'nullable|numeric|min:0',
+                'delivery_days'   => 'nullable|integer|min:1',
+                'skills_required' => 'nullable|array',
+                'skills_required.*' => 'string|max:100',
+                'status'          => 'nullable|in:draft,published',
+            ]);
 
-        if ($validator->fails()) {
+            if ($validator->fails()) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Validation failed',
+                    'errors'  => $validator->errors(),
+                ], 422);
+            }
+
+            $status      = $request->input('status', 'draft');
+            $publishedAt = $status === 'published' ? now() : null;
+
+            $id = DB::table('creator_projects')->insertGetId([
+                'firm_id'         => $firmProfile->id,
+                'title'           => $request->title,
+                'slug'            => $this->generateSlug($request->title),
+                'description'     => $request->description,
+                'category'        => $request->category,
+                'budget_type'     => $request->budget_type,
+                'budget_min'      => $request->budget_min,
+                'budget_max'      => $request->budget_max,
+                'delivery_days'   => $request->delivery_days,
+                'skills_required' => $request->skills_required ? json_encode($request->skills_required) : null,
+                'attachments'     => null,
+                'status'          => $status,
+                'published_at'    => $publishedAt,
+                'created_at'      => now(),
+                'updated_at'      => now(),
+            ]);
+
             return response()->json([
-                'status'  => false,
-                'message' => 'Validation failed',
-                'errors'  => $validator->errors(),
-            ], 422);
+                'status'  => true,
+                'message' => $status === 'published' ? 'Project published successfully' : 'Project saved as draft',
+                'data'    => ['id' => $id],
+            ], 201);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@createProject: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
-
-        $status      = $request->input('status', 'draft');
-        $publishedAt = $status === 'published' ? now() : null;
-
-        $id = DB::table('creator_projects')->insertGetId([
-            'firm_id'         => $firmProfile->id,
-            'title'           => $request->title,
-            'slug'            => $this->generateSlug($request->title),
-            'description'     => $request->description,
-            'category'        => $request->category,
-            'budget_type'     => $request->budget_type,
-            'budget_min'      => $request->budget_min,
-            'budget_max'      => $request->budget_max,
-            'delivery_days'   => $request->delivery_days,
-            'skills_required' => $request->skills_required ? json_encode($request->skills_required) : null,
-            'attachments'     => null,
-            'status'          => $status,
-            'published_at'    => $publishedAt,
-            'created_at'      => now(),
-            'updated_at'      => now(),
-        ]);
-
-        return response()->json([
-            'status'  => true,
-            'message' => $status === 'published' ? 'Project published successfully' : 'Project saved as draft',
-            'data'    => ['id' => $id],
-        ], 201);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -152,6 +162,7 @@ class CreatorMarketplaceController extends Controller
 
     public function updateProject(Request $request, $id): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -216,6 +227,10 @@ class CreatorMarketplaceController extends Controller
         DB::table('creator_projects')->where('id', $id)->update($updates);
 
         return response()->json(['status' => true, 'message' => 'Project updated successfully']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@updateProject: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -224,6 +239,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyProjects(Request $request): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -273,6 +289,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Projects loaded',
             'data'    => ['projects' => $projects],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMyProjects: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -281,33 +301,38 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyProjectDetails(Request $request, $id): JsonResponse
     {
-        $user = $request->attributes->get('auth_user');
-        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        try {
+            $user = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
-        if (! $firmProfile) {
-            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $project = DB::table('creator_projects')
+                ->where('id', $id)
+                ->where('firm_id', $firmProfile->id)
+                ->first();
+
+            if (! $project) {
+                return response()->json(['status' => false, 'message' => 'Project not found'], 404);
+            }
+
+            $project->skills_required = $project->skills_required ? json_decode($project->skills_required) : [];
+
+            $project->bid_stats = [
+                'total'       => DB::table('creator_project_bids')->where('project_id', $id)->count(),
+                'pending'     => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'pending')->count(),
+                'shortlisted' => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'shortlisted')->count(),
+                'selected'    => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'selected')->count(),
+                'rejected'    => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'rejected')->count(),
+            ];
+
+            return response()->json(['status' => true, 'message' => 'Project details loaded', 'data' => $project]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMyProjectDetails: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
-
-        $project = DB::table('creator_projects')
-            ->where('id', $id)
-            ->where('firm_id', $firmProfile->id)
-            ->first();
-
-        if (! $project) {
-            return response()->json(['status' => false, 'message' => 'Project not found'], 404);
-        }
-
-        $project->skills_required = $project->skills_required ? json_decode($project->skills_required) : [];
-
-        $project->bid_stats = [
-            'total'       => DB::table('creator_project_bids')->where('project_id', $id)->count(),
-            'pending'     => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'pending')->count(),
-            'shortlisted' => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'shortlisted')->count(),
-            'selected'    => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'selected')->count(),
-            'rejected'    => DB::table('creator_project_bids')->where('project_id', $id)->where('status', 'rejected')->count(),
-        ];
-
-        return response()->json(['status' => true, 'message' => 'Project details loaded', 'data' => $project]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -316,24 +341,29 @@ class CreatorMarketplaceController extends Controller
 
     public function closeProject(Request $request, $id): JsonResponse
     {
-        $user = $request->attributes->get('auth_user');
-        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        try {
+            $user = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
-        if (! $firmProfile) {
-            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            $affected = DB::table('creator_projects')
+                ->where('id', $id)
+                ->where('firm_id', $firmProfile->id)
+                ->whereNotIn('status', ['closed', 'cancelled'])
+                ->update(['status' => 'closed', 'closed_at' => now(), 'updated_at' => now()]);
+
+            if (! $affected) {
+                return response()->json(['status' => false, 'message' => 'Project not found or already closed'], 404);
+            }
+
+            return response()->json(['status' => true, 'message' => 'Project closed successfully']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@closeProject: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
-
-        $affected = DB::table('creator_projects')
-            ->where('id', $id)
-            ->where('firm_id', $firmProfile->id)
-            ->whereNotIn('status', ['closed', 'cancelled'])
-            ->update(['status' => 'closed', 'closed_at' => now(), 'updated_at' => now()]);
-
-        if (! $affected) {
-            return response()->json(['status' => false, 'message' => 'Project not found or already closed'], 404);
-        }
-
-        return response()->json(['status' => true, 'message' => 'Project closed successfully']);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -342,6 +372,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getProjectBids(Request $request, $projectId): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -393,6 +424,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Bids loaded',
             'data'    => ['bids' => $bids, 'project' => $project],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getProjectBids: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -401,6 +436,7 @@ class CreatorMarketplaceController extends Controller
 
     public function updateBidStatus(Request $request, $bidId): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -442,6 +478,10 @@ class CreatorMarketplaceController extends Controller
             'status'  => true,
             'message' => 'Bid status updated to ' . $request->status,
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@updateBidStatus: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -450,6 +490,7 @@ class CreatorMarketplaceController extends Controller
 
     public function browseProjects(Request $request): JsonResponse
     {
+        try {
         $query = DB::table('creator_projects')
             ->join('firm_profiles', 'creator_projects.firm_id', '=', 'firm_profiles.id')
             ->where('creator_projects.status', 'published');
@@ -508,6 +549,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Projects loaded',
             'data'    => ['projects' => $projects],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@browseProjects: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -516,6 +561,7 @@ class CreatorMarketplaceController extends Controller
 
     public function publicProjectDetails(Request $request, $id): JsonResponse
     {
+        try {
         $project = DB::table('creator_projects')
             ->join('firm_profiles', 'creator_projects.firm_id', '=', 'firm_profiles.id')
             ->where('creator_projects.id', $id)
@@ -562,6 +608,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Project details loaded',
             'data'    => ['project' => $project, 'my_bid' => $myBid],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@publicProjectDetails: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -570,6 +620,7 @@ class CreatorMarketplaceController extends Controller
 
     public function submitBid(Request $request, $projectId): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -625,6 +676,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Bid submitted successfully',
             'data'    => ['id' => $id],
         ], 201);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@submitBid: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -633,6 +688,7 @@ class CreatorMarketplaceController extends Controller
 
     public function withdrawBid(Request $request, $bidId): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -647,6 +703,10 @@ class CreatorMarketplaceController extends Controller
         }
 
         return response()->json(['status' => true, 'message' => 'Bid withdrawn successfully']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@withdrawBid: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -655,6 +715,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyBids(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -692,6 +753,10 @@ class CreatorMarketplaceController extends Controller
             'message' => 'Bids loaded',
             'data'    => ['bids' => $bids],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMyBids: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -700,51 +765,60 @@ class CreatorMarketplaceController extends Controller
 
     public function acceptCreator(Request $request, $bidId): JsonResponse
     {
-        $user        = $request->attributes->get('auth_user');
-        $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        try {
+            $user        = $request->attributes->get('auth_user');
+            $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
-        if (! $firmProfile) {
-            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
-        }
+            if (! $firmProfile) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
 
-        $bid = DB::table('creator_project_bids as b')
-            ->join('creator_projects as p', 'p.id', '=', 'b.project_id')
-            ->where('b.id', $bidId)
-            ->where('p.firm_id', $firmProfile->id)
-            ->select(['b.id', 'b.status', 'b.creator_id', 'b.project_id', 'p.title as project_title'])
-            ->first();
+            $bid = DB::table('creator_project_bids as b')
+                ->join('creator_projects as p', 'p.id', '=', 'b.project_id')
+                ->where('b.id', $bidId)
+                ->where('p.firm_id', $firmProfile->id)
+                ->select(['b.id', 'b.status', 'b.creator_id', 'b.project_id', 'p.title as project_title'])
+                ->first();
 
-        if (! $bid) {
-            return response()->json(['status' => false, 'message' => 'Bid not found'], 404);
-        }
+            if (! $bid) {
+                return response()->json(['status' => false, 'message' => 'Bid not found'], 404);
+            }
 
-        if (in_array($bid->status, ['withdrawn', 'creator_declined'])) {
-            return response()->json(['status' => false, 'message' => 'Cannot accept this bid'], 422);
-        }
+            if (in_array($bid->status, ['withdrawn', 'creator_declined'])) {
+                return response()->json(['status' => false, 'message' => 'Cannot accept this bid'], 422);
+            }
 
-        $alreadySelected = $bid->status === 'selected';
+            $alreadySelected = $bid->status === 'selected';
 
-        DB::table('creator_project_bids')
-            ->where('id', $bidId)
-            ->update(['status' => 'selected', 'updated_at' => now()]);
+            DB::beginTransaction();
 
-        if (! $alreadySelected) {
-            DB::table('creator_marketplace_notifications')->insert([
-                'user_id'    => $bid->creator_id,
-                'type'       => 'bid_selected',
-                'title'      => "You've been selected!",
-                'body'       => "A firm selected you for \"{$bid->project_title}\". Review the contract and respond.",
-                'data'       => json_encode(['bid_id' => (int) $bidId, 'project_id' => (int) $bid->project_id]),
-                'read_at'    => null,
-                'created_at' => now(),
-                'updated_at' => now(),
+            DB::table('creator_project_bids')
+                ->where('id', $bidId)
+                ->update(['status' => 'selected', 'updated_at' => now()]);
+
+            if (! $alreadySelected) {
+                DB::table('creator_marketplace_notifications')->insert([
+                    'user_id'    => $bid->creator_id,
+                    'type'       => 'bid_selected',
+                    'title'      => "You've been selected!",
+                    'body'       => "A firm selected you for \"{$bid->project_title}\". Review the contract and respond.",
+                    'data'       => json_encode(['bid_id' => (int) $bidId, 'project_id' => (int) $bid->project_id]),
+                    'read_at'    => null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            DB::commit();
+            return response()->json([
+                'status'  => true,
+                'message' => $alreadySelected ? 'Creator already accepted' : 'Creator accepted. Notification sent.',
             ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('CreatorMarketplace@acceptCreator: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
-
-        return response()->json([
-            'status'  => true,
-            'message' => $alreadySelected ? 'Creator already accepted' : 'Creator accepted. Notification sent.',
-        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -753,6 +827,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getSelectedBidDetails(Request $request, $bidId): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -784,6 +859,10 @@ class CreatorMarketplaceController extends Controller
             'status' => true,
             'data'   => ['bid' => $bid, 'engagement' => $engagement],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getSelectedBidDetails: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -830,59 +909,69 @@ class CreatorMarketplaceController extends Controller
 
         $firmUserId = DB::table('firm_profiles')->where('id', $bid->firm_id)->value('user_id');
 
-        if ($request->action === 'accept') {
-            $engagementId = DB::table('creator_engagements')->insertGetId([
-                'creator_requirement_id' => $bid->project_id,
-                'bid_id'                 => $bid->id,
-                'creator_id'             => $user->id,
-                'firm_id'                => $bid->firm_id,
-                'accepted_bid_amount'    => $bid->bid_amount,
-                'delivery_days'          => $bid->delivery_days ?? $bid->project_delivery_days ?? 7,
-                'status'                 => 'awaiting_payment',
-                'creator_accepted_at'    => now(),
-                'created_at'             => now(),
-                'updated_at'             => now(),
-            ]);
+        try {
+            DB::beginTransaction();
+
+            if ($request->action === 'accept') {
+                $engagementId = DB::table('creator_engagements')->insertGetId([
+                    'creator_requirement_id' => $bid->project_id,
+                    'bid_id'                 => $bid->id,
+                    'creator_id'             => $user->id,
+                    'firm_id'                => $bid->firm_id,
+                    'accepted_bid_amount'    => $bid->bid_amount,
+                    'delivery_days'          => $bid->delivery_days ?? $bid->project_delivery_days ?? 7,
+                    'status'                 => 'awaiting_payment',
+                    'creator_accepted_at'    => now(),
+                    'created_at'             => now(),
+                    'updated_at'             => now(),
+                ]);
+
+                if ($firmUserId) {
+                    DB::table('creator_marketplace_notifications')->insert([
+                        'user_id'    => $firmUserId,
+                        'type'       => 'creator_accepted',
+                        'title'      => 'Creator accepted your project!',
+                        'body'       => "A creator accepted \"{$bid->project_title}\". Review the contract.",
+                        'data'       => json_encode(['engagement_id' => $engagementId, 'bid_id' => (int) $bidId]),
+                        'read_at'    => null,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+
+                DB::commit();
+                return response()->json([
+                    'status'  => true,
+                    'message' => 'Project accepted! Contract created.',
+                    'data'    => ['engagement_id' => $engagementId],
+                ]);
+            }
+
+            // decline
+            DB::table('creator_project_bids')
+                ->where('id', $bidId)
+                ->update(['status' => 'creator_declined', 'updated_at' => now()]);
 
             if ($firmUserId) {
                 DB::table('creator_marketplace_notifications')->insert([
                     'user_id'    => $firmUserId,
-                    'type'       => 'creator_accepted',
-                    'title'      => 'Creator accepted your project!',
-                    'body'       => "A creator accepted \"{$bid->project_title}\". Review the contract.",
-                    'data'       => json_encode(['engagement_id' => $engagementId, 'bid_id' => (int) $bidId]),
+                    'type'       => 'creator_declined',
+                    'title'      => 'Creator declined the project',
+                    'body'       => "A creator declined \"{$bid->project_title}\".",
+                    'data'       => json_encode(['bid_id' => (int) $bidId, 'project_id' => (int) $bid->project_id]),
                     'read_at'    => null,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
             }
 
-            return response()->json([
-                'status'  => true,
-                'message' => 'Project accepted! Contract created.',
-                'data'    => ['engagement_id' => $engagementId],
-            ]);
+            DB::commit();
+            return response()->json(['status' => true, 'message' => 'Project declined.']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('CreatorMarketplace@creatorRespondToBid: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
-
-        // decline
-        DB::table('creator_project_bids')
-            ->where('id', $bidId)
-            ->update(['status' => 'creator_declined', 'updated_at' => now()]);
-
-        if ($firmUserId) {
-            DB::table('creator_marketplace_notifications')->insert([
-                'user_id'    => $firmUserId,
-                'type'       => 'creator_declined',
-                'title'      => 'Creator declined the project',
-                'body'       => "A creator declined \"{$bid->project_title}\".",
-                'data'       => json_encode(['bid_id' => (int) $bidId, 'project_id' => (int) $bid->project_id]),
-                'read_at'    => null,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        return response()->json(['status' => true, 'message' => 'Project declined.']);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -891,6 +980,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getEngagement(Request $request, $id): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
 
         $engagement = DB::table('creator_engagements as e')
@@ -962,6 +1052,10 @@ class CreatorMarketplaceController extends Controller
                 'payment'      => $paymentData,
             ],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getEngagement: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -970,6 +1064,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyEngagements(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -990,6 +1085,10 @@ class CreatorMarketplaceController extends Controller
             'status' => true,
             'data'   => ['engagements' => $engagements],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMyEngagements: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -998,6 +1097,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getFirmEngagements(Request $request): JsonResponse
     {
+        try {
         $user        = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -1022,6 +1122,10 @@ class CreatorMarketplaceController extends Controller
             'status' => true,
             'data'   => ['engagements' => $engagements],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getFirmEngagements: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1030,6 +1134,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMarketplaceNotifications(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -1052,10 +1157,15 @@ class CreatorMarketplaceController extends Controller
             'status' => true,
             'data'   => ['notifications' => $notifications, 'unread_count' => $unreadCount],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMarketplaceNotifications: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function markNotificationRead(Request $request, $id): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -1065,10 +1175,15 @@ class CreatorMarketplaceController extends Controller
             ->update(['read_at' => now(), 'updated_at' => now()]);
 
         return response()->json(['status' => true]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@markNotificationRead: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function markAllNotificationsRead(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -1078,6 +1193,10 @@ class CreatorMarketplaceController extends Controller
             ->update(['read_at' => now(), 'updated_at' => now()]);
 
         return response()->json(['status' => true, 'message' => 'All notifications marked as read']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@markAllNotificationsRead: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1108,6 +1227,8 @@ class CreatorMarketplaceController extends Controller
             }
 
             // Cancel any stale pending Razorpay orders before creating a new one
+            DB::beginTransaction();
+
             DB::table('creator_engagement_payments')
                 ->where('engagement_id', $engagementId)
                 ->where('payment_method', 'razorpay')
@@ -1121,6 +1242,7 @@ class CreatorMarketplaceController extends Controller
                 ->first();
 
             if ($blocking) {
+                DB::rollBack();
                 return response()->json(['status' => false, 'message' => 'A payment is already in progress'], 422);
             }
 
@@ -1143,6 +1265,7 @@ class CreatorMarketplaceController extends Controller
                 'updated_at'       => now(),
             ]);
 
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'data'   => [
@@ -1154,6 +1277,7 @@ class CreatorMarketplaceController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@initiatePayment: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Could not create payment order'], 500);
         }
@@ -1209,6 +1333,8 @@ class CreatorMarketplaceController extends Controller
 
             $paymentDetails = $gateway->fetchPayment($request->razorpay_payment_id);
 
+            DB::beginTransaction();
+
             DB::table('creator_engagement_payments')
                 ->where('id', $payment->id)
                 ->update([
@@ -1238,8 +1364,10 @@ class CreatorMarketplaceController extends Controller
                 'updated_at' => now(),
             ]);
 
+            DB::commit();
             return response()->json(['status' => true, 'message' => 'Payment verified. Project is now active!']);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@verifyEngagementPayment: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Verification error'], 500);
         }
@@ -1325,6 +1453,8 @@ class CreatorMarketplaceController extends Controller
                 ->whereIn('status', ['pending', 'awaiting_verification'])
                 ->first();
 
+            DB::beginTransaction();
+
             if ($existing) {
                 DB::table('creator_engagement_payments')
                     ->where('id', $existing->id)
@@ -1361,11 +1491,13 @@ class CreatorMarketplaceController extends Controller
                 ->where('id', $engagementId)
                 ->update(['status' => 'payment_pending', 'updated_at' => now()]);
 
+            DB::commit();
             return response()->json([
                 'status'  => true,
                 'message' => 'Payment proof submitted. Admin will review within 24 hours.',
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@submitManualPayment: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
@@ -1377,6 +1509,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getEngagementPayment(Request $request, $engagementId): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
 
         $engagement = DB::table('creator_engagements')->where('id', $engagementId)->first();
@@ -1423,6 +1556,10 @@ class CreatorMarketplaceController extends Controller
         }
 
         return response()->json(['status' => true, 'data' => ['payment' => $data]]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getEngagementPayment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1431,6 +1568,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getWorkspace(Request $request, $id): JsonResponse
     {
+        try {
         $user = $request->attributes->get('auth_user');
 
         $engagement = DB::table('creator_engagements')->where('id', $id)->first();
@@ -1527,6 +1665,10 @@ class CreatorMarketplaceController extends Controller
                 'timeline'    => $timeline,
             ],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getWorkspace: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1570,6 +1712,8 @@ class CreatorMarketplaceController extends Controller
 
             $existing = DB::table('engagement_briefs')->where('engagement_id', $id)->first();
             $isNew    = ! $existing;
+
+            DB::beginTransaction();
 
             if ($existing) {
                 DB::table('engagement_briefs')->where('id', $existing->id)->update([
@@ -1623,8 +1767,10 @@ class CreatorMarketplaceController extends Controller
                 );
             }
 
+            DB::commit();
             return response()->json(['status' => true, 'message' => $isNew ? 'Brief published.' : 'Brief updated.']);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@saveBrief: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
@@ -1636,6 +1782,7 @@ class CreatorMarketplaceController extends Controller
 
     public function deleteBriefAttachment(Request $request, $id, $attachmentId): JsonResponse
     {
+        try {
         $user        = $request->attributes->get('auth_user');
         $firmProfile = DB::table('firm_profiles')->where('user_id', $user->id)->first();
 
@@ -1666,6 +1813,10 @@ class CreatorMarketplaceController extends Controller
         DB::table('engagement_brief_attachments')->where('id', $attachmentId)->delete();
 
         return response()->json(['status' => true, 'message' => 'Attachment deleted.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@deleteBriefAttachment: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1711,6 +1862,9 @@ class CreatorMarketplaceController extends Controller
 
             $isRevision   = $engagement->status === 'revision_requested';
             $round        = DB::table('engagement_submissions')->where('engagement_id', $id)->count() + 1;
+
+            DB::beginTransaction();
+
             $submissionId = DB::table('engagement_submissions')->insertGetId([
                 'engagement_id'  => $id,
                 'creator_id'     => $user->id,
@@ -1788,8 +1942,10 @@ class CreatorMarketplaceController extends Controller
                 );
             }
 
+            DB::commit();
             return response()->json(['status' => true, 'message' => 'Work submitted successfully.']);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@submitDeliverable: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
@@ -1835,6 +1991,8 @@ class CreatorMarketplaceController extends Controller
                 ->orderByDesc('revision_round')
                 ->first();
 
+            DB::beginTransaction();
+
             if ($latest) {
                 DB::table('engagement_submissions')->where('id', $latest->id)->update([
                     'status'         => 'revision_requested',
@@ -1861,8 +2019,10 @@ class CreatorMarketplaceController extends Controller
                 ['engagement_id' => (int) $id]
             );
 
+            DB::commit();
             return response()->json(['status' => true, 'message' => 'Revision requested.']);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@requestRevision: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
@@ -1900,6 +2060,8 @@ class CreatorMarketplaceController extends Controller
                 ->orderByDesc('revision_round')
                 ->first();
 
+            DB::beginTransaction();
+
             if ($latest) {
                 DB::table('engagement_submissions')->where('id', $latest->id)->update([
                     'status'      => 'approved',
@@ -1925,8 +2087,10 @@ class CreatorMarketplaceController extends Controller
                 ['engagement_id' => (int) $id]
             );
 
+            DB::commit();
             return response()->json(['status' => true, 'message' => 'Deliverable approved.']);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('CreatorMarketplace@approveDeliverable: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
@@ -1938,6 +2102,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getBankDetails(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user    = $request->attributes->get('auth_user');
         $details = DB::table('creator_bank_details')
@@ -1977,10 +2142,15 @@ class CreatorMarketplaceController extends Controller
                 ],
             ],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getBankDetails: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function saveBankDetails(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -2025,10 +2195,15 @@ class CreatorMarketplaceController extends Controller
         }
 
         return response()->json(['status' => true, 'message' => 'Bank details saved.']);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@saveBankDetails: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function getPayoutStatus(Request $request, $engagementId): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -2065,6 +2240,10 @@ class CreatorMarketplaceController extends Controller
                 'has_bank_details' => $hasBankDetails,
             ],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getPayoutStatus: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2073,6 +2252,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getBidDetail(Request $request, $bidId): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -2122,6 +2302,10 @@ class CreatorMarketplaceController extends Controller
             'status' => true,
             'data'   => ['bid' => $bid],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getBidDetail: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2130,6 +2314,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyEarnings(Request $request): JsonResponse
     {
+        try {
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
@@ -2165,6 +2350,10 @@ class CreatorMarketplaceController extends Controller
                 'active_projects'   => $activeCount,
             ],
         ]);
+        } catch (\Exception $e) {
+            Log::error('CreatorMarketplace@getMyEarnings: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

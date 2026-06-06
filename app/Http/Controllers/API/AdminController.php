@@ -277,6 +277,7 @@ class AdminController extends Controller
                     'message' => 'Firm not found'
                 ]);
             }
+            DB::beginTransaction();
             DB::table('firm_subscriptions')
                 ->where('firm_id', $request->firm_id)
                 ->where('status', 'active')
@@ -302,6 +303,7 @@ class AdminController extends Controller
                 ->where('id', $firm->id)
                 ->update(['is_premium' => $isPremiumPlan ? 1 : 0, 'updated_at' => now()]);
 
+            DB::commit();
             $subscription =
                 DB::table('firm_subscriptions')
                 ->where('id', $subscriptionId)
@@ -322,6 +324,7 @@ class AdminController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error(
                 'Add Subscription Error',
                 [

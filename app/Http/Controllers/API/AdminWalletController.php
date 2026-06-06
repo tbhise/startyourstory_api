@@ -104,6 +104,7 @@ class AdminWalletController extends Controller
                 return response()->json(['status' => false, 'message' => 'Already approved']);
             }
 
+            DB::beginTransaction();
             DB::table('wallet_recharges')
                 ->where('id', $id)
                 ->update([
@@ -127,6 +128,7 @@ class AdminWalletController extends Controller
                 "Your wallet has been credited with ₹{$recharge->amount}. Available balance updated."
             );
 
+            DB::commit();
             $wallet = WalletHelper::getOrCreate($recharge->user_id);
 
             return response()->json([
@@ -135,6 +137,7 @@ class AdminWalletController extends Controller
                 'data'    => ['available_balance' => (float) $wallet->available_balance],
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('AdminWalletController@approveRecharge: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }

@@ -100,7 +100,7 @@ class PaymentController extends Controller
                 ->where('status', 'pending')
                 ->delete();
 
-
+            DB::beginTransaction();
 
             /*
         |--------------------------------------------------------------------------
@@ -160,6 +160,7 @@ class PaymentController extends Controller
         | Return Response
         |--------------------------------------------------------------------------
         */
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'id' => $order['id'],
@@ -168,6 +169,7 @@ class PaymentController extends Controller
                 'subscription_id' => $subscriptionId,
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Create Order Error', [
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),
@@ -244,6 +246,7 @@ class PaymentController extends Controller
         | Activate Subscription
         |--------------------------------------------------------------------------
         */
+            DB::beginTransaction();
             DB::table('firm_subscriptions')
                 ->where('id', $subscription->id)
                 ->update([
@@ -286,11 +289,13 @@ class PaymentController extends Controller
             ]);
 
 
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'message' => 'Payment verified successfully',
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Verify Payment Error', [
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),
@@ -313,6 +318,7 @@ class PaymentController extends Controller
                 )
                 ->first();
 
+            DB::beginTransaction();
             if ($subscription) {
 
                 DB::table('firm_subscriptions')
@@ -338,11 +344,12 @@ class PaymentController extends Controller
                 'created_at' => now(),
             ]);
 
+            DB::commit();
             return response()->json([
                 'status' => true,
             ]);
         } catch (\Exception $e) {
-
+            DB::rollBack();
             Log::error('Payment Failure Error', [
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),

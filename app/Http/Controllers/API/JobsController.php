@@ -84,6 +84,7 @@ class JobsController extends Controller
                 ]);
             }
 
+            DB::beginTransaction();
             $applicationId = DB::table('applications')->insertGetId([
                 'job_id'                => $id,
                 'student_id'            => $user->id,
@@ -112,11 +113,13 @@ class JobsController extends Controller
                     ' applied for ' .
                     $job->title . '.'
             );
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'message' => 'Job applied successfully'
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error("Apply Job API Error : " . $e->getMessage());
             return response()->json([
                 'status' => false,
@@ -1219,6 +1222,7 @@ class JobsController extends Controller
         | Update Application
         |--------------------------------------------------------------------------
         */
+            DB::beginTransaction();
             DB::table('applications')
                 ->where('id', $applicationId)
                 ->update([
@@ -1443,6 +1447,7 @@ class JobsController extends Controller
         | Success Response
         |--------------------------------------------------------------------------
         */
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'message' =>
@@ -1458,6 +1463,7 @@ class JobsController extends Controller
                 'message' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Schedule Interview API Error', [
                 'message' => $e->getMessage(),
                 'line' => $e->getLine(),
@@ -1801,6 +1807,7 @@ class JobsController extends Controller
                 $updateData['recruiter_status'] =
                     'Interview Rejected';
             }
+            DB::beginTransaction();
             DB::table('applications')
                 ->where('id', $applicationId)
                 ->update($updateData);
@@ -1929,6 +1936,7 @@ class JobsController extends Controller
         | Success
         |--------------------------------------------------------------------------
         */
+            DB::commit();
             return response()->json([
                 'status' => true,
                 'message' =>
@@ -1940,6 +1948,7 @@ class JobsController extends Controller
                 'message' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Respond Interview API Error', [
                 'message' =>
                 $e->getMessage(),
@@ -1996,6 +2005,7 @@ class JobsController extends Controller
                 return response()->json(['status' => false, 'message' => 'No pending reschedule request to accept'], 422);
             }
 
+            DB::beginTransaction();
             DB::table('applications')->where('id', $applicationId)->update([
                 'recruiter_status'            => 'Interview Scheduled',
                 'student_interview_response'  => 'Pending',
@@ -2038,6 +2048,7 @@ class JobsController extends Controller
                 ]);
             }
 
+            DB::commit();
             $updated = DB::table('applications')->where('id', $applicationId)->first();
 
             return response()->json([
@@ -2048,6 +2059,7 @@ class JobsController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Accept Reschedule Error: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }

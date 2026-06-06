@@ -40,6 +40,13 @@ class JobsController extends Controller
                     'message' => 'Only students can apply for jobs'
                 ], 403);
             }
+            $lookingFor = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
+            if ($lookingFor === 'creator') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Creator students cannot apply for jobs.'
+                ], 403);
+            }
             $job = DB::table('jobs')
                 ->where('id', $id)
                 ->where('is_active', 1)
@@ -70,8 +77,9 @@ class JobsController extends Controller
             if (!$isFree && !WalletHelper::hasEnoughBalance($user->id)) {
                 return response()->json([
                     'status'               => false,
-                    'message'              => 'Insufficient wallet balance. Recharge to continue applying.',
+                    'message'              => 'Free application limit reached. Please recharge your wallet or upgrade your plan to continue applying.',
                     'insufficient_balance' => true,
+                    'free_limit_reached'   => true,
                     'application_fee'      => WalletHelper::APPLICATION_FEE,
                 ]);
             }
@@ -1945,6 +1953,103 @@ class JobsController extends Controller
                 'message' =>
                 'Unexpected server error while responding to interview.',
             ], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /applications/{id}/accept-reschedule
+    // Firm accepts student's proposed reschedule date
+    // ─────────────────────────────────────────────────────────────────────────
+    public function acceptReschedule(Request $request, $applicationId)
+    {
+        try {
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+            $user = DB::table('users')
+                ->where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+            }
+
+            $firm = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+            if (!$firm) {
+                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 403);
+            }
+
+            $application = DB::table('applications')
+                ->join('jobs', 'applications.job_id', '=', 'jobs.id')
+                ->select('applications.*', 'jobs.firm_id', 'jobs.title as job_title')
+                ->where('applications.id', $applicationId)
+                ->first();
+
+            if (!$application) {
+                return response()->json(['status' => false, 'message' => 'Application not found'], 404);
+            }
+            if ((int) $application->firm_id !== (int) $firm->id) {
+                return response()->json(['status' => false, 'message' => 'Access denied'], 403);
+            }
+            if ($application->student_interview_response !== 'Reschedule Requested') {
+                return response()->json(['status' => false, 'message' => 'No pending reschedule request to accept'], 422);
+            }
+
+            DB::table('applications')->where('id', $applicationId)->update([
+                'recruiter_status'            => 'Interview Scheduled',
+                'student_interview_response'  => 'Pending',
+                'reschedule_accepted_at'      => now(),
+                'updated_at'                  => now(),
+            ]);
+
+            DB::table('recruiter_actions')->insert([
+                'firm_id'          => $firm->id,
+                'student_id'       => $application->student_id,
+                'visible_to'       => 'student',
+                'job_id'           => $application->job_id,
+                'application_id'   => $application->id,
+                'action_type'      => 'reschedule_accepted',
+                'title'            => 'Reschedule accepted',
+                'message'          => 'The firm accepted your proposed interview date.',
+                'action_status'    => 'accepted',
+                'action_date'      => $application->interview_date,
+                'created_at'       => now(),
+            ]);
+
+            // Email to student
+            try {
+                $student = DB::table('users')->where('id', $application->student_id)->first();
+                if ($student && $application->interview_date) {
+                    $formatted = date('D, d M Y', strtotime($application->interview_date));
+                    app(EmailNotificationService::class)->sendInterviewRescheduleAccepted(
+                        $student->email,
+                        $student->name,
+                        $firm->firm_name,
+                        $application->job_title,
+                        $formatted,
+                        $application->interview_note
+                    );
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to send reschedule-accepted email', [
+                    'application_id' => $applicationId,
+                    'error'          => $e->getMessage(),
+                ]);
+            }
+
+            $updated = DB::table('applications')->where('id', $applicationId)->first();
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Reschedule accepted. Interview confirmed for the proposed date.',
+                'data'    => [
+                    'application' => $updated,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Accept Reschedule Error: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }
 }

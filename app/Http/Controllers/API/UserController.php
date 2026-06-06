@@ -164,6 +164,8 @@ class UserController extends Controller
                 'articleship_status' => 'nullable|string',
                 'preferred_location' => 'nullable|string',
                 'preferred_locations_json' => 'nullable|string',
+                'preferred_categories' => 'nullable|array',
+                'preferred_categories.*' => 'nullable|string',
                 'it_oc_status' => 'nullable|string',
                 'exposure_type' => 'nullable|string',
                 'core_department' => 'nullable|string',
@@ -266,6 +268,9 @@ class UserController extends Controller
                 'registration_type' => $registrationType,
                 'articleship_status' => $request->articleship_status,
                 'preferred_location' => json_encode($preferredLocations),
+                'preferred_categories' => $request->has('preferred_categories')
+                    ? json_encode($request->preferred_categories ?? [])
+                    : ($existingProfile->preferred_categories ?? null),
                 'it_oc_status' => $request->it_oc_status,
                 'exposure_type' => json_encode($exposureTypes),
                 'core_department' => $request->core_department,
@@ -346,6 +351,8 @@ class UserController extends Controller
             // } elseif ($request->looking_for === 'creator') {
             //     $isProfileComplete = !empty($request->city);
             // }
+            $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
+
             $isProfileComplete = false;
             $resumeExists =
                 $resumePath ||
@@ -390,11 +397,27 @@ class UserController extends Controller
                     'profile_completed' => $isProfileComplete ? 1 : 0,
                     'updated_at' => now()
                 ]);
+
+            // Determine whether to show the apply-limit awareness modal
+            $showModal = false;
+            if (
+                $isProfileComplete &&
+                !$wasAlreadyCompleted &&
+                $request->looking_for !== 'creator'
+            ) {
+                $freshProfile = DB::table('student_profiles')->where('user_id', $user->id)->first();
+                $dismissed = (bool) ($freshProfile->apply_limit_modal_dismissed ?? false);
+                if (!$dismissed) {
+                    $showModal = true;
+                }
+            }
+
             DB::commit();
             return response()->json([
-                'status' => true,
-                'message' => 'Profile updated successfully',
-                'profile_completed' => $isProfileComplete ? 1 : 0,
+                'status'               => true,
+                'message'              => 'Profile updated successfully',
+                'profile_completed'    => $isProfileComplete ? 1 : 0,
+                'show_apply_limit_modal' => $showModal,
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -405,6 +428,28 @@ class UserController extends Controller
             ]);
         }
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /dismiss-apply-limit-modal
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function dismissApplyLimitModal(Request $request)
+    {
+        $token = $request->cookie('auth_token');
+        if (!$token) {
+            return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
+        }
+        $user = DB::table('users')->where('api_token', $token)->where('is_deleted', false)->first();
+        if (!$user) {
+            return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+        }
+
+        DB::table('student_profiles')
+            ->where('user_id', $user->id)
+            ->update(['apply_limit_modal_dismissed' => 1, 'updated_at' => now()]);
+
+        return response()->json(['status' => true, 'message' => 'Dismissed.']);
+    }
+
     public function updateDirectoryVisibility(Request $request)
     {
         try {

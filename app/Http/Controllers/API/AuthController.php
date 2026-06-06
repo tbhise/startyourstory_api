@@ -145,6 +145,40 @@ class AuthController extends Controller
                 $rejectionReason = $firmProfile->rejection_reason ?? null;
             }
 
+            $lookingFor = null;
+            $preferredCategories = null;
+            $isPremium = false;
+            $premiumExpiresAt = null;
+            $premiumStartsAt = null;
+            $premiumPlan = null;
+            $premiumDaysRemaining = null;
+            if ($user->role === 'student') {
+                $studentProfile = DB::table('student_profiles')
+                    ->where('user_id', $user->id)
+                    ->select('looking_for', 'preferred_categories')
+                    ->first();
+                $lookingFor = $studentProfile->looking_for ?? null;
+                $preferredCategories = $studentProfile && $studentProfile->preferred_categories
+                    ? json_decode($studentProfile->preferred_categories)
+                    : [];
+                $sub = DB::table('student_subscriptions')
+                    ->where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->where(function ($q) {
+                        $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                    })
+                    ->first();
+                if ($sub) {
+                    $isPremium = true;
+                    $premiumExpiresAt = $sub->expires_at;
+                    $premiumStartsAt = $sub->starts_at;
+                    $premiumPlan = $sub->plan ?? 'premium';
+                    if ($sub->expires_at) {
+                        $premiumDaysRemaining = max(0, (int) now()->diffInDays($sub->expires_at, false));
+                    }
+                }
+            }
+
             return response()->json([
                 'status' => true,
                 'data' => [
@@ -153,6 +187,13 @@ class AuthController extends Controller
                     'email' => $user->email,
                     'mobile' => $user->mobile,
                     'role' => $user->role,
+                    'looking_for' => $lookingFor,
+                    'preferred_categories' => $preferredCategories,
+                    'is_premium' => $isPremium,
+                    'premium_plan' => $premiumPlan,
+                    'premium_starts_at' => $premiumStartsAt ?? null,
+                    'premium_expires_at' => $premiumExpiresAt,
+                    'premium_days_remaining' => $premiumDaysRemaining,
                     'email_verified_at' => $user->email_verified_at,
                     'profile_completed' => $user->profile_completed,
                     'profile_image' => $user->profile_image
@@ -192,7 +233,7 @@ class AuthController extends Controller
                 '',
                 -1
             );
-        } catch (\Exception $e) {
+        } catch (\Exception) {
             return response()->json([
                 'status' => false
             ]);

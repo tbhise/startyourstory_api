@@ -29,6 +29,8 @@ class FirmDashboardController extends Controller
                     'student_profiles.core_department',
                     'student_profiles.resume_path',
                     'student_profiles.registration_type',
+                    'student_profiles.preferred_categories',
+                    'users.profile_image',
                     DB::raw("
                     CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE recruiter_actions.student_id = users.id AND recruiter_actions.firm_id = {$firm->id}
                             AND recruiter_actions.action_type = 'candidate_saved') THEN 1 ELSE 0 END as is_saved"),
@@ -121,19 +123,28 @@ class FirmDashboardController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
+        | Creator Category Filter
+        |--------------------------------------------------------------------------
+        */
+            if ($request->filled('categories')) {
+                $categories = is_array($request->categories)
+                    ? $request->categories
+                    : [$request->categories];
+                $query->where(function ($q) use ($categories) {
+                    foreach ($categories as $cat) {
+                        $q->orWhereJsonContains('student_profiles.preferred_categories', $cat);
+                    }
+                });
+            }
+            /*
+        |--------------------------------------------------------------------------
         | Registration type
         |--------------------------------------------------------------------------
         */
             if ($request->filled('registration_type')) {
-
                 $query->where(
                     'student_profiles.registration_type',
                     strtolower($request->registration_type)
-                );
-            } else {
-                $query->where(
-                    'student_profiles.registration_type',
-                    'confirm'
                 );
             }
             /*
@@ -337,6 +348,9 @@ class FirmDashboardController extends Controller
                 $data['referred_by'],
                 $data['user_id']
             );
+            if (isset($data['preferred_categories']) && is_string($data['preferred_categories'])) {
+                $data['preferred_categories'] = json_decode($data['preferred_categories']) ?? [];
+            }
 
             return response()->json([
                 'status' => true,

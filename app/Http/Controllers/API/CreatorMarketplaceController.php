@@ -486,6 +486,7 @@ class CreatorMarketplaceController extends Controller
                 'creator_projects.id',
                 'creator_projects.title',
                 'creator_projects.slug',
+                'creator_projects.description',
                 'creator_projects.category',
                 'creator_projects.budget_type',
                 'creator_projects.budget_min',
@@ -569,11 +570,8 @@ class CreatorMarketplaceController extends Controller
 
     public function submitBid(Request $request, $projectId): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
-
-        if ($user->role === 'firm') {
-            return response()->json(['status' => false, 'message' => 'Firms cannot submit bids'], 403);
-        }
 
         $project = DB::table('creator_projects')
             ->where('id', $projectId)
@@ -635,6 +633,7 @@ class CreatorMarketplaceController extends Controller
 
     public function withdrawBid(Request $request, $bidId): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $affected = DB::table('creator_project_bids')
@@ -656,6 +655,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyBids(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $query = DB::table('creator_project_bids')
@@ -753,6 +753,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getSelectedBidDetails(Request $request, $bidId): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $bid = DB::table('creator_project_bids as b')
@@ -791,6 +792,7 @@ class CreatorMarketplaceController extends Controller
 
     public function creatorRespondToBid(Request $request, $bidId): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $validator = Validator::make($request->all(), [
@@ -968,6 +970,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMyEngagements(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $engagements = DB::table('creator_engagements as e')
@@ -1027,6 +1030,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getMarketplaceNotifications(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $notifications = DB::table('creator_marketplace_notifications')
@@ -1052,6 +1056,7 @@ class CreatorMarketplaceController extends Controller
 
     public function markNotificationRead(Request $request, $id): JsonResponse
     {
+        if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         DB::table('creator_marketplace_notifications')
@@ -1064,6 +1069,7 @@ class CreatorMarketplaceController extends Controller
 
     public function markAllNotificationsRead(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonMarketplaceUser($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         DB::table('creator_marketplace_notifications')
@@ -1932,6 +1938,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getBankDetails(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user    = $request->attributes->get('auth_user');
         $details = DB::table('creator_bank_details')
             ->where('creator_id', $user->id)
@@ -1974,6 +1981,7 @@ class CreatorMarketplaceController extends Controller
 
     public function saveBankDetails(Request $request): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $validator = Validator::make($request->all(), [
@@ -2021,6 +2029,7 @@ class CreatorMarketplaceController extends Controller
 
     public function getPayoutStatus(Request $request, $engagementId): JsonResponse
     {
+        if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
         $engagement = DB::table('creator_engagements')
@@ -2059,8 +2068,147 @@ class CreatorMarketplaceController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // CREATOR — Bid detail (conditional company reveal)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getBidDetail(Request $request, $bidId): JsonResponse
+    {
+        if ($err = $this->forbidNonCreator($request)) return $err;
+        $user = $request->attributes->get('auth_user');
+
+        $bid = DB::table('creator_project_bids as b')
+            ->join('creator_projects as p',  'p.id',  '=', 'b.project_id')
+            ->join('firm_profiles as fp',     'fp.id', '=', 'p.firm_id')
+            ->leftJoin('creator_engagements as e', 'e.bid_id', '=', 'b.id')
+            ->where('b.id', $bidId)
+            ->where('b.creator_id', $user->id)
+            ->first([
+                'b.id',
+                'b.bid_amount',
+                'b.delivery_days',
+                'b.proposal',
+                'b.status',
+                'b.created_at',
+                'b.portfolio_links',
+                'p.id as project_id',
+                'p.title as project_title',
+                'p.description as project_description',
+                'p.category',
+                'p.budget_type',
+                'p.budget_min',
+                'p.budget_max',
+                'p.skills_required',
+                'p.delivery_days as project_delivery_days',
+                'p.status as project_status',
+                'p.published_at',
+                DB::raw("CASE WHEN fp.verification_status = 'approved' THEN 1 ELSE 0 END as firm_verified"),
+                'e.id as engagement_id',
+                'e.status as engagement_status',
+                DB::raw("CASE WHEN e.id IS NOT NULL THEN fp.firm_name ELSE NULL END as company_name"),
+            ]);
+
+        if (! $bid) {
+            return response()->json(['status' => false, 'message' => 'Bid not found'], 404);
+        }
+
+        $bid->portfolio_links = $bid->portfolio_links ? json_decode($bid->portfolio_links) : [];
+        $bid->skills_required = $bid->skills_required ? json_decode($bid->skills_required) : [];
+        $bid->bid_count = DB::table('creator_project_bids')
+            ->where('project_id', $bid->project_id)
+            ->whereNotIn('status', ['withdrawn'])
+            ->count();
+
+        return response()->json([
+            'status' => true,
+            'data'   => ['bid' => $bid],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CREATOR — Earnings summary
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getMyEarnings(Request $request): JsonResponse
+    {
+        if ($err = $this->forbidNonCreator($request)) return $err;
+        $user = $request->attributes->get('auth_user');
+
+        $released = (float) DB::table('creator_payouts as cp')
+            ->join('creator_engagements as ce', 'ce.id', '=', 'cp.engagement_id')
+            ->where('ce.creator_id', $user->id)
+            ->where('cp.status', 'paid')
+            ->sum('cp.net_amount');
+
+        $pending = (float) DB::table('creator_payouts as cp')
+            ->join('creator_engagements as ce', 'ce.id', '=', 'cp.engagement_id')
+            ->where('ce.creator_id', $user->id)
+            ->where('cp.status', 'pending')
+            ->sum('cp.net_amount');
+
+        $completedCount = DB::table('creator_engagements')
+            ->where('creator_id', $user->id)
+            ->where('status', 'completed')
+            ->count();
+
+        $activeCount = DB::table('creator_engagements')
+            ->where('creator_id', $user->id)
+            ->whereIn('status', ['active', 'submitted', 'revision_requested', 'approved', 'payout_pending'])
+            ->count();
+
+        return response()->json([
+            'status' => true,
+            'data'   => [
+                'total_earnings'    => $released + $pending,
+                'released_earnings' => $released,
+                'pending_earnings'  => $pending,
+                'completed_projects'=> $completedCount,
+                'active_projects'   => $activeCount,
+            ],
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns a 403 JsonResponse if the authenticated user is not a student
+     * with looking_for = 'creator'.  Returns null when the check passes.
+     */
+    private function forbidNonCreator(Request $request): ?JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+        if (! $user || $user->role !== 'student') {
+            return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
+        }
+        $lf = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
+        if ($lf !== 'creator') {
+            return response()->json(['status' => false, 'message' => 'Forbidden. This area is for creator students only.'], 403);
+        }
+        return null;
+    }
+
+    /**
+     * Allows firms AND creator students. Blocks unauthenticated users and
+     * non-creator students (regular job-seekers have no marketplace notifications).
+     */
+    private function forbidNonMarketplaceUser(Request $request): ?JsonResponse
+    {
+        $user = $request->attributes->get('auth_user');
+        if (! $user) {
+            return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
+        }
+        if ($user->role === 'firm') {
+            return null; // firms are always allowed
+        }
+        if ($user->role === 'student') {
+            $lf = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
+            if ($lf === 'creator') {
+                return null;
+            }
+        }
+        return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
+    }
 
     private function notify(int $userId, string $type, string $title, string $body, array $data = []): void
     {

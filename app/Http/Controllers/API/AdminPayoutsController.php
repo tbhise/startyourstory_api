@@ -300,6 +300,19 @@ class AdminPayoutsController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // GET /admin/creator-payouts/pending-count
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function pendingCount(Request $request): JsonResponse
+    {
+        $admin = $this->admin($request);
+        if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+        $count = (int) DB::table('creator_payouts')->where('status', 'pending')->count();
+        return response()->json(['status' => true, 'data' => ['pending_count' => $count]]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // GET /admin/commission-rate
     // ─────────────────────────────────────────────────────────────────────────
 

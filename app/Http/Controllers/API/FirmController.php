@@ -790,11 +790,24 @@ class FirmController extends Controller
         | Response
         |--------------------------------------------------------------------------
         */
+            $openingsBreakdown = DB::table('jobs')
+                ->where('firm_id', $company->id)
+                ->where('is_active', 1)
+                ->selectRaw('hiring_for, count(*) as `count`')
+                ->groupBy('hiring_for')
+                ->get()
+                ->map(fn($row) => [
+                    'type'  => $row->hiring_for,
+                    'count' => (int) $row->count,
+                ])
+                ->values();
+
             $data = [
                 'id' => $company->id,
                 'user_id' => $company->user_id,
                 'firm_name' => $company->firm_name,
                 'current_openings' => $company->current_openings,
+                'openings_breakdown' => $openingsBreakdown,
                 // 'frn' => $company->frn,
                 'city' => $company->city,
                 'address' => $company->address,

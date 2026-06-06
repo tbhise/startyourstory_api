@@ -8,8 +8,16 @@ use Illuminate\Support\Facades\Log;
 class WalletHelper
 {
     const APPLICATION_FEE = 49.00;
-    const FREE_LIMIT      = 3;
+    const FREE_LIMIT      = 3;     // fallback — real default lives in platform_settings
     const HOLD_DAYS       = 10;
+
+    public static function getDefaultFreeLimit(): int
+    {
+        $v = DB::table('platform_settings')
+            ->where('key', 'free_applications_limit')
+            ->value('value');
+        return (int) ($v ?? self::FREE_LIMIT);
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -26,7 +34,7 @@ class WalletHelper
                 'hold_balance'            => 0.00,
                 'consumed_balance'        => 0.00,
                 'free_applications_used'  => 0,
-                'free_applications_limit' => self::FREE_LIMIT,
+                'free_applications_limit' => self::getDefaultFreeLimit(),
                 'created_at'              => now(),
                 'updated_at'              => now(),
             ]);

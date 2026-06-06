@@ -11,6 +11,7 @@ use App\Mail\FirmApprovedMail;
 use App\Mail\FirmRejectedMail;
 use App\Mail\InterviewAcceptedMail;
 use App\Mail\InterviewRejectedMail;
+use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
 use App\Models\EmailLog;
 use App\Models\User;
@@ -210,6 +211,35 @@ class EmailNotificationService
             $mailable,
             "{$candidateName} Declined Your Interview Request — Start Your Story",
             EmailPurpose::INTERVIEW_REJECTED
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Interview — sent to student when firm accepts reschedule
+    // -------------------------------------------------------------------------
+
+    public function sendInterviewRescheduleAccepted(
+        string  $studentEmail,
+        string  $studentName,
+        string  $firmName,
+        string  $jobTitle,
+        string  $interviewDate,
+        ?string $interviewNote
+    ): void {
+        $mailable = new InterviewRescheduleAcceptedMail(
+            $studentName,
+            $firmName,
+            $jobTitle,
+            $interviewDate,
+            $interviewNote
+        );
+
+        $this->queue(
+            $studentEmail,
+            'student',
+            $mailable,
+            "Interview Reschedule Accepted — {$firmName}",
+            EmailPurpose::INTERVIEW_RESCHEDULE_ACCEPTED
         );
     }
 

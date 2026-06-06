@@ -23,6 +23,16 @@ class WalletController extends Controller
             ->first();
     }
 
+    /** Returns a 403 response if the student has looking_for = 'creator'. */
+    private function creatorGuard(object $user): ?\Illuminate\Http\JsonResponse
+    {
+        $lf = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
+        if ($lf === 'creator') {
+            return response()->json(['status' => false, 'message' => 'Creators cannot access the student wallet.'], 403);
+        }
+        return null;
+    }
+
     /*
     |--------------------------------------------------------------------------
     | GET /wallet — balance + recharge packs
@@ -33,6 +43,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $wallet = WalletHelper::getOrCreate($user->id);
             $packs  = DB::table('wallet_recharge_packs')
@@ -63,6 +74,39 @@ class WalletController extends Controller
 
     /*
     |--------------------------------------------------------------------------
+    | GET /student/apply-status — lightweight check for apply-limit awareness
+    |--------------------------------------------------------------------------
+    */
+    public function getApplyStatus(Request $request)
+    {
+        try {
+            $user = $this->getStudent($request);
+            if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
+
+            $wallet       = WalletHelper::getOrCreate($user->id);
+            $freeUsed     = (int) $wallet->free_applications_used;
+            $freeLimit    = (int) $wallet->free_applications_limit;
+            $freeRemaining = max(0, $freeLimit - $freeUsed);
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'free_remaining'   => $freeRemaining,
+                    'free_limit'       => $freeLimit,
+                    'free_used'        => $freeUsed,
+                    'can_apply_free'   => $freeRemaining > 0,
+                    'application_fee'  => WalletHelper::APPLICATION_FEE,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('WalletController@getApplyStatus: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | GET /wallet/ledger — paginated transaction history
     |--------------------------------------------------------------------------
     */
@@ -71,6 +115,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $perPage = 20;
             $page    = max(1, (int) $request->input('page', 1));
@@ -110,6 +155,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $recharges = DB::table('wallet_recharges')
                 ->where('user_id', $user->id)
@@ -139,6 +185,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $validator = Validator::make($request->all(), [
                 'amount' => 'required|numeric|min:1',
@@ -204,6 +251,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $api = new Api(config('services.razorpay.key'), config('services.razorpay.secret'));
             $api->utility->verifyPaymentSignature([
@@ -265,6 +313,7 @@ class WalletController extends Controller
         try {
             $user = $this->getStudent($request);
             if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
 
             $validator = Validator::make($request->all(), [
                 'amount'           => 'required|numeric|min:1',
@@ -307,6 +356,76 @@ class WalletController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('WalletController@submitManualRecharge: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | POST /student/premium-request — submit premium subscription payment proof
+    |--------------------------------------------------------------------------
+    */
+    public function submitPremiumRequest(Request $request)
+    {
+        try {
+            $user = $this->getStudent($request);
+            if (!$user) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            if ($err = $this->creatorGuard($user)) return $err;
+
+            $validator = Validator::make($request->all(), [
+                'plan'             => 'required|string|in:premium-monthly,premium-quarterly,premium-yearly',
+                'amount'           => 'required|numeric|min:1',
+                'payment_date'     => 'required|date',
+                'utr_number'       => 'nullable|string|max:100',
+                'reference_number' => 'nullable|string|max:100',
+                'screenshot'       => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()]);
+            }
+
+            // Block duplicate pending request
+            $existing = DB::table('student_premium_requests')
+                ->where('user_id', $user->id)
+                ->where('status', 'pending')
+                ->first();
+            if ($existing) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'You already have a pending premium request. Please wait for admin review.',
+                ], 422);
+            }
+
+            $screenshotUrl = null;
+            if ($request->hasFile('screenshot')) {
+                $file          = $request->file('screenshot');
+                $screenshotUrl = $file->storeAs(
+                    'premium_screenshots',
+                    time() . '_' . $user->id . '.' . $file->getClientOriginalExtension(),
+                    'public'
+                );
+            }
+
+            $id = DB::table('student_premium_requests')->insertGetId([
+                'user_id'          => $user->id,
+                'plan'             => $request->plan,
+                'amount'           => (float) $request->amount,
+                'utr_number'       => $request->utr_number,
+                'reference_number' => $request->reference_number,
+                'screenshot_url'   => $screenshotUrl,
+                'payment_date'     => $request->payment_date,
+                'status'           => 'pending',
+                'created_at'       => now(),
+                'updated_at'       => now(),
+            ]);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Premium request submitted. Admin will review within 24 hours.',
+                'data'    => ['request_id' => $id],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('WalletController@submitPremiumRequest: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

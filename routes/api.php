@@ -23,6 +23,13 @@ use App\Http\Controllers\API\AdminMessagingController;
 use App\Http\Controllers\API\ErrorLogController;
 use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
+use App\Http\Controllers\API\PublicController;
+use App\Http\Controllers\API\AdminSettingsController;
+
+// Public (no auth)
+Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
+Route::post('/newsletter/subscribe',  [PublicController::class, 'subscribeNewsletter']);
+Route::get('/platform-settings',      [AdminSettingsController::class, 'getPublicSettings']);
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -47,7 +54,8 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
-    Route::post('/student/directory-visibility', [UserController::class, 'updateDirectoryVisibility']);
+    Route::post('/student/directory-visibility',        [UserController::class, 'updateDirectoryVisibility']);
+    Route::post('/dismiss-apply-limit-modal',            [UserController::class, 'dismissApplyLimitModal']);
 
     // Company employee directory (verified members working at a firm)
     Route::post('/companies/{id}/employees/preview',         [CompanyEmployeeController::class, 'getPreview']);
@@ -74,11 +82,13 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     // ── Student wallet ──
     Route::post('/wallet',                          [WalletController::class, 'getWallet']);
+    Route::get('/student/apply-status',             [WalletController::class, 'getApplyStatus']);
     Route::post('/wallet/ledger',                   [WalletController::class, 'getLedger']);
     Route::post('/wallet/recharges',                [WalletController::class, 'getRechargeHistory']);
     Route::post('/wallet/recharge/order',           [WalletController::class, 'createOrder']);
     Route::post('/wallet/recharge/verify',          [WalletController::class, 'verifyPayment']);
     Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge']);
+    Route::post('/student/premium-request',         [WalletController::class, 'submitPremiumRequest']);
 
     // ── Firm dashboard routes — require manual verification approval ──
     Route::middleware([FirmVerifiedMiddleware::class])->group(function () {
@@ -95,8 +105,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
         Route::post('/updateJob/{id}',                       [FirmController::class, 'updateJob']);
 
         Route::post('/getApplications/{id}',                 [JobsController::class, 'getApplications']);
-        Route::post('/applications/{id}/updateStatus',       [JobsController::class, 'updateApplicationStatus']);
-        Route::post('/applications/{id}/schedule-interview', [JobsController::class, 'scheduleInterview']);
+        Route::post('/applications/{id}/updateStatus',         [JobsController::class, 'updateApplicationStatus']);
+        Route::post('/applications/{id}/schedule-interview',  [JobsController::class, 'scheduleInterview']);
+        Route::post('/applications/{id}/accept-reschedule',   [JobsController::class, 'acceptReschedule']);
         Route::post('/getRecruiterActions',                  [JobsController::class, 'getRecruiterActions']);
     });
 });
@@ -226,6 +237,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::get('/creator-marketplace/bank-details',                       [CreatorMarketplaceController::class, 'getBankDetails']);
     Route::post('/creator-marketplace/bank-details',                      [CreatorMarketplaceController::class, 'saveBankDetails']);
     Route::get('/creator-marketplace/engagements/{engagementId}/payout',  [CreatorMarketplaceController::class, 'getPayoutStatus']);
+    // Bid detail + earnings (creator)
+    Route::get('/creator-marketplace/bids/{bidId}/details',               [CreatorMarketplaceController::class, 'getBidDetail']);
+    Route::get('/creator-marketplace/my-earnings',                        [CreatorMarketplaceController::class, 'getMyEarnings']);
 });
 
 // Firm-verified — project management + payments
@@ -255,10 +269,13 @@ Route::post('/admin/creator-payments/{id}/reject',     [AdminController::class, 
 // ── Admin — Creator Payouts ───────────────────────────────────────────────────
 Route::get('/admin/creator-payouts',                   [AdminPayoutsController::class, 'getPayouts']);
 Route::get('/admin/creator-payouts/stats',             [AdminPayoutsController::class, 'getStats']);
+Route::get('/admin/creator-payouts/pending-count',     [AdminPayoutsController::class, 'pendingCount']);
 Route::post('/admin/creator-payouts/{id}/mark-paid',   [AdminPayoutsController::class, 'markPaid']);
 Route::post('/admin/creator-payouts/{id}/mark-failed', [AdminPayoutsController::class, 'markFailed']);
 Route::get('/admin/commission-rate',                   [AdminPayoutsController::class, 'getCommissionRate']);
 Route::post('/admin/commission-rate',                  [AdminPayoutsController::class, 'updateCommissionRate']);
+Route::get('/admin/platform-settings',                 [AdminSettingsController::class, 'getSettings']);
+Route::post('/admin/platform-settings/{key}',          [AdminSettingsController::class, 'updateSetting']);
 
 // ── Error Logging ─────────────────────────────────────────────────────────────
 // Public — no auth required so errors during login/registration are captured too

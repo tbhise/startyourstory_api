@@ -13,6 +13,7 @@ enum EmailPurpose: string
     case INTERVIEW_SCHEDULED   = 'interview_scheduled';
     case INTERVIEW_ACCEPTED    = 'interview_accepted';
     case INTERVIEW_REJECTED    = 'interview_rejected';
+    case INTERVIEW_RESCHEDULE_ACCEPTED = 'interview_reschedule_accepted';
     case INTERVIEW_REMINDER_24H = 'interview_reminder_24h';
     case INTERVIEW_REMINDER_1H  = 'interview_reminder_1h';
     case APPLICATION_DIGEST    = 'application_digest';
@@ -28,11 +29,12 @@ enum EmailPurpose: string
             self::FIRM_REJECTED          => 'default',
             self::MESSAGE_REQUEST        => 'support',
             self::MESSAGE_REPLY          => 'support',
-            self::INTERVIEW_SCHEDULED    => 'interview',
-            self::INTERVIEW_ACCEPTED     => 'interview',
-            self::INTERVIEW_REJECTED     => 'interview',
-            self::INTERVIEW_REMINDER_24H => 'interview',
-            self::INTERVIEW_REMINDER_1H  => 'interview',
+            self::INTERVIEW_SCHEDULED           => 'interview',
+            self::INTERVIEW_ACCEPTED            => 'interview',
+            self::INTERVIEW_REJECTED            => 'interview',
+            self::INTERVIEW_RESCHEDULE_ACCEPTED => 'interview',
+            self::INTERVIEW_REMINDER_24H        => 'interview',
+            self::INTERVIEW_REMINDER_1H         => 'interview',
             self::APPLICATION_DIGEST     => 'support',
             self::BILLING                => 'billing',
             self::MARKETING              => 'marketing',

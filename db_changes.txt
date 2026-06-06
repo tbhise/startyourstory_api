@@ -1240,3 +1240,168 @@ CREATE TABLE `creator_engagement_payments` (
 --     → Inline Schedule::call: moves all 'approved' engagements to
 --       'payout_pending', inserts timeline event 'payout_queued',
 --       notifies creator.
+
+
+-- ============================================================
+-- Public Forms: Contact Submissions & Newsletter Subscribers (2026-06-06)
+-- ============================================================
+
+CREATE TABLE `contact_submissions` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name`       VARCHAR(200)    NOT NULL,
+  `email`      VARCHAR(255)    NOT NULL,
+  `subject`    VARCHAR(300)    NOT NULL,
+  `message`    TEXT            NOT NULL,
+  `ip_address` VARCHAR(45)     NULL,
+  `created_at` TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_cs_email` (`email`),
+  KEY `idx_cs_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `contact_submissions`;
+
+CREATE TABLE `newsletter_subscribers` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `email`          VARCHAR(255)    NOT NULL,
+  `ip_address`     VARCHAR(45)     NULL,
+  `subscribed_at`  TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `created_at`     TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`     TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_ns_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `newsletter_subscribers`;
+
+
+CREATE TABLE `creator_bank_details` (
+  `id`                   BIGINT  NOT NULL AUTO_INCREMENT,
+  `creator_id`           BIGINT  NOT NULL,
+  `account_holder_name`  VARCHAR(255)    NOT NULL,
+  `bank_name`            VARCHAR(255)    NOT NULL,
+  `account_number`       TEXT            NOT NULL,
+  `ifsc_code`            VARCHAR(500)    NOT NULL,
+  `is_verified`          TINYINT(1)      NOT NULL DEFAULT 0,
+  `created_at`           TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`           TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cbd_creator` (`creator_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `creator_payouts` (
+  `id`                    BIGINT  NOT NULL AUTO_INCREMENT,
+  `engagement_id`         BIGINT  NOT NULL,
+  `creator_id`            BIGINT  NOT NULL,
+  `gross_amount`          DECIMAL(12,2)   NOT NULL,
+  `commission_rate`       DECIMAL(5,2)    NOT NULL DEFAULT 10.00,
+  `commission_amount`     DECIMAL(12,2)   NOT NULL,
+  `net_amount`            DECIMAL(12,2)   NOT NULL,
+  `status`                ENUM('pending','paid','failed') NOT NULL DEFAULT 'pending',
+  `transaction_reference` VARCHAR(500)    NULL,
+  `paid_at`               TIMESTAMP       NULL,
+  `admin_notes`           TEXT            NULL,
+  `processed_by`          BIGINT  NULL,
+  `created_at`            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cp_engagement` (`engagement_id`),
+  KEY `idx_cp_creator_status` (`creator_id`, `status`),
+  KEY `idx_cp_status` (`status`),
+  CONSTRAINT `fk_cp_engagement` FOREIGN KEY (`engagement_id`)
+    REFERENCES `creator_engagements` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `platform_settings` (
+  `id`          BIGINT  NOT NULL AUTO_INCREMENT,
+  `key`         VARCHAR(100)    NOT NULL,
+  `value`       TEXT            NOT NULL,
+  `description` VARCHAR(500)    NULL,
+  `updated_by`  BIGINT  NULL,
+  `updated_at`  TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_ps_key` (`key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `platform_settings` (`key`, `value`, `description`)
+VALUES ('commission_percentage', '10', 'Platform commission percentage deducted from creator payouts');
+
+INSERT INTO `platform_settings` (`key`, `value`, `description`)
+VALUES ('free_applications_limit', '3', 'Number of free job applications per student (configurable)');
+-- ROLLBACK: DELETE FROM platform_settings WHERE key = 'free_applications_limit';
+
+
+-- ============================================================
+-- Phase 2: Apply-Limit Modal (2026-06-06)
+-- ============================================================
+
+ALTER TABLE `student_profiles`
+  ADD COLUMN `apply_limit_modal_dismissed` TINYINT(1) NOT NULL DEFAULT 0
+  AFTER `show_in_directory`;
+-- ROLLBACK: ALTER TABLE `student_profiles` DROP COLUMN `apply_limit_modal_dismissed`;
+
+
+-- ============================================================
+-- Phase 3: Reschedule Acceptance Flow (2026-06-06)
+-- ============================================================
+
+ALTER TABLE `applications`
+  ADD COLUMN `reschedule_accepted_at` TIMESTAMP NULL
+  AFTER `interview_responded_at`;
+-- ROLLBACK: ALTER TABLE `applications` DROP COLUMN `reschedule_accepted_at`;
+
+
+-- ============================================================
+-- Refinement Phase: Creator Preferred Categories (2026-06-06)
+-- ============================================================
+
+ALTER TABLE `student_profiles`
+  ADD COLUMN `preferred_categories` JSON NULL
+  AFTER `looking_for`;
+-- ROLLBACK: ALTER TABLE `student_profiles` DROP COLUMN `preferred_categories`;
+
+
+-- ============================================================
+-- Refinement Phase: Student Premium Requests (2026-06-06)
+-- ============================================================
+
+CREATE TABLE student_premium_requests (
+    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id          BIGINT UNSIGNED NOT NULL,
+    plan             ENUM('premium-monthly','premium-quarterly','premium-yearly') NOT NULL,
+    amount           DECIMAL(10,2) NOT NULL,
+    utr_number       VARCHAR(100) NULL,
+    reference_number VARCHAR(100) NULL,
+    screenshot_url   TEXT NULL,
+    payment_date     DATE NOT NULL,
+    status           ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+    admin_remarks    TEXT NULL,
+    reviewed_by      BIGINT UNSIGNED NULL,
+    reviewed_at      TIMESTAMP NULL,
+    created_at       TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id (user_id),
+    INDEX idx_status  (status)
+);
+-- ROLLBACK: DROP TABLE student_premium_requests;
+
+
+-- ============================================================
+-- Refinement Phase: Student Premium Subscriptions (2026-06-06)
+-- ============================================================
+
+CREATE TABLE student_subscriptions (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id      BIGINT UNSIGNED NOT NULL,
+    plan         VARCHAR(50)     NOT NULL DEFAULT 'premium',
+    status       ENUM('active','expired','cancelled') NOT NULL DEFAULT 'active',
+    starts_at    DATETIME        NULL,
+    expires_at   DATETIME        NULL,
+    created_at   TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_id  (user_id),
+    INDEX idx_status   (status),
+    INDEX idx_expires  (expires_at, status)
+);
+-- ROLLBACK: DROP TABLE student_subscriptions;

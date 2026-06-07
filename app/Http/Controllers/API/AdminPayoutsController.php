@@ -146,11 +146,17 @@ class AdminPayoutsController extends Controller
                 'created_at' => now(),
             ]);
 
-            $title = DB::table('creator_engagements as ce')
+            $engagement = DB::table('creator_engagements as ce')
                 ->join('creator_projects as p', 'p.id', '=', 'ce.creator_requirement_id')
+                ->join('firm_profiles as fp', 'fp.id', '=', 'ce.firm_id')
                 ->where('ce.id', $payout->engagement_id)
-                ->value('p.title') ?? 'your project';
+                ->select(['p.title', 'fp.user_id as firm_user_id'])
+                ->first();
 
+            $title      = $engagement?->title ?? 'your project';
+            $firmUserId = $engagement?->firm_user_id;
+
+            // Notify creator
             DB::table('creator_marketplace_notifications')->insert([
                 'user_id'    => $payout->creator_id,
                 'type'       => 'payout_paid',
@@ -166,6 +172,20 @@ class AdminPayoutsController extends Controller
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            // Notify firm that the project is now complete
+            if ($firmUserId) {
+                DB::table('creator_marketplace_notifications')->insert([
+                    'user_id'    => $firmUserId,
+                    'type'       => 'project_completed',
+                    'title'      => 'Project complete!',
+                    'body'       => "The creator has been paid and \"{$title}\" is now complete.",
+                    'data'       => json_encode(['engagement_id' => (int) $payout->engagement_id]),
+                    'read_at'    => null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
 
             DB::commit();
             return response()->json(['status' => true, 'message' => 'Payout marked as paid. Project completed.']);
@@ -281,20 +301,30 @@ class AdminPayoutsController extends Controller
             ->where('key', 'commission_percentage')
             ->value('value') ?? '10');
 
+        $approvedUnqueued = (int) DB::table('creator_engagements')
+            ->where('status', 'approved')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('creator_payouts')
+                  ->whereColumn('creator_payouts.engagement_id', 'creator_engagements.id');
+            })
+            ->count();
+
         return response()->json([
             'status' => true,
             'data'   => [
-                'escrow_held'       => $escrowHeld,
-                'pending_count'     => $pendingCount,
-                'pending_net'       => $pendingNet,
-                'pending_gross'     => $pendingGross,
-                'paid_count'        => $paidCount,
-                'paid_net'          => $paidNet,
-                'commission_earned' => $commissionEarned,
-                'failed_count'      => $failedCount,
-                'failed_net'        => $failedNet,
-                'refunds_total'     => $refundsTotal,
-                'commission_rate'   => $commissionRate,
+                'escrow_held'          => $escrowHeld,
+                'pending_count'        => $pendingCount,
+                'pending_net'          => $pendingNet,
+                'pending_gross'        => $pendingGross,
+                'paid_count'           => $paidCount,
+                'paid_net'             => $paidNet,
+                'commission_earned'    => $commissionEarned,
+                'failed_count'         => $failedCount,
+                'failed_net'           => $failedNet,
+                'refunds_total'        => $refundsTotal,
+                'commission_rate'      => $commissionRate,
+                'approved_unqueued'    => $approvedUnqueued,
             ],
         ]);
     }
@@ -310,6 +340,100 @@ class AdminPayoutsController extends Controller
 
         $count = (int) DB::table('creator_payouts')->where('status', 'pending')->count();
         return response()->json(['status' => true, 'data' => ['pending_count' => $count]]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /admin/creator-payouts/flush-approved
+    // Queue payout records for any 'approved' engagements that slipped through
+    // before the immediate-queue logic was in place (e.g. approved via old flow).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function flushApproved(Request $request): JsonResponse
+    {
+        $admin = $this->admin($request);
+        if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+        try {
+            $commissionRate = (float) (DB::table('platform_settings')
+                ->where('key', 'commission_percentage')
+                ->value('value') ?? '10');
+
+            $approved = DB::table('creator_engagements')
+                ->where('status', 'approved')
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                      ->from('creator_payouts')
+                      ->whereColumn('creator_payouts.engagement_id', 'creator_engagements.id');
+                })
+                ->get(['id', 'creator_id', 'creator_requirement_id', 'accepted_bid_amount']);
+
+            $queued = 0;
+
+            foreach ($approved as $eng) {
+                DB::beginTransaction();
+
+                $gross      = (float) $eng->accepted_bid_amount;
+                $commission = round($gross * $commissionRate / 100, 2);
+                $net        = round($gross - $commission, 2);
+
+                DB::table('creator_payouts')->insert([
+                    'engagement_id'     => $eng->id,
+                    'creator_id'        => $eng->creator_id,
+                    'gross_amount'      => $gross,
+                    'commission_rate'   => $commissionRate,
+                    'commission_amount' => $commission,
+                    'net_amount'        => $net,
+                    'status'            => 'pending',
+                    'created_at'        => now(),
+                    'updated_at'        => now(),
+                ]);
+
+                DB::table('creator_engagements')->where('id', $eng->id)->update([
+                    'status'     => 'payout_pending',
+                    'updated_at' => now(),
+                ]);
+
+                DB::table('engagement_timeline')->insert([
+                    'engagement_id' => $eng->id,
+                    'user_id'       => $admin->id,
+                    'role'          => 'system',
+                    'event'         => 'payout_queued',
+                    'note'          => 'Manually queued by admin',
+                    'meta'          => json_encode(['commission_rate' => $commissionRate]),
+                    'created_at'    => now(),
+                ]);
+
+                $title = DB::table('creator_projects')
+                    ->where('id', $eng->creator_requirement_id)
+                    ->value('title') ?? 'your project';
+
+                DB::table('creator_marketplace_notifications')->insert([
+                    'user_id'    => $eng->creator_id,
+                    'type'       => 'payout_queued',
+                    'title'      => 'Payout queued',
+                    'body'       => "Your payout of ₹" . number_format($net, 2) . " for \"{$title}\" has been queued for processing.",
+                    'data'       => json_encode(['engagement_id' => (int) $eng->id]),
+                    'read_at'    => null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                DB::commit();
+                $queued++;
+            }
+
+            return response()->json([
+                'status'  => true,
+                'message' => $queued > 0
+                    ? "{$queued} payout(s) queued successfully."
+                    : 'No approved engagements pending queue.',
+                'data'    => ['queued' => $queued],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('AdminPayouts@flushApproved: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -827,27 +827,20 @@ class JobsController extends Controller
                         'skills' => $isLocked
                             ? []
                             : array_values(array_filter(array_merge(
-
-                                [
-                                    $item->core_department,
-                                    $item->industry_worked_in,
-                                ],
-
+                                // core_department may be JSON array string or plain string
+                                is_array(json_decode($item->core_department ?? '', true))
+                                    ? json_decode($item->core_department, true)
+                                    : (empty($item->core_department) ? [] : [$item->core_department]),
+                                [$item->industry_worked_in],
+                                // experience_department may be doubly-encoded; strip stray quotes/brackets
                                 !empty($item->experience_department)
-                                    ? (
+                                    ? array_values(array_filter(array_map(
+                                        fn($v) => trim(trim((string) $v, '"[]')),
                                         is_array($item->experience_department)
-
-                                        ? $item->experience_department
-
-                                        : (
-                                            json_decode(
-                                                $item->experience_department,
-                                                true
-                                            ) ?: []
-                                        )
-                                    )
+                                            ? $item->experience_department
+                                            : (json_decode($item->experience_department, true) ?: [])
+                                    )))
                                     : []
-
                             ))),
                     ],
 
@@ -1385,27 +1378,20 @@ class JobsController extends Controller
                         ? asset('/storage/' . $updatedApplication->resume_path)
                         : null,
                     'skills' => array_values(array_filter(array_merge(
-
-                        [
-                            $updatedApplication->core_department,
-                            $updatedApplication->industry_worked_in,
-                        ],
-
+                        // core_department may be JSON array string or plain string
+                        is_array(json_decode($updatedApplication->core_department ?? '', true))
+                            ? json_decode($updatedApplication->core_department, true)
+                            : (empty($updatedApplication->core_department) ? [] : [$updatedApplication->core_department]),
+                        [$updatedApplication->industry_worked_in],
+                        // experience_department may be doubly-encoded; strip stray quotes/brackets
                         !empty($updatedApplication->experience_department)
-                            ? (
+                            ? array_values(array_filter(array_map(
+                                fn($v) => trim(trim((string) $v, '"[]')),
                                 is_array($updatedApplication->experience_department)
-
-                                ? $updatedApplication->experience_department
-
-                                : (
-                                    json_decode(
-                                        $updatedApplication->experience_department,
-                                        true
-                                    ) ?: []
-                                )
-                            )
+                                    ? $updatedApplication->experience_department
+                                    : (json_decode($updatedApplication->experience_department, true) ?: [])
+                            )))
                             : []
-
                     ))),
                 ],
                 'job' => [

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Contracts\PaymentGateway;
 use App\Http\Controllers\Controller;
+use App\Services\Notifications\EmailNotificationService;
 use App\Services\Payment\PaymentGatewayFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -250,7 +251,16 @@ class CreatorMarketplaceController extends Controller
         $query = DB::table('creator_projects')
             ->where('firm_id', $firmProfile->id);
 
-        if ($request->filled('status')) {
+        if ($request->filled('tab')) {
+            $tabStatuses = match ($request->tab) {
+                'open'      => ['draft', 'published'],
+                'completed' => ['closed'],
+                default     => null,
+            };
+            if ($tabStatuses) {
+                $query->whereIn('status', $tabStatuses);
+            }
+        } elseif ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
@@ -810,6 +820,19 @@ class CreatorMarketplaceController extends Controller
             }
 
             DB::commit();
+
+            if (! $alreadySelected) {
+                $creator = DB::table('users')->where('id', $bid->creator_id)->first();
+                if ($creator) {
+                    (new EmailNotificationService())->sendCreatorSelected(
+                        $creator->email,
+                        $creator->name,
+                        $bid->project_title,
+                        (int) $bidId
+                    );
+                }
+            }
+
             return response()->json([
                 'status'  => true,
                 'message' => $alreadySelected ? 'Creator already accepted' : 'Creator accepted. Notification sent.',
@@ -940,6 +963,20 @@ class CreatorMarketplaceController extends Controller
                 }
 
                 DB::commit();
+
+                if ($firmUserId) {
+                    $firmUser = DB::table('users')->where('id', $firmUserId)->first();
+                    if ($firmUser) {
+                        (new EmailNotificationService())->sendCreatorAccepted(
+                            $firmUser->email,
+                            $firmUser->name,
+                            $user->name,
+                            $bid->project_title,
+                            $engagementId
+                        );
+                    }
+                }
+
                 return response()->json([
                     'status'  => true,
                     'message' => 'Project accepted! Contract created.',
@@ -1755,14 +1792,22 @@ class CreatorMarketplaceController extends Controller
 
             $this->addTimeline($id, $user->id, 'firm', $isNew ? 'brief_published' : 'brief_updated');
 
-            // Notify creator only on first publish
+            $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+
             if ($isNew) {
-                $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
                 $this->notify(
                     $engagement->creator_id,
                     'brief_shared',
                     'Project brief is ready',
                     "The firm shared a brief for \"{$project->title}\".",
+                    ['engagement_id' => (int) $id]
+                );
+            } else {
+                $this->notify(
+                    $engagement->creator_id,
+                    'brief_updated',
+                    'Project brief updated',
+                    "The firm updated the project brief for \"{$project->title}\". Check the Brief tab for changes.",
                     ['engagement_id' => (int) $id]
                 );
             }
@@ -2060,6 +2105,12 @@ class CreatorMarketplaceController extends Controller
                 ->orderByDesc('revision_round')
                 ->first();
 
+            $project        = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
+            $commissionRate = (float) (DB::table('platform_settings')->where('key', 'commission_percentage')->value('value') ?? '10');
+            $gross          = (float) $engagement->accepted_bid_amount;
+            $commission     = round($gross * $commissionRate / 100, 2);
+            $net            = round($gross - $commission, 2);
+
             DB::beginTransaction();
 
             if ($latest) {
@@ -2071,24 +2122,40 @@ class CreatorMarketplaceController extends Controller
                 ]);
             }
 
+            // Create payout record (idempotent — cron is safety net)
+            $payoutExists = DB::table('creator_payouts')->where('engagement_id', $id)->exists();
+            if (! $payoutExists) {
+                DB::table('creator_payouts')->insert([
+                    'engagement_id'     => $id,
+                    'creator_id'        => $engagement->creator_id,
+                    'gross_amount'      => $gross,
+                    'commission_rate'   => $commissionRate,
+                    'commission_amount' => $commission,
+                    'net_amount'        => $net,
+                    'status'            => 'pending',
+                    'created_at'        => now(),
+                    'updated_at'        => now(),
+                ]);
+            }
+
             DB::table('creator_engagements')->where('id', $id)->update([
-                'status'     => 'approved',
+                'status'     => 'payout_pending',
                 'updated_at' => now(),
             ]);
 
             $this->addTimeline($id, $user->id, 'firm', 'work_approved');
+            $this->addTimeline($id, null, 'system', 'payout_queued', null, ['commission_rate' => $commissionRate]);
 
-            $project = DB::table('creator_projects')->where('id', $engagement->creator_requirement_id)->first();
             $this->notify(
                 $engagement->creator_id,
                 'work_approved',
                 'Your work has been approved!',
-                "The firm approved your deliverable for \"{$project->title}\".",
+                "The firm approved your deliverable for \"{$project->title}\". Your payout of ₹" . number_format($net, 2) . " has been queued.",
                 ['engagement_id' => (int) $id]
             );
 
             DB::commit();
-            return response()->json(['status' => true, 'message' => 'Deliverable approved.']);
+            return response()->json(['status' => true, 'message' => 'Deliverable approved. Payout queued for creator.']);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('CreatorMarketplace@approveDeliverable: ' . $e->getMessage());

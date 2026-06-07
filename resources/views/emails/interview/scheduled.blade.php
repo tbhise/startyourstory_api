@@ -67,24 +67,16 @@
     </div>
 
     <p style="text-align: center; margin: 8px 0 4px;">
-        Please respond to confirm your availability:
+        Please respond to confirm your availability from your My Jobs page:
     </p>
 
-    {{-- Accept / Reject CTAs --}}
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 20px 0;">
         <tr>
             <td align="center" style="padding: 6px;">
                 @include('emails.partials.cta-button', [
-                    'url'   => $acceptUrl,
-                    'label' => 'Accept Interview',
-                    'color' => 'success',
-                ])
-            </td>
-            <td align="center" style="padding: 6px;">
-                @include('emails.partials.cta-button', [
-                    'url'   => $rejectUrl,
-                    'label' => 'Decline Interview',
-                    'color' => 'danger',
+                    'url'   => config('app.url') . '/my-jobs',
+                    'label' => 'View in My Jobs',
+                    'color' => 'primary',
                 ])
             </td>
         </tr>
@@ -92,8 +84,8 @@
 
     <div class="info-box" style="margin-top: 20px;">
         <p>
-            You can also manage this request from your
-            <strong>My Applications</strong> page on Start Your Story.
+            Open the <strong>Applied</strong> tab in My Jobs, find this position, and use the
+            Accept, Decline, or Request Reschedule buttons to respond.
         </p>
     </div>
 

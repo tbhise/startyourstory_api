@@ -136,22 +136,41 @@ class AuthController extends Controller
             }
             $verificationStatus = null;
             $rejectionReason = null;
-            if ($user->role === 'firm') {
-                $firmProfile = DB::table('firm_profiles')
-                    ->where('user_id', $user->id)
-                    ->select('verification_status', 'rejection_reason')
-                    ->first();
-                $verificationStatus = $firmProfile->verification_status ?? 'pending';
-                $rejectionReason = $firmProfile->rejection_reason ?? null;
-            }
-
-            $lookingFor = null;
-            $preferredCategories = null;
             $isPremium = false;
             $premiumExpiresAt = null;
             $premiumStartsAt = null;
             $premiumPlan = null;
             $premiumDaysRemaining = null;
+            if ($user->role === 'firm') {
+                $firmProfile = DB::table('firm_profiles')
+                    ->where('user_id', $user->id)
+                    ->select('id', 'verification_status', 'rejection_reason', 'is_premium')
+                    ->first();
+                $verificationStatus = $firmProfile->verification_status ?? 'pending';
+                $rejectionReason    = $firmProfile->rejection_reason ?? null;
+                if ($firmProfile && $firmProfile->is_premium) {
+                    $isPremium = true;
+                    $firmSub = DB::table('firm_subscriptions')
+                        ->where('firm_id', $firmProfile->id)
+                        ->where('status', 'active')
+                        ->where(function ($q) {
+                            $q->whereNull('expires_at')->orWhere('expires_at', '>', now());
+                        })
+                        ->orderByDesc('created_at')
+                        ->first();
+                    if ($firmSub) {
+                        $premiumExpiresAt = $firmSub->expires_at;
+                        $premiumStartsAt  = $firmSub->starts_at ?? null;
+                        $premiumPlan      = $firmSub->plan ?? 'premium';
+                        if ($firmSub->expires_at) {
+                            $premiumDaysRemaining = max(0, (int) now()->diffInDays($firmSub->expires_at, false));
+                        }
+                    }
+                }
+            }
+
+            $lookingFor = null;
+            $preferredCategories = null;
             if ($user->role === 'student') {
                 $studentProfile = DB::table('student_profiles')
                     ->where('user_id', $user->id)

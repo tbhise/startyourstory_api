@@ -7,6 +7,8 @@ use App\Jobs\DispatchMailJob;
 use App\Jobs\SendVerificationEmailJob;
 use App\Jobs\SendWelcomeEmailJob;
 use App\Mail\ApplicationDigestMail;
+use App\Mail\CreatorAcceptedMail;
+use App\Mail\CreatorSelectedMail;
 use App\Mail\FirmApprovedMail;
 use App\Mail\FirmRejectedMail;
 use App\Mail\InterviewAcceptedMail;
@@ -240,6 +242,53 @@ class EmailNotificationService
             $mailable,
             "Interview Reschedule Accepted — {$firmName}",
             EmailPurpose::INTERVIEW_RESCHEDULE_ACCEPTED
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Creator Marketplace
+    // -------------------------------------------------------------------------
+
+    /** Sent to creator when a firm selects their bid. */
+    public function sendCreatorSelected(
+        string $creatorEmail,
+        string $creatorName,
+        string $projectTitle,
+        int    $bidId
+    ): void {
+        $base       = config('app.frontend_url', 'https://startyourstory.in');
+        $respondUrl = "{$base}/creator-marketplace/my-bids/{$bidId}";
+
+        $mailable = new CreatorSelectedMail($creatorName, $projectTitle, $respondUrl);
+
+        $this->queue(
+            $creatorEmail,
+            'student',
+            $mailable,
+            "You've been selected for \"{$projectTitle}\" — Start Your Story",
+            EmailPurpose::CREATOR_SELECTED
+        );
+    }
+
+    /** Sent to firm when creator accepts the contract. */
+    public function sendCreatorAccepted(
+        string $firmEmail,
+        string $firmName,
+        string $creatorName,
+        string $projectTitle,
+        int    $engagementId
+    ): void {
+        $base        = config('app.frontend_url', 'https://startyourstory.in');
+        $contractUrl = "{$base}/creator-marketplace/engagement/{$engagementId}";
+
+        $mailable = new CreatorAcceptedMail($firmName, $creatorName, $projectTitle, $contractUrl);
+
+        $this->queue(
+            $firmEmail,
+            'firm',
+            $mailable,
+            "{$creatorName} accepted \"{$projectTitle}\" — Start Your Story",
+            EmailPurpose::CREATOR_ACCEPTED
         );
     }
 

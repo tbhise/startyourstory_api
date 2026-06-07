@@ -184,7 +184,7 @@ Schedule::call(function () {
             'updated_at' => now(),
         ]);
     }
-})->dailyAt('02:15')->name('queue-creator-payouts')->withoutOverlapping();
+})->dailyAt('01:20')->name('queue-creator-payouts')->withoutOverlapping();
 
 /*
 |--------------------------------------------------------------------------

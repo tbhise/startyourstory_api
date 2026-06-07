@@ -17,6 +17,8 @@ enum EmailPurpose: string
     case INTERVIEW_REMINDER_24H = 'interview_reminder_24h';
     case INTERVIEW_REMINDER_1H  = 'interview_reminder_1h';
     case APPLICATION_DIGEST    = 'application_digest';
+    case CREATOR_SELECTED      = 'creator_selected';
+    case CREATOR_ACCEPTED      = 'creator_accepted';
     case BILLING               = 'billing';
     case MARKETING             = 'marketing';
 
@@ -36,6 +38,8 @@ enum EmailPurpose: string
             self::INTERVIEW_REMINDER_24H        => 'interview',
             self::INTERVIEW_REMINDER_1H         => 'interview',
             self::APPLICATION_DIGEST     => 'support',
+            self::CREATOR_SELECTED       => 'default',
+            self::CREATOR_ACCEPTED       => 'default',
             self::BILLING                => 'billing',
             self::MARKETING              => 'marketing',
         };
@@ -48,7 +52,8 @@ enum EmailPurpose: string
             self::INTERVIEW_REJECTED,
             self::APPLICATION_DIGEST,
             self::FIRM_APPROVED,
-            self::FIRM_REJECTED          => 'firm',
+            self::FIRM_REJECTED,
+            self::CREATOR_ACCEPTED       => 'firm',
             self::BILLING,
             self::MARKETING              => 'user',
             default                      => 'student',

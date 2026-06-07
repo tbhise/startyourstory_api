@@ -270,16 +270,18 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
 });
 
 // ── Admin — Creator Marketplace Payments ─────────────────────────────────────
+Route::get('/admin/creator-engagements/{id}',          [AdminController::class, 'getEngagementSummary']);
 Route::get('/admin/creator-payments',                  [AdminController::class, 'getCreatorPayments']);
 Route::post('/admin/creator-payments/{id}/approve',    [AdminController::class, 'approveCreatorPayment']);
 Route::post('/admin/creator-payments/{id}/reject',     [AdminController::class, 'rejectCreatorPayment']);
 
 // ── Admin — Creator Payouts ───────────────────────────────────────────────────
-Route::get('/admin/creator-payouts',                   [AdminPayoutsController::class, 'getPayouts']);
-Route::get('/admin/creator-payouts/stats',             [AdminPayoutsController::class, 'getStats']);
-Route::get('/admin/creator-payouts/pending-count',     [AdminPayoutsController::class, 'pendingCount']);
-Route::post('/admin/creator-payouts/{id}/mark-paid',   [AdminPayoutsController::class, 'markPaid']);
-Route::post('/admin/creator-payouts/{id}/mark-failed', [AdminPayoutsController::class, 'markFailed']);
+Route::get('/admin/creator-payouts',                       [AdminPayoutsController::class, 'getPayouts']);
+Route::get('/admin/creator-payouts/stats',                 [AdminPayoutsController::class, 'getStats']);
+Route::get('/admin/creator-payouts/pending-count',         [AdminPayoutsController::class, 'pendingCount']);
+Route::post('/admin/creator-payouts/flush-approved',       [AdminPayoutsController::class, 'flushApproved']);
+Route::post('/admin/creator-payouts/{id}/mark-paid',       [AdminPayoutsController::class, 'markPaid']);
+Route::post('/admin/creator-payouts/{id}/mark-failed',     [AdminPayoutsController::class, 'markFailed']);
 Route::get('/admin/commission-rate',                   [AdminPayoutsController::class, 'getCommissionRate']);
 Route::post('/admin/commission-rate',                  [AdminPayoutsController::class, 'updateCommissionRate']);
 Route::get('/admin/platform-settings',                 [AdminSettingsController::class, 'getSettings']);

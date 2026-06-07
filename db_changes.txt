@@ -453,8 +453,6 @@ ADD INDEX `index` (`id` ASC, `is_deleted` ASC, `token_expires_at` ASC, `api_toke
 ;
 
 
-======================== All Done on production =================
-
 ## ======================== 02/06/2026 - Firm Manual Verification ========================
 
 ALTER TABLE firm_profiles

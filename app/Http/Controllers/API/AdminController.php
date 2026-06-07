@@ -1210,4 +1210,59 @@ class AdminController extends Controller
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN — Read-only engagement summary (for payout context)
+    // Uses admin_token auth only — no user auth, no impersonation.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getEngagementSummary(Request $request, $id): \Illuminate\Http\JsonResponse
+    {
+        $admin = $this->adminFromRequest($request);
+        if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+        try {
+            $engagement = DB::table('creator_engagements as e')
+                ->join('creator_projects as p',  'p.id',  '=', 'e.creator_requirement_id')
+                ->join('firm_profiles as fp',     'fp.id', '=', 'e.firm_id')
+                ->join('users as cu',             'cu.id', '=', 'e.creator_id')
+                ->where('e.id', $id)
+                ->select([
+                    'e.id', 'e.status', 'e.accepted_bid_amount', 'e.delivery_days', 'e.created_at',
+                    'p.title as project_title', 'p.category', 'p.description',
+                    'fp.firm_name',
+                    'cu.name as creator_name', 'cu.email as creator_email',
+                ])
+                ->first();
+
+            if (! $engagement) {
+                return response()->json(['status' => false, 'message' => 'Engagement not found'], 404);
+            }
+
+            $submissionCount = (int) DB::table('engagement_submissions')->where('engagement_id', $id)->count();
+            $paymentStatus   = DB::table('creator_engagement_payments')->where('engagement_id', $id)->value('status');
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'id'                  => (int) $engagement->id,
+                    'status'              => $engagement->status,
+                    'project_title'       => $engagement->project_title,
+                    'category'            => $engagement->category,
+                    'description'         => $engagement->description,
+                    'accepted_bid_amount' => (float) $engagement->accepted_bid_amount,
+                    'delivery_days'       => (int) $engagement->delivery_days,
+                    'firm_name'           => $engagement->firm_name,
+                    'creator_name'        => $engagement->creator_name,
+                    'creator_email'       => $engagement->creator_email,
+                    'submission_count'    => $submissionCount,
+                    'payment_status'      => $paymentStatus,
+                    'created_at'          => $engagement->created_at,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin@getEngagementSummary: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
 }

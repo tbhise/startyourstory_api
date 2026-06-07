@@ -37,6 +37,17 @@ class PublicController extends Controller
             'updated_at' => now(),
         ]);
 
+        // Notify admin
+        try {
+            $adminEmail = config('mail.admin_address', env('ADMIN_EMAIL', 'admin@startyourstory.in'));
+            \Illuminate\Support\Facades\Mail::raw(
+                "New contact form submission\n\nName: {$request->name}\nEmail: {$request->email}\nSubject: {$request->subject}\n\n{$request->message}",
+                fn ($m) => $m->to($adminEmail)->subject("Contact Form: {$request->subject}")
+            );
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Contact form notification failed: ' . $e->getMessage());
+        }
+
         return response()->json([
             'status'  => true,
             'message' => "Thanks for reaching out! We'll get back to you within 24 hours.",

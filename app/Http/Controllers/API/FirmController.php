@@ -510,28 +510,18 @@ class FirmController extends Controller
                 !empty($request->exposure) &&
                 is_array($request->exposure)
             ) {
-                $query->where(function ($q) use ($request) {
-                    foreach ($request->exposure as $exposure) {
-                        if (
-                            strtolower($exposure) === 'overall'
-                        ) {
-                            $q->orWhere(
-                                'firm_profiles.exposure_type',
-                                'LIKE',
-                                '%"overall"%'
-                            );
-                        }
-                        if (
-                            strtolower($exposure) === 'department wise'
-                        ) {
-                            $q->orWhere(
-                                'firm_profiles.exposure_type',
-                                'NOT LIKE',
-                                '%"overall"%'
-                            );
-                        }
+                $exposureLower = array_map('strtolower', $request->exposure);
+                // "Overall" selected → no restriction (all firms qualify)
+                // "Domain Wise" only → exclude firms that have overall exposure
+                if (!in_array('overall', $exposureLower)) {
+                    if (in_array('domain wise', $exposureLower) || in_array('department wise', $exposureLower)) {
+                        $query->where(
+                            'firm_profiles.exposure_type',
+                            'NOT LIKE',
+                            '%"overall"%'
+                        );
                     }
-                });
+                }
             }
             if (
                 !empty($request->departments) &&

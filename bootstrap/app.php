@@ -14,6 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\XRobotsTagMiddleware::class);
         $middleware->alias([
             'firm.verified' => \App\Http\Middleware\FirmVerifiedMiddleware::class,
         ]);

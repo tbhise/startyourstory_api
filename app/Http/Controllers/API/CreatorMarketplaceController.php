@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use App\Helpers\SubscriptionHelper;
 use Illuminate\Support\Str;
 
 class CreatorMarketplaceController extends Controller
@@ -102,6 +103,14 @@ class CreatorMarketplaceController extends Controller
 
             if (! $firmProfile) {
                 return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+            }
+
+            if (! SubscriptionHelper::isPremiumFirm($firmProfile->id)) {
+                return response()->json([
+                    'status'  => false,
+                    'code'    => 'PREMIUM_REQUIRED',
+                    'message' => 'A premium subscription is required to post on the Creator Marketplace.',
+                ], 403);
             }
 
             $validator = Validator::make($request->all(), [

@@ -100,7 +100,7 @@ class FirmController extends Controller
 
             app(EmailNotificationService::class)->sendVerificationEmail($user);
 
-              // $userType = 'firm';
+            // $userType = 'firm';
 
             // SendWelcomeEmailJob::dispatch(
             //     $request->email,
@@ -714,7 +714,7 @@ class FirmController extends Controller
                 ->select(
                     'firm_profiles.*',
                     'users.mobile as primary_mobile',
-                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
+                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true and jobs.status ="Active") as current_openings')
                 )
                 ->leftJoin('users', 'users.id', 'firm_profiles.user_id')
                 ->where('firm_profiles.id', $id)

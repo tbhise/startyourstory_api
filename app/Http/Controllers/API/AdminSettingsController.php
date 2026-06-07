@@ -40,6 +40,12 @@ class AdminSettingsController extends Controller
         if (!isset($settings['free_applications_limit'])) {
             $settings['free_applications_limit'] = '3';
         }
+        if (!isset($settings['online_payments_enabled'])) {
+            $settings['online_payments_enabled'] = 'true';
+        }
+        if (!isset($settings['show_students_to_firms'])) {
+            $settings['show_students_to_firms'] = 'true';
+        }
 
         return response()->json(['status' => true, 'data' => $settings]);
     }
@@ -53,7 +59,7 @@ class AdminSettingsController extends Controller
         $admin = $this->admin($request);
         if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
 
-        $allowed = ['show_companies_to_students', 'free_applications_limit'];
+        $allowed = ['show_companies_to_students', 'free_applications_limit', 'online_payments_enabled', 'show_students_to_firms'];
         if (!in_array($key, $allowed)) {
             return response()->json(['status' => false, 'message' => 'Unknown setting key.'], 422);
         }
@@ -78,12 +84,25 @@ class AdminSettingsController extends Controller
             ->where('key', 'show_companies_to_students')
             ->value('value');
 
-        // Default to true when key not yet seeded
-        $showCompanies = ($show === null) ? true : ($show === 'true' || $show === '1');
+        $onlinePay = DB::table('platform_settings')
+            ->where('key', 'online_payments_enabled')
+            ->value('value');
+
+        $showStudents = DB::table('platform_settings')
+            ->where('key', 'show_students_to_firms')
+            ->value('value');
+
+        $showCompanies        = ($show === null)         ? true : ($show === 'true'         || $show === '1');
+        $onlinePaymentsEnabled = ($onlinePay === null)   ? true : ($onlinePay === 'true'    || $onlinePay === '1');
+        $showStudentsToFirms  = ($showStudents === null) ? true : ($showStudents === 'true' || $showStudents === '1');
 
         return response()->json([
             'status' => true,
-            'data'   => ['show_companies_to_students' => $showCompanies],
+            'data'   => [
+                'show_companies_to_students' => $showCompanies,
+                'online_payments_enabled'    => $onlinePaymentsEnabled,
+                'show_students_to_firms'     => $showStudentsToFirms,
+            ],
         ]);
     }
 }

@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\API\AuthController;
+use App\Http\Controllers\API\PasswordResetController;
+use App\Http\Controllers\API\ReferralController;
 use App\Http\Controllers\API\FirmController;
 use App\Http\Controllers\API\FirmDashboardController;
 use Illuminate\Http\Request;
@@ -37,6 +39,9 @@ Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::post('/login',           [AuthController::class, 'login']);
 Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
+
+Route::post('/auth/forgot-password', [PasswordResetController::class, 'forgotPassword']);
+Route::post('/auth/reset-password',  [PasswordResetController::class, 'resetPassword']);
 
 Route::post(
     '/email/send-verification-link',
@@ -80,6 +85,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/applications/{id}/respondInterview',       [JobsController::class, 'respondInterview']);
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
+    Route::get('/referrals', [ReferralController::class, 'index']);
 
     // ── Student wallet ──
     Route::post('/wallet',                          [WalletController::class, 'getWallet']);

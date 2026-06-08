@@ -1403,3 +1403,37 @@ CREATE TABLE student_subscriptions (
     INDEX idx_expires  (expires_at, status)
 );
 -- ROLLBACK: DROP TABLE student_subscriptions;
+
+
+=========================
+
+-- ============================================================
+--  Password Reset — Database Changes
+--  File: db_changes.txt
+--  Run: php artisan migrate   (do NOT run automatically)
+-- ============================================================
+
+-- 1. Migration file to create/run:
+--    database/migrations/2026_06_08_000001_add_password_reset_to_users_table.php
+
+-- 2. SQL equivalent (for manual inspection / direct DB apply):
+
+ALTER TABLE `users`
+    ADD COLUMN `password_reset_token`      VARCHAR(255) NULL DEFAULT NULL AFTER `remember_token`,
+    ADD COLUMN `password_reset_expires_at` TIMESTAMP   NULL DEFAULT NULL AFTER `password_reset_token`;
+
+-- Index for fast token lookup on /auth/reset-password:
+ALTER TABLE `users`
+    ADD INDEX `idx_users_password_reset_token` (`password_reset_token`);
+
+-- ============================================================
+--  Notes
+-- ============================================================
+-- * password_reset_token stores the SHA-256 hash of the plain token,
+--   never the raw value.
+-- * password_reset_expires_at is set to NOW() + 60 minutes at issue time.
+-- * Both columns are nulled out immediately after a successful reset,
+--   preventing token reuse.
+-- * No new table is needed; adding two nullable columns to users is
+--   consistent with how api_token / token_expires_at are stored.
+-- ============================================================

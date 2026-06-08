@@ -220,6 +220,8 @@ class AuthController extends Controller
                         : null,
                     'verification_status' => $verificationStatus,
                     'rejection_reason' => $rejectionReason,
+                    'referral_code' => $user->referral_code ?? null,
+                    'referral_count' => $user->referral_count ?? 0,
                 ]
             ]);
         } catch (\Exception $e) {

@@ -19,6 +19,7 @@ enum EmailPurpose: string
     case APPLICATION_DIGEST    = 'application_digest';
     case CREATOR_SELECTED      = 'creator_selected';
     case CREATOR_ACCEPTED      = 'creator_accepted';
+    case PASSWORD_RESET        = 'password_reset';
     case BILLING               = 'billing';
     case MARKETING             = 'marketing';
 
@@ -40,6 +41,7 @@ enum EmailPurpose: string
             self::APPLICATION_DIGEST     => 'support',
             self::CREATOR_SELECTED       => 'default',
             self::CREATOR_ACCEPTED       => 'default',
+            self::PASSWORD_RESET         => 'verify',
             self::BILLING                => 'billing',
             self::MARKETING              => 'marketing',
         };

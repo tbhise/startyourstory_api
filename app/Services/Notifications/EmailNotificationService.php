@@ -9,6 +9,7 @@ use App\Jobs\SendWelcomeEmailJob;
 use App\Mail\ApplicationDigestMail;
 use App\Mail\CreatorAcceptedMail;
 use App\Mail\CreatorSelectedMail;
+use App\Mail\PasswordResetMail;
 use App\Mail\FirmApprovedMail;
 use App\Mail\FirmRejectedMail;
 use App\Mail\InterviewAcceptedMail;
@@ -72,6 +73,22 @@ class EmailNotificationService
         ]);
 
         SendVerificationEmailJob::dispatch($user, $log->id);
+    }
+
+    /**
+     * Send password reset email containing the signed reset URL.
+     */
+    public function sendPasswordResetEmail(string $email, string $resetUrl): void
+    {
+        $mailable = new PasswordResetMail($resetUrl);
+
+        $this->queue(
+            $email,
+            'user',
+            $mailable,
+            'Reset Your Password — Start Your Story',
+            EmailPurpose::PASSWORD_RESET
+        );
     }
 
     /**

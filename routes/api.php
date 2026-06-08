@@ -28,6 +28,7 @@ use App\Http\Controllers\API\CreatorMarketplaceController;
 use App\Http\Controllers\API\PublicController;
 use App\Http\Controllers\API\AdminSettingsController;
 use App\Http\Controllers\API\AdminUserController;
+use App\Http\Controllers\API\SessionController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
@@ -53,6 +54,14 @@ Route::get(
 );
 
 Route::middleware([ApiAuthMiddleware::class])->group(function () {
+
+    Route::post('/auth/change-password', [AuthController::class, 'changePassword']);
+
+    // ── Session management ──
+    Route::get('/sessions',           [SessionController::class, 'index']);
+    Route::delete('/sessions/all',    [SessionController::class, 'destroyAll']);   // must be before /{id}
+    Route::delete('/sessions/{id}',   [SessionController::class, 'destroy']);
+    Route::get('/login-history',      [SessionController::class, 'loginHistory']);
 
     // ── Available to all authenticated users (no firm-verification gate) ──
     Route::post('/updateProfile',        [UserController::class, 'updateProfile']);

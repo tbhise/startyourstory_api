@@ -1437,3 +1437,68 @@ ALTER TABLE `users`
 -- * No new table is needed; adding two nullable columns to users is
 --   consistent with how api_token / token_expires_at are stored.
 -- ============================================================
+
+
+-- ============================================================
+--  Phase 3 – Active Sessions & Login History  (2026-06-08)
+-- ============================================================
+
+-- user_sessions: one row per active login session.
+-- token is the same value stored in users.api_token for that session.
+-- expires_at mirrors token_expires_at so sessions are self-contained.
+-- device_type: 'desktop' | 'mobile' | 'tablet'
+-- location: resolved at login time via ip-api.com (best-effort, nullable)
+CREATE TABLE `user_sessions` (
+    `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id`          BIGINT UNSIGNED NOT NULL,
+    `token`            VARCHAR(80)     NOT NULL,
+    `device_type`      VARCHAR(20)     NULL,
+    `browser`          VARCHAR(100)    NULL,
+    `os`               VARCHAR(100)    NULL,
+    `ip_address`       VARCHAR(45)     NULL,
+    `location`         VARCHAR(255)    NULL,
+    `expires_at`       DATETIME        NULL,
+    `last_activity_at` DATETIME        NULL,
+    `created_at`       TIMESTAMP       NULL,
+    `updated_at`       TIMESTAMP       NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_user_sessions_token`    (`token`),
+    KEY       `idx_user_sessions_user_id`  (`user_id`),
+    CONSTRAINT `fk_user_sessions_user_id`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+);
+
+-- login_history: append-only audit log; rows are never updated.
+CREATE TABLE `login_history` (
+    `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `user_id`      BIGINT UNSIGNED NOT NULL,
+    `ip_address`   VARCHAR(45)  NULL,
+    `device_type`  VARCHAR(20)  NULL,
+    `browser`      VARCHAR(100) NULL,
+    `os`           VARCHAR(100) NULL,
+    `location`     VARCHAR(255) NULL,
+    `logged_in_at` DATETIME     NOT NULL,
+    `created_at`   TIMESTAMP    NULL,
+    PRIMARY KEY (`id`),
+    KEY `idx_login_history_user_id`     (`user_id`),
+    KEY `idx_login_history_logged_in_at`(`logged_in_at`),
+    CONSTRAINT `fk_login_history_user_id`
+        FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+);
+
+-- ── Rollback ──────────────────────────────────────────────────────────────
+-- ALTER TABLE `user_sessions`  DROP FOREIGN KEY `fk_user_sessions_user_id`;
+-- ALTER TABLE `login_history`  DROP FOREIGN KEY `fk_login_history_user_id`;
+-- DROP TABLE IF EXISTS `login_history`;
+-- DROP TABLE IF EXISTS `user_sessions`;
+
+-- ============================================================
+--  Notes (Phase 3)
+-- ============================================================
+-- * ApiAuthMiddleware now checks user_sessions first (new arch), then falls
+--   back to users.api_token for sessions created before this migration.
+-- * Each login inserts one row in user_sessions + one row in login_history.
+-- * Logout deletes the user_sessions row and nulls users.api_token.
+-- * Future plan-limit hook is stubbed (commented) inside AuthController::login().
+--   Basic=1 / Standard=3 / Enterprise=unlimited. NOT enforced yet.
+-- ============================================================

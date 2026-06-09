@@ -71,8 +71,8 @@ ADD COLUMN remarks TEXT NULL AFTER screenshot_url;
 
 CREATE TABLE premium_requests (
 
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    firm_id BIGINT UNSIGNED NOT NULL,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    firm_id BIGINT  NOT NULL,
     contact_person VARCHAR(255) NOT NULL,
     firm_name VARCHAR(255) NOT NULL,
     plan VARCHAR(100) NOT NULL,
@@ -85,7 +85,7 @@ CREATE TABLE premium_requests (
         'rejected'
     ) DEFAULT 'pending',
     remarks TEXT NULL,
-    approved_by BIGINT UNSIGNED NULL,
+    approved_by BIGINT  NULL,
     approved_at TIMESTAMP NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
@@ -128,7 +128,7 @@ update startyourstory.city_master set state_name='Rajastan' where state_name='Ra
 ----
 CREATE TABLE admin_users (
 
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
 
     name VARCHAR(255) NOT NULL,
 
@@ -156,7 +156,7 @@ ADD COLUMN `amount` VARCHAR(45) NULL AFTER `plan`;
 
 ALTER TABLE users
 ADD COLUMN referral_code VARCHAR(50) UNIQUE NULL,
-ADD COLUMN referred_by BIGINT UNSIGNED NULL,
+ADD COLUMN referred_by BIGINT  NULL,
 ADD COLUMN referral_count INT DEFAULT 0;
 
 =======================================================
@@ -173,7 +173,7 @@ ADD COLUMN is_visible_to_firm TINYINT(1) DEFAULT 0;
 -- =========================================
 
 CREATE TABLE plans (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
 
     code VARCHAR(100) UNIQUE NOT NULL,
 
@@ -299,9 +299,9 @@ ADD INDEX idx_status (status);
 -- =========================================
 
 CREATE TABLE payment_logs (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
 
-    firm_subscription_id BIGINT UNSIGNED NULL,
+    firm_subscription_id BIGINT  NULL,
 
     event_type VARCHAR(255) NOT NULL,
 
@@ -319,7 +319,7 @@ CREATE TABLE payment_logs (
 -- =========================================
 
 CREATE TABLE coupons (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
 
     code VARCHAR(100) UNIQUE NOT NULL,
 
@@ -352,13 +352,13 @@ CREATE TABLE coupons (
 -- =========================================
 
 CREATE TABLE coupon_usages (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
 
-    coupon_id BIGINT UNSIGNED NOT NULL,
+    coupon_id BIGINT  NOT NULL,
 
-    firm_id BIGINT UNSIGNED NOT NULL,
+    firm_id BIGINT  NOT NULL,
 
-    firm_subscription_id BIGINT UNSIGNED NOT NULL,
+    firm_subscription_id BIGINT  NOT NULL,
 
     discount_amount DECIMAL(10,2) NOT NULL,
 
@@ -385,13 +385,13 @@ CHANGE COLUMN `experience_department` `experience_department` JSON NULL DEFAULT 
 ##================ 29052026
 
 CREATE TABLE reported_profiles (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    student_id BIGINT UNSIGNED NOT NULL,
-    reported_by BIGINT UNSIGNED NOT NULL,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    student_id BIGINT  NOT NULL,
+    reported_by BIGINT  NOT NULL,
     reason VARCHAR(100) NOT NULL,
     remarks TEXT NULL,
     status ENUM('pending','reviewed','dismissed') DEFAULT 'pending',
-    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_by BIGINT  NULL,
     reviewed_at TIMESTAMP NULL,
     created_at TIMESTAMP NULL,
     updated_at TIMESTAMP NULL,
@@ -426,17 +426,17 @@ ADD COLUMN razorpay_response JSON NULL AFTER payment_method;
 ---------------------------------31/05/2026
 
 CREATE TABLE queue_jobs (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
     queue VARCHAR(255) NOT NULL,
     payload LONGTEXT NOT NULL,
-    attempts TINYINT UNSIGNED NOT NULL,
-    reserved_at INT UNSIGNED NULL,
-    available_at INT UNSIGNED NOT NULL,
-    created_at INT UNSIGNED NOT NULL
+    attempts TINYINT  NOT NULL,
+    reserved_at INT  NULL,
+    available_at INT  NOT NULL,
+    created_at INT  NOT NULL
 );
 
 CREATE TABLE failed_jobs (
-    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id BIGINT  AUTO_INCREMENT PRIMARY KEY,
     uuid VARCHAR(255) NOT NULL UNIQUE,
     connection TEXT NOT NULL,
     queue TEXT NOT NULL,
@@ -477,7 +477,7 @@ CHANGE COLUMN `show_in_directory` `show_in_directory` TINYINT(1) NULL DEFAULT 1 
 
 -- current_firm_id / current_firm_name were missing — profile updates were failing silently
 ALTER TABLE `startyourstory`.`student_profiles`
-ADD COLUMN `current_firm_id`   BIGINT UNSIGNED NULL AFTER `portfolio_url`,
+ADD COLUMN `current_firm_id`   BIGINT  NULL AFTER `portfolio_url`,
 ADD COLUMN `current_firm_name` VARCHAR(255)     NULL AFTER `current_firm_id`,
 ADD COLUMN `experience_years`  VARCHAR(50)      NULL AFTER `current_firm_name`,
 ADD COLUMN `industry_worked_in` VARCHAR(255)    NULL AFTER `experience_years`,
@@ -506,8 +506,8 @@ WHERE fs.status = 'active'
 ## separately so the UI can show all three without extra queries.
 
 CREATE TABLE student_wallets (
-    id                      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id                 BIGINT UNSIGNED NOT NULL,
+    id                      BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id                 BIGINT  NOT NULL,
     available_balance       DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
     hold_balance            DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
     consumed_balance        DECIMAL(10,2)   NOT NULL DEFAULT 0.00,
@@ -533,14 +533,14 @@ CREATE TABLE student_wallets (
 ##   refund  – exceptional manual refund by admin
 
 CREATE TABLE wallet_transactions (
-    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id          BIGINT UNSIGNED NOT NULL,
+    id               BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id          BIGINT  NOT NULL,
     amount           DECIMAL(10,2)   NOT NULL,
     type             ENUM('credit','hold','release','consume','refund') NOT NULL,
     reference_type   VARCHAR(50)     NULL COMMENT 'recharge | application',
-    reference_id     BIGINT UNSIGNED NULL COMMENT 'wallet_recharges.id or application_holds.id',
-    job_id           BIGINT UNSIGNED NULL,
-    application_id   BIGINT UNSIGNED NULL,
+    reference_id     BIGINT  NULL COMMENT 'wallet_recharges.id or application_holds.id',
+    job_id           BIGINT  NULL,
+    application_id   BIGINT  NULL,
     description      VARCHAR(255)    NULL,
     balance_before   DECIMAL(10,2)   NULL COMMENT 'available_balance before this operation',
     balance_after    DECIMAL(10,2)   NULL COMMENT 'available_balance after this operation',
@@ -559,7 +559,7 @@ CREATE TABLE wallet_transactions (
 ## Adding a new pack = inserting a row; no code change needed.
 
 CREATE TABLE wallet_recharge_packs (
-    id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    id         BIGINT  AUTO_INCREMENT PRIMARY KEY,
     amount     DECIMAL(10,2) NOT NULL,
     label      VARCHAR(100)  NOT NULL,
     is_active  TINYINT(1)    NOT NULL DEFAULT 1,
@@ -590,8 +590,8 @@ INSERT INTO wallet_recharge_packs (amount, label, is_active, sort_order) VALUES
 ##   expired  – online payment order expired without completion
 
 CREATE TABLE wallet_recharges (
-    id                  BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id             BIGINT UNSIGNED NOT NULL,
+    id                  BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id             BIGINT  NOT NULL,
     amount              DECIMAL(10,2)   NOT NULL,
     payment_method      ENUM('razorpay','manual') NOT NULL DEFAULT 'razorpay',
     status              ENUM('pending','approved','rejected','expired') NOT NULL DEFAULT 'pending',
@@ -612,12 +612,12 @@ CREATE TABLE wallet_recharges (
 
     -- Admin processing
     remarks             TEXT         NULL,
-    approved_by         BIGINT UNSIGNED NULL,
+    approved_by         BIGINT  NULL,
     approved_at         TIMESTAMP    NULL,
     rejected_at         TIMESTAMP    NULL,
 
     -- Ledger link – set after wallet is credited
-    wallet_transaction_id BIGINT UNSIGNED NULL,
+    wallet_transaction_id BIGINT  NULL,
 
     created_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP    NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -641,10 +641,10 @@ CREATE TABLE wallet_recharges (
 ##   expired   – no recruiter action within 10 days; amount returned
 
 CREATE TABLE application_holds (
-    id                    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id               BIGINT UNSIGNED NOT NULL,
-    application_id        BIGINT UNSIGNED NOT NULL,
-    job_id                BIGINT UNSIGNED NOT NULL,
+    id                    BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id               BIGINT  NOT NULL,
+    application_id        BIGINT  NOT NULL,
+    job_id                BIGINT  NOT NULL,
     amount                DECIMAL(10,2)   NOT NULL DEFAULT 49.00,
     status                ENUM('held','consumed','released','expired') NOT NULL DEFAULT 'held',
     held_at               TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
@@ -654,8 +654,8 @@ CREATE TABLE application_holds (
     release_reason        VARCHAR(100)    NULL COMMENT 'rejected | auto_expired | refund',
 
     -- Ledger links
-    hold_transaction_id   BIGINT UNSIGNED NULL COMMENT 'wallet_transactions.id for the hold entry',
-    settle_transaction_id BIGINT UNSIGNED NULL COMMENT 'wallet_transactions.id for consume/release/expire',
+    hold_transaction_id   BIGINT  NULL COMMENT 'wallet_transactions.id for the hold entry',
+    settle_transaction_id BIGINT  NULL COMMENT 'wallet_transactions.id for consume/release/expire',
 
     created_at            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at            TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -675,7 +675,7 @@ CREATE TABLE application_holds (
 ALTER TABLE applications
 ADD COLUMN is_free_application TINYINT(1)      NOT NULL DEFAULT 0     AFTER is_visible_to_firm,
 ADD COLUMN application_fee     DECIMAL(10,2)   NOT NULL DEFAULT 0.00  AFTER is_free_application,
-ADD COLUMN wallet_hold_id      BIGINT UNSIGNED NULL                    AFTER application_fee;
+ADD COLUMN wallet_hold_id      BIGINT  NULL                    AFTER application_fee;
 
 -- Index for hold lookups
 ALTER TABLE applications
@@ -964,7 +964,7 @@ CREATE TABLE `creator_projects` (
   `budget_type`      ENUM('fixed','range','negotiable') NOT NULL DEFAULT 'fixed',
   `budget_min`       DECIMAL(12,2) NULL,
   `budget_max`       DECIMAL(12,2) NULL,
-  `delivery_days`    SMALLINT UNSIGNED NULL,
+  `delivery_days`    SMALLINT  NULL,
   `skills_required`  JSON          NULL,
   `attachments`      JSON          NULL,
   `status`           ENUM('draft','published','closed','cancelled') NOT NULL DEFAULT 'draft',
@@ -990,7 +990,7 @@ CREATE TABLE `creator_project_bids` (
   `project_id`       BIGINT        NOT NULL,
   `creator_id`       BIGINT        NOT NULL COMMENT 'users.id of the bidding creator',
   `bid_amount`       DECIMAL(12,2) NOT NULL,
-  `delivery_days`    SMALLINT UNSIGNED NOT NULL,
+  `delivery_days`    SMALLINT  NOT NULL,
   `proposal`         TEXT          NOT NULL,
   `portfolio_links`  JSON          NULL,
   `status`           ENUM('pending','shortlisted','selected','rejected','withdrawn') NOT NULL DEFAULT 'pending',
@@ -1022,13 +1022,13 @@ ALTER TABLE `creator_project_bids`
 
 -- creator_engagements: accepted project contracts
 CREATE TABLE `creator_engagements` (
-  `id`                      BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `creator_requirement_id`  BIGINT UNSIGNED NOT NULL,
-  `bid_id`                  BIGINT UNSIGNED NOT NULL,
-  `creator_id`              BIGINT UNSIGNED NOT NULL,
-  `firm_id`                 BIGINT UNSIGNED NOT NULL,
+  `id`                      BIGINT  NOT NULL AUTO_INCREMENT,
+  `creator_requirement_id`  BIGINT  NOT NULL,
+  `bid_id`                  BIGINT  NOT NULL,
+  `creator_id`              BIGINT  NOT NULL,
+  `firm_id`                 BIGINT  NOT NULL,
   `accepted_bid_amount`     DECIMAL(12,2)   NOT NULL,
-  `delivery_days`           SMALLINT UNSIGNED NOT NULL DEFAULT 7,
+  `delivery_days`           SMALLINT  NOT NULL DEFAULT 7,
   `status` ENUM(
     'awaiting_payment','payment_pending','active',
     'submitted','revision_requested','approved',
@@ -1051,8 +1051,8 @@ CREATE TABLE `creator_engagements` (
 
 -- creator_marketplace_notifications: in-app notifications
 CREATE TABLE `creator_marketplace_notifications` (
-  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `user_id`     BIGINT UNSIGNED NOT NULL,
+  `id`          BIGINT  NOT NULL AUTO_INCREMENT,
+  `user_id`     BIGINT  NOT NULL,
   `type`        VARCHAR(80)     NOT NULL,
   `title`       VARCHAR(255)    NOT NULL,
   `body`        TEXT            NULL,
@@ -1082,11 +1082,11 @@ MODIFY COLUMN status ENUM(
 
 -- engagement_briefs: firm's project brief (one per engagement)
 CREATE TABLE `engagement_briefs` (
-  `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `engagement_id`    BIGINT UNSIGNED NOT NULL,
+  `id`               BIGINT  NOT NULL AUTO_INCREMENT,
+  `engagement_id`    BIGINT  NOT NULL,
   `detailed_brief`   TEXT            NOT NULL,
   `additional_notes` TEXT            NULL,
-  `updated_by`       BIGINT UNSIGNED NOT NULL,
+  `updated_by`       BIGINT  NOT NULL,
   `created_at`       TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`       TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -1098,13 +1098,13 @@ CREATE TABLE `engagement_briefs` (
 
 -- engagement_brief_attachments: files attached to the brief
 CREATE TABLE `engagement_brief_attachments` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `engagement_id` BIGINT UNSIGNED NOT NULL,
+  `id`            BIGINT  NOT NULL AUTO_INCREMENT,
+  `engagement_id` BIGINT  NOT NULL,
   `file_path`     VARCHAR(500)    NOT NULL,
   `original_name` VARCHAR(255)    NOT NULL,
   `mime_type`     VARCHAR(100)    NULL,
-  `file_size`     INT UNSIGNED    NULL,
-  `uploaded_by`   BIGINT UNSIGNED NOT NULL,
+  `file_size`     INT     NULL,
+  `uploaded_by`   BIGINT  NOT NULL,
   `created_at`    TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_eba_engagement` (`engagement_id`),
@@ -1115,14 +1115,14 @@ CREATE TABLE `engagement_brief_attachments` (
 
 -- engagement_submissions: one record per submission round
 CREATE TABLE `engagement_submissions` (
-  `id`             BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
-  `engagement_id`  BIGINT UNSIGNED  NOT NULL,
-  `creator_id`     BIGINT UNSIGNED  NOT NULL,
+  `id`             BIGINT   NOT NULL AUTO_INCREMENT,
+  `engagement_id`  BIGINT   NOT NULL,
+  `creator_id`     BIGINT   NOT NULL,
   `notes`          TEXT             NULL,
-  `revision_round` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `revision_round` TINYINT  NOT NULL DEFAULT 1,
   `status`         ENUM('submitted','revision_requested','approved') NOT NULL DEFAULT 'submitted',
   `revision_notes` TEXT             NULL,
-  `reviewed_by`    BIGINT UNSIGNED  NULL,
+  `reviewed_by`    BIGINT   NULL,
   `reviewed_at`    TIMESTAMP        NULL,
   `created_at`     TIMESTAMP        NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`     TIMESTAMP        NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1136,13 +1136,13 @@ CREATE TABLE `engagement_submissions` (
 
 -- engagement_submission_files: physical files and video links per submission
 CREATE TABLE `engagement_submission_files` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `submission_id` BIGINT UNSIGNED NOT NULL,
-  `engagement_id` BIGINT UNSIGNED NOT NULL,
+  `id`            BIGINT  NOT NULL AUTO_INCREMENT,
+  `submission_id` BIGINT  NOT NULL,
+  `engagement_id` BIGINT  NOT NULL,
   `file_path`     VARCHAR(500)    NULL,
   `original_name` VARCHAR(255)    NULL,
   `mime_type`     VARCHAR(100)    NULL,
-  `file_size`     INT UNSIGNED    NULL,
+  `file_size`     INT     NULL,
   `video_link`    VARCHAR(1000)   NULL,
   `created_at`    TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -1155,9 +1155,9 @@ CREATE TABLE `engagement_submission_files` (
 
 -- engagement_timeline: append-only event log for all workspace activity
 CREATE TABLE `engagement_timeline` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `engagement_id` BIGINT UNSIGNED NOT NULL,
-  `user_id`       BIGINT UNSIGNED NULL,
+  `id`            BIGINT  NOT NULL AUTO_INCREMENT,
+  `engagement_id` BIGINT  NOT NULL,
+  `user_id`       BIGINT  NULL,
   `role`          ENUM('firm','creator','system') NOT NULL,
   `event`         VARCHAR(100)    NOT NULL,
   `note`          TEXT            NULL,
@@ -1177,9 +1177,9 @@ CREATE TABLE `engagement_timeline` (
 
 -- creator_engagement_payments: payment records for engagements
 CREATE TABLE `creator_engagement_payments` (
-  `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `engagement_id`       BIGINT UNSIGNED NOT NULL,
-  `firm_id`             BIGINT UNSIGNED NOT NULL,
+  `id`                  BIGINT  NOT NULL AUTO_INCREMENT,
+  `engagement_id`       BIGINT  NOT NULL,
+  `firm_id`             BIGINT  NOT NULL,
   `amount`              DECIMAL(12,2)   NOT NULL,
   `currency`            VARCHAR(10)     NOT NULL DEFAULT 'INR',
   `payment_method`      ENUM('razorpay','manual') NOT NULL,
@@ -1200,7 +1200,7 @@ CREATE TABLE `creator_engagement_payments` (
 
   -- Admin review fields
   `admin_remarks`       TEXT            NULL,
-  `reviewed_by`         BIGINT UNSIGNED NULL,
+  `reviewed_by`         BIGINT  NULL,
   `reviewed_at`         TIMESTAMP       NULL,
 
   `created_at`          TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1245,7 +1245,7 @@ CREATE TABLE `creator_engagement_payments` (
 -- ============================================================
 
 CREATE TABLE `contact_submissions` (
-  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id`         BIGINT  NOT NULL AUTO_INCREMENT,
   `name`       VARCHAR(200)    NOT NULL,
   `email`      VARCHAR(255)    NOT NULL,
   `subject`    VARCHAR(300)    NOT NULL,
@@ -1260,7 +1260,7 @@ CREATE TABLE `contact_submissions` (
 -- ROLLBACK: DROP TABLE IF EXISTS `contact_submissions`;
 
 CREATE TABLE `newsletter_subscribers` (
-  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id`             BIGINT  NOT NULL AUTO_INCREMENT,
   `email`          VARCHAR(255)    NOT NULL,
   `ip_address`     VARCHAR(45)     NULL,
   `subscribed_at`  TIMESTAMP       NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1363,8 +1363,8 @@ ALTER TABLE `student_profiles`
 -- ============================================================
 
 CREATE TABLE student_premium_requests (
-    id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id          BIGINT UNSIGNED NOT NULL,
+    id               BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id          BIGINT  NOT NULL,
     plan             ENUM('premium-monthly','premium-quarterly','premium-yearly') NOT NULL,
     amount           DECIMAL(10,2) NOT NULL,
     utr_number       VARCHAR(100) NULL,
@@ -1373,7 +1373,7 @@ CREATE TABLE student_premium_requests (
     payment_date     DATE NOT NULL,
     status           ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
     admin_remarks    TEXT NULL,
-    reviewed_by      BIGINT UNSIGNED NULL,
+    reviewed_by      BIGINT  NULL,
     reviewed_at      TIMESTAMP NULL,
     created_at       TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1389,8 +1389,8 @@ CREATE TABLE student_premium_requests (
 -- ============================================================
 
 CREATE TABLE student_subscriptions (
-    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    user_id      BIGINT UNSIGNED NOT NULL,
+    id           BIGINT  AUTO_INCREMENT PRIMARY KEY,
+    user_id      BIGINT  NOT NULL,
     plan         VARCHAR(50)     NOT NULL DEFAULT 'premium',
     status       ENUM('active','expired','cancelled') NOT NULL DEFAULT 'active',
     starts_at    DATETIME        NULL,
@@ -1449,8 +1449,8 @@ ALTER TABLE `users`
 -- device_type: 'desktop' | 'mobile' | 'tablet'
 -- location: resolved at login time via ip-api.com (best-effort, nullable)
 CREATE TABLE `user_sessions` (
-    `id`               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `user_id`          BIGINT UNSIGNED NOT NULL,
+    `id`               BIGINT  NOT NULL AUTO_INCREMENT,
+    `user_id`          BIGINT  NOT NULL,
     `token`            VARCHAR(80)     NOT NULL,
     `device_type`      VARCHAR(20)     NULL,
     `browser`          VARCHAR(100)    NULL,
@@ -1470,8 +1470,8 @@ CREATE TABLE `user_sessions` (
 
 -- login_history: append-only audit log; rows are never updated.
 CREATE TABLE `login_history` (
-    `id`           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `user_id`      BIGINT UNSIGNED NOT NULL,
+    `id`           BIGINT  NOT NULL AUTO_INCREMENT,
+    `user_id`      BIGINT  NOT NULL,
     `ip_address`   VARCHAR(45)  NULL,
     `device_type`  VARCHAR(20)  NULL,
     `browser`      VARCHAR(100) NULL,
@@ -1502,3 +1502,121 @@ CREATE TABLE `login_history` (
 -- * Future plan-limit hook is stubbed (commented) inside AuthController::login().
 --   Basic=1 / Standard=3 / Enterprise=unlimited. NOT enforced yet.
 -- ============================================================
+
+
+-- =======================Live on server =========================
+
+
+-- ============================================================
+--  Phase 4 — Branch Registration (2026-06-09)
+-- ============================================================
+
+-- ── Migration ─────────────────────────────────────────────────────────────
+ALTER TABLE `firm_profiles`
+    ADD COLUMN `is_branch`      TINYINT(1)      NOT NULL DEFAULT 0     AFTER `frn`,
+    ADD COLUMN `parent_firm_id` BIGINT  NULL                    AFTER `is_branch`,
+    ADD COLUMN `parent_frn`     VARCHAR(50)     NULL                    AFTER `parent_firm_id`,
+    ADD INDEX  `idx_fp_is_branch`      (`is_branch`, `parent_frn`),
+    ADD INDEX  `idx_fp_parent_firm_id` (`parent_firm_id`);
+
+-- ── Rollback ──────────────────────────────────────────────────────────────
+-- ALTER TABLE `firm_profiles` DROP INDEX `idx_fp_parent_firm_id`;
+-- ALTER TABLE `firm_profiles` DROP INDEX `idx_fp_is_branch`;
+-- ALTER TABLE `firm_profiles` DROP COLUMN `parent_frn`;
+-- ALTER TABLE `firm_profiles` DROP COLUMN `parent_firm_id`;
+-- ALTER TABLE `firm_profiles` DROP COLUMN `is_branch`;
+
+-- ============================================================
+--  Notes (Phase 4)
+-- ============================================================
+-- * is_branch=1 means this registered account is a branch of an existing firm.
+-- * parent_frn holds the FRN of the parent firm (firm_profiles.frn).
+-- * parent_firm_id holds the FK to the parent firm_profiles.id.
+-- * firm_branches (physical office locations managed in firm profile) is
+--   unchanged and coexists with this new is_branch concept.
+-- * Branch auto-name is generated as "ParentFirmName - City" on registration.
+-- * Uniqueness: email is always globally unique (users.email).
+--   Multiple branches for the same FRN are allowed in different cities.
+-- ============================================================
+
+-- ============================================================
+--  Phase 5 — Creator Marketplace Open + Free Content Credits (2026-06-09)
+-- ============================================================
+
+-- ── Free Content Credits per firm ────────────────────────────────────────────
+CREATE TABLE `firm_content_credits` (
+    `id`            BIGINT      NOT NULL AUTO_INCREMENT,
+    `firm_id`       BIGINT      NOT NULL,
+    `total_credits` TINYINT     NOT NULL DEFAULT 3,
+    `used_credits`  TINYINT     NOT NULL DEFAULT 0,
+    `created_at`    TIMESTAMP           NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`    TIMESTAMP           NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uq_fcc_firm` (`firm_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ── Free Content Requests ─────────────────────────────────────────────────────
+CREATE TABLE `free_content_requests` (
+    `id`             BIGINT      NOT NULL AUTO_INCREMENT,
+    `firm_id`        BIGINT      NOT NULL,
+    `brief`          TEXT                NOT NULL,
+    `delivery_date`  DATE                NULL,
+    `notes`          TEXT                NULL,
+    `attachments`    JSON                NULL,
+    `status`         ENUM('pending','confirmed','in_progress','delivered','rejected')
+                                         NOT NULL DEFAULT 'pending',
+    `admin_notes`    TEXT                NULL,
+    `created_at`     TIMESTAMP           NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at`     TIMESTAMP           NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_fcr_firm_id`  (`firm_id`),
+    KEY `idx_fcr_status`   (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ── Free Content Deliverables ─────────────────────────────────────────────────
+CREATE TABLE `free_content_deliverables` (
+    `id`           BIGINT      NOT NULL AUTO_INCREMENT,
+    `request_id`   BIGINT      NOT NULL,
+    `file_path`    VARCHAR(1000)       NOT NULL,
+    `file_name`    VARCHAR(500)        NOT NULL,
+    `uploaded_by`  BIGINT      NULL,
+    `created_at`   TIMESTAMP           NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_fcd_request_id` (`request_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ── Rollback ──────────────────────────────────────────────────────────────────
+-- DROP TABLE IF EXISTS `free_content_deliverables`;
+-- DROP TABLE IF EXISTS `free_content_requests`;
+-- DROP TABLE IF EXISTS `firm_content_credits`;
+
+-- ============================================================
+--  Notes (Phase 5)
+-- ============================================================
+-- * Creator Marketplace posting premium gate removed (all verified firms can post).
+-- * Premium firms receive 3 free content credits (firm_content_credits).
+--   Credits are lazily initialised on first access by a premium firm.
+-- * Free content requests are completely separate from the creator marketplace.
+--   They are NOT published, NOT visible to creators, and do NOT trigger bidding.
+-- * Credit deducted ONLY when admin confirms (status: pending → confirmed).
+-- * Admin uploads deliverables to free_content_deliverables; firm views on their page.
+-- ============================================================
+
+
+-- ============================================================
+--  Phase 6 — Creator Profile Enhancement (2026-06-09)
+-- ============================================================
+
+-- Add creator-specific profile fields to student_profiles
+ALTER TABLE `startyourstory`.`student_profiles`
+  ADD COLUMN `qualification`       VARCHAR(50)  NULL AFTER `why_should_hire_you`,
+  ADD COLUMN `availability_status` VARCHAR(50)  NULL AFTER `qualification`,
+  ADD COLUMN `instagram_url`       VARCHAR(500) NULL AFTER `portfolio_url`,
+  ADD COLUMN `website_url`         VARCHAR(500) NULL AFTER `instagram_url`;
+
+-- ── Rollback ─────────────────────────────────────────────────────────────────
+-- ALTER TABLE `startyourstory`.`student_profiles`
+--   DROP COLUMN `qualification`,
+--   DROP COLUMN `availability_status`,
+--   DROP COLUMN `instagram_url`,
+--   DROP COLUMN `website_url`;

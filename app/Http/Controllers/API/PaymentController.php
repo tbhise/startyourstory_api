@@ -87,6 +87,10 @@ class PaymentController extends Controller
             }
             $amount = $plans[$plan]['amount'];
 
+            // Apply 50% branch discount automatically
+            if (!empty($firmProfile->is_branch)) {
+                $amount = (int) floor($amount / 2);
+            }
 
             /*
 |--------------------------------------------------------------------------

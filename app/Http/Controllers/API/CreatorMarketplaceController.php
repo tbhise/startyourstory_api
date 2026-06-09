@@ -105,14 +105,6 @@ class CreatorMarketplaceController extends Controller
                 return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
             }
 
-            if (! SubscriptionHelper::isPremiumFirm($firmProfile->id)) {
-                return response()->json([
-                    'status'  => false,
-                    'code'    => 'PREMIUM_REQUIRED',
-                    'message' => 'A premium subscription is required to post on the Creator Marketplace.',
-                ], 403);
-            }
-
             $validator = Validator::make($request->all(), [
                 'title'           => 'required|string|max:255',
                 'description'     => 'required|string',
@@ -410,6 +402,7 @@ class CreatorMarketplaceController extends Controller
 
         $query = DB::table('creator_project_bids')
             ->join('users', 'creator_project_bids.creator_id', '=', 'users.id')
+            ->leftJoin('student_profiles', 'student_profiles.user_id', '=', 'creator_project_bids.creator_id')
             ->leftJoin('creator_engagements', 'creator_engagements.bid_id', '=', 'creator_project_bids.id')
             ->where('creator_project_bids.project_id', $projectId);
 
@@ -430,6 +423,12 @@ class CreatorMarketplaceController extends Controller
                 'users.name as creator_name',
                 'users.email as creator_email',
                 'users.profile_image as creator_avatar',
+                'student_profiles.qualification as creator_qualification',
+                'student_profiles.experience_years as creator_experience_years',
+                'student_profiles.availability_status as creator_availability',
+                'student_profiles.why_should_hire_you as creator_why_hire',
+                'student_profiles.linkedin_url as creator_linkedin',
+                'student_profiles.portfolio_url as creator_portfolio',
                 'creator_engagements.id as engagement_id',
                 'creator_engagements.status as engagement_status',
             ]);
@@ -2437,18 +2436,14 @@ class CreatorMarketplaceController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Returns a 403 JsonResponse if the authenticated user is not a student
-     * with looking_for = 'creator'.  Returns null when the check passes.
+     * Returns a 403 JsonResponse if the authenticated user is not a student.
+     * Returns null when the check passes. All student sub-roles are allowed.
      */
     private function forbidNonCreator(Request $request): ?JsonResponse
     {
         $user = $request->attributes->get('auth_user');
         if (! $user || $user->role !== 'student') {
             return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
-        }
-        $lf = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
-        if ($lf !== 'creator') {
-            return response()->json(['status' => false, 'message' => 'Forbidden. This area is for creator students only.'], 403);
         }
         return null;
     }

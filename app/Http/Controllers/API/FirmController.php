@@ -14,25 +14,81 @@ use App\Services\Notifications\EmailNotificationService;
 class FirmController extends Controller
 {
 
+    public function lookupByFRN(Request $request)
+    {
+        try {
+            $frn = strtoupper(trim($request->frn ?? ''));
+            if (empty($frn)) {
+                return response()->json(['status' => false, 'message' => 'FRN is required']);
+            }
+            $firm = DB::table('firm_profiles')
+                ->where('frn', $frn)
+                ->where('is_branch', 0)
+                ->whereNotNull('frn')
+                ->select('id', 'firm_name', 'city', 'frn')
+                ->first();
+            if (!$firm) {
+                return response()->json(['status' => false, 'message' => 'Parent firm not found']);
+            }
+            return response()->json(['status' => true, 'data' => $firm]);
+        } catch (\Exception $e) {
+            Log::error('lookupByFRN Error: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     public function registerFirm(Request $request)
     {
         DB::beginTransaction();
 
         try {
-            $validator = Validator::make($request->all(), [
-                'email' => 'required|email|unique:users,email',
-                'mobile' => 'required|unique:users,mobile',
-                'password' => 'required|min:6|max:15',
-                'firmName' => 'required',
-                'city' => 'required',
+            $isBranch = filter_var($request->is_branch ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            $rules = [
+                'email'        => 'required|email|unique:users,email',
+                'mobile'       => 'required|unique:users,mobile',
+                'password'     => 'required|min:6|max:15',
+                'city'         => 'required',
                 'referral_code' => 'nullable|string|max:50',
-            ]);
+            ];
+            if ($isBranch) {
+                $rules['parent_frn'] = 'required|string|max:50';
+            } else {
+                $rules['firmName'] = 'required';
+            }
+
+            $validator = Validator::make($request->all(), $rules);
             if ($validator->fails()) {
                 return response()->json([
                     'status' => false,
                     'message' => $validator->errors()->first()
                 ]);
             }
+
+            // Branch: validate parent FRN and resolve parent firm
+            $parentFirmId = null;
+            $parentFrn    = null;
+            $firmName     = $request->firmName;
+
+            if ($isBranch) {
+                $parentFrn = strtoupper(trim($request->parent_frn));
+                $parentFirm = DB::table('firm_profiles')
+                    ->where('frn', $parentFrn)
+                    ->where('is_branch', 0)
+                    ->whereNotNull('frn')
+                    ->first();
+                if (!$parentFirm) {
+                    DB::rollBack();
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Parent firm not found. Please verify the FRN and try again.'
+                    ]);
+                }
+                $parentFirmId = $parentFirm->id;
+                $city         = ucwords(strtolower(trim($request->city)));
+                $firmName     = $parentFirm->firm_name . ' - ' . $city;
+            }
+
             $referrer = null;
             if ($request->referral_code) {
                 $referrer = DB::table('users')
@@ -46,7 +102,7 @@ class FirmController extends Controller
                 }
             }
             $firmPrefix = strtoupper(
-                substr(preg_replace('/[^A-Za-z]/', '', $request->firmName), 0, 4)
+                substr(preg_replace('/[^A-Za-z]/', '', $firmName), 0, 4)
             );
             do {
                 $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -66,7 +122,7 @@ class FirmController extends Controller
             );
             $userId = DB::table('users')
                 ->insertGetId([
-                    'name' => $request->firmName,
+                    'name' => $firmName,
                     'email' => $request->email,
                     'mobile' => $request->mobile,
                     'password' => bcrypt($request->password),
@@ -78,11 +134,14 @@ class FirmController extends Controller
                 ]);
             DB::table('firm_profiles')
                 ->insert([
-                    'user_id' => $userId,
-                    'firm_name' => $request->firmName,
-                    'city' => $request->city,
-                    'created_at' => now(),
-                    'updated_at' => now()
+                    'user_id'        => $userId,
+                    'firm_name'      => $firmName,
+                    'city'           => $request->city,
+                    'is_branch'      => $isBranch ? 1 : 0,
+                    'parent_firm_id' => $parentFirmId,
+                    'parent_frn'     => $parentFrn,
+                    'created_at'     => now(),
+                    'updated_at'     => now()
                 ]);
             if ($referrer) {
                 DB::table('users')
@@ -357,12 +416,40 @@ class FirmController extends Controller
                 ->pluck('department_name');
             /*
         |--------------------------------------------------------------------------
-        | Get Branches
+        | Get Physical Branches (firm_branches table — office locations)
         |--------------------------------------------------------------------------
         */
             $branches = DB::table('firm_branches')
                 ->where('firm_id', $firmProfile->id)
                 ->get();
+
+            /*
+        |--------------------------------------------------------------------------
+        | Get Associated Firm Accounts (branch-registered offices with same FRN)
+        | Only relevant when this account is a branch (is_branch = 1)
+        |--------------------------------------------------------------------------
+        */
+            $associatedOffices = [];
+            $parentPartnersCount = null;
+            if ($firmProfile->is_branch && $firmProfile->parent_frn) {
+                $associatedOffices = DB::table('firm_profiles')
+                    ->where('parent_frn', $firmProfile->parent_frn)
+                    ->where('id', '!=', $firmProfile->id)
+                    ->select('id', 'firm_name', 'city', 'frn', 'parent_frn', 'is_branch', 'verification_status')
+                    ->get()
+                    ->toArray();
+
+                // Also add the parent firm itself
+                $parentFirmRow = DB::table('firm_profiles')
+                    ->where('frn', $firmProfile->parent_frn)
+                    ->where('is_branch', 0)
+                    ->select('id', 'firm_name', 'city', 'frn', 'parent_frn', 'is_branch', 'verification_status', 'partners_count')
+                    ->first();
+                if ($parentFirmRow) {
+                    array_unshift($associatedOffices, $parentFirmRow);
+                    $parentPartnersCount = $parentFirmRow->partners_count;
+                }
+            }
             /*
         |--------------------------------------------------------------------------
         | Prepare Response
@@ -450,10 +537,21 @@ class FirmController extends Controller
                     : [],
                 /*
             |--------------------------------------------------------------------------
-            | Branches
+            | Physical Branches (office locations)
             |--------------------------------------------------------------------------
             */
                 'branches' => $branches,
+                /*
+            |--------------------------------------------------------------------------
+            | Branch Registration Info
+            |--------------------------------------------------------------------------
+            */
+                'is_branch'            => (bool) ($firmProfile->is_branch ?? false),
+                'parent_firm_id'       => $firmProfile->parent_firm_id ?? null,
+                'parent_frn'           => $firmProfile->parent_frn ?? null,
+                'city'                 => $firmProfile->city ?? null,
+                'associated_offices'   => $associatedOffices,
+                'parent_partners_count' => $parentPartnersCount,
             ];
             return response()->json([
                 'status' => true,

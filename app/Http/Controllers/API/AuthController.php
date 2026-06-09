@@ -192,13 +192,21 @@ class AuthController extends Controller
             $premiumStartsAt = null;
             $premiumPlan = null;
             $premiumDaysRemaining = null;
+            $isBranch = false;
+            $parentFirmId = null;
+            $parentFrn = null;
+            $firmCity = null;
             if ($user->role === 'firm') {
                 $firmProfile = DB::table('firm_profiles')
                     ->where('user_id', $user->id)
-                    ->select('id', 'verification_status', 'rejection_reason', 'is_premium')
+                    ->select('id', 'verification_status', 'rejection_reason', 'is_premium', 'is_branch', 'parent_firm_id', 'parent_frn', 'city')
                     ->first();
                 $verificationStatus = $firmProfile->verification_status ?? 'pending';
                 $rejectionReason    = $firmProfile->rejection_reason ?? null;
+                $isBranch           = (bool) ($firmProfile->is_branch ?? false);
+                $parentFirmId       = $firmProfile->parent_firm_id ?? null;
+                $parentFrn          = $firmProfile->parent_frn ?? null;
+                $firmCity           = $firmProfile->city ?? null;
                 if ($firmProfile && $firmProfile->is_premium) {
                     $isPremium = true;
                     $firmSub = DB::table('firm_subscriptions')
@@ -271,6 +279,10 @@ class AuthController extends Controller
                         : null,
                     'verification_status' => $verificationStatus,
                     'rejection_reason' => $rejectionReason,
+                    'is_branch' => $user->role === 'firm' ? $isBranch : null,
+                    'parent_firm_id' => $user->role === 'firm' ? $parentFirmId : null,
+                    'parent_frn' => $user->role === 'firm' ? $parentFrn : null,
+                    'firm_city' => $user->role === 'firm' ? $firmCity : null,
                     'referral_code' => $user->referral_code ?? null,
                     'referral_count' => $user->referral_count ?? 0,
                 ]

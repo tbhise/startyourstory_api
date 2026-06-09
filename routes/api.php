@@ -29,6 +29,7 @@ use App\Http\Controllers\API\PublicController;
 use App\Http\Controllers\API\AdminSettingsController;
 use App\Http\Controllers\API\AdminUserController;
 use App\Http\Controllers\API\SessionController;
+use App\Http\Controllers\API\FreeContentController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
@@ -37,6 +38,7 @@ Route::get('/platform-settings',      [AdminSettingsController::class, 'getPubli
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
+Route::get('/firm/lookup-by-frn', [FirmController::class, 'lookupByFRN']);
 Route::post('/login',           [AuthController::class, 'login']);
 Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
@@ -283,6 +285,20 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/failure',  [CreatorMarketplaceController::class, 'engagementPaymentFailure']);
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',   [CreatorMarketplaceController::class, 'submitManualPayment']);
 });
+
+// ── Free Content Credits (Firm) ───────────────────────────────────────────────
+Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->group(function () {
+    Route::get('/free-content/credits',                [FreeContentController::class, 'getCredits']);
+    Route::post('/free-content/requests',              [FreeContentController::class, 'submitRequest']);
+    Route::get('/free-content/requests',               [FreeContentController::class, 'getMyRequests']);
+});
+
+// ── Free Content Credits (Admin) ──────────────────────────────────────────────
+Route::get('/admin/free-content-requests',                             [FreeContentController::class, 'getAdminRequests']);
+Route::post('/admin/free-content-requests/{id}/confirm',               [FreeContentController::class, 'confirmRequest']);
+Route::post('/admin/free-content-requests/{id}/status',                [FreeContentController::class, 'updateStatus']);
+Route::post('/admin/free-content-requests/{id}/deliver',               [FreeContentController::class, 'uploadDeliverable']);
+Route::post('/admin/free-content-requests/{id}/reject',                [FreeContentController::class, 'rejectRequest']);
 
 // ── Admin — Creator Marketplace Payments ─────────────────────────────────────
 Route::get('/admin/creator-engagements/{id}',          [AdminController::class, 'getEngagementSummary']);

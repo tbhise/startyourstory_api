@@ -54,30 +54,12 @@ class FirmDashboardController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
-        | City Filter
+        | City Filter — enforced from firm's registered city (not client-driven)
         |--------------------------------------------------------------------------
         */
-            if ($request->filled('cities')) {
-
-                $cities = is_array($request->cities)
-                    ? $request->cities
-                    : [$request->cities];
-
-                $cities = array_map(function ($city) {
-
-                    return ucwords(strtolower(trim($city)));
-                }, $cities);
-
-                $query->where(function ($q) use ($cities) {
-
-                    foreach ($cities as $city) {
-
-                        $q->orWhereJsonContains(
-                            'student_profiles.preferred_location',
-                            $city
-                        );
-                    }
-                });
+            $firmCity = ucwords(strtolower(trim($firm->city ?? '')));
+            if (!empty($firmCity)) {
+                $query->whereJsonContains('student_profiles.preferred_location', $firmCity);
             }
             /*
         |--------------------------------------------------------------------------

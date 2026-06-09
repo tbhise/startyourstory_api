@@ -172,6 +172,10 @@ class UserController extends Controller
                 'attempts' => 'nullable|string',
                 'linkedin_url' => 'nullable|string',
                 'portfolio_url' => 'nullable|string',
+                'instagram_url' => 'nullable|string',
+                'website_url' => 'nullable|string',
+                'qualification' => 'nullable|string|max:100',
+                'availability_status' => 'nullable|string|max:100',
                 'current_firm_id' => 'nullable',
                 'current_firm_name' => 'nullable|string',
                 'experience_years' => 'nullable|string',
@@ -277,6 +281,10 @@ class UserController extends Controller
                 'attempts' => $request->attempts,
                 'linkedin_url' => $request->linkedin_url,
                 'portfolio_url' => $request->portfolio_url,
+                'instagram_url' => $request->instagram_url,
+                'website_url' => $request->website_url,
+                'qualification' => $request->qualification,
+                'availability_status' => $request->availability_status,
                 'current_firm_id' => $request->current_firm_id,
                 'current_firm_name' => $request->current_firm_name,
                 'experience_years' => $request->experience_years,
@@ -388,8 +396,17 @@ class UserController extends Controller
                     $preferredLocationExists &&
                     $resumeExists;
             } elseif ($request->looking_for === 'creator') {
+                $prefCatsArr = $request->has('preferred_categories')
+                    ? ($request->preferred_categories ?? [])
+                    : json_decode($existingProfile->preferred_categories ?? '[]', true);
+                $hasPrefCats = is_array($prefCatsArr) && count($prefCatsArr) > 0;
                 $isProfileComplete =
-                    !empty($request->city);
+                    !empty($request->city) &&
+                    !empty($request->qualification) &&
+                    !empty($request->availability_status) &&
+                    !empty(trim($request->why_should_hire_you ?? '')) &&
+                    !empty($request->experience_years) &&
+                    $hasPrefCats;
             }
             DB::table('users')
                 ->where('id', $user->id)

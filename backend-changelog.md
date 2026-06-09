@@ -4,6 +4,100 @@
 
 ---
 
+## 2026-06-10 — Auth: me() Omits Firm Fields for Non-Firm Users
+
+### Files Modified
+- `app/Http/Controllers/API/AuthController.php`
+
+### DB Changes
+None.
+
+### Changes
+- `me()` response previously returned `is_branch`, `parent_firm_id`, `parent_frn`, `firm_city` as `null` for non-firm users
+- Now these four fields are omitted entirely from the JSON response for non-firm users using PHP spread + conditional array: `...($user->role === 'firm' ? [...] : [])`
+- Firm users are unaffected — they still receive all four fields with their values
+
+### Rollback Plan
+- Revert to explicit `null` values: `'is_branch' => $user->role === 'firm' ? $isBranch : null`, etc.
+
+---
+
+## 2026-06-10 — CreatorMarketplace: Fix forbidNonCreator() Querying Wrong Table
+
+### Files Modified
+- `app/Http/Controllers/API/CreatorMarketplaceController.php`
+
+### DB Changes
+None.
+
+### Changes
+- **Root cause**: `ApiAuthMiddleware` sets `auth_user` from `DB::table('users')` only — no join to `student_profiles`. So `$user->looking_for` was always `null`, causing 403 for every creator student.
+- **Fix**: `forbidNonCreator()` now queries `student_profiles` directly:
+  ```php
+  $profile = DB::table('student_profiles')
+      ->where('user_id', $user->id)
+      ->value('looking_for');
+  if ($profile !== 'creator') { return 403; }
+  ```
+- All 14 creator-side API methods are now correctly accessible to students with `looking_for = 'creator'`
+
+### Rollback Plan
+- Revert `forbidNonCreator()` to `$user->looking_for !== 'creator'` check (broken — will 403 all creators again)
+
+---
+
+## 2026-06-10 — FirmDashboard: Add Creator Fields to getCandidates SELECT
+
+### Files Modified
+- `app/Http/Controllers/API/FirmDashboardController.php`
+
+### DB Changes
+None.
+
+### Changes
+- Added `student_profiles.availability_status` and `student_profiles.experience_years` to the `getCandidates` SELECT query
+- These fields are needed to display Availability and Experience on creator tab student cards in the firm dashboard
+- `getCandidateById` was unaffected (uses `->first()` without explicit column list, so all columns were already returned)
+
+### Rollback Plan
+- Remove `student_profiles.availability_status` and `student_profiles.experience_years` from the SELECT array
+
+---
+
+## 2026-06-10 — Revert B2 (forbidNonCreator) + Restore Client-Driven City Filter
+
+### Files Modified
+- `app/Http/Controllers/API/CreatorMarketplaceController.php`
+- `app/Http/Controllers/API/FirmDashboardController.php`
+
+### DB Changes
+None.
+
+### Changes
+
+#### `CreatorMarketplaceController::forbidNonCreator()` (B2 reverted)
+- Restored creator-only guard: checks `$user->looking_for !== 'creator'` and returns 403
+- Previously (2026-06-09) it only checked `$user->role !== 'student'`, allowing all students
+- All creator-side APIs are once again restricted to `looking_for = 'creator'` students:
+  `submitBid`, `withdrawBid`, `getMyBids`, `getSelectedBidDetails`, `creatorRespondToBid`,
+  `getMyEngagements`, `saveBankDetails`, `getPayoutStatus`, `getBidDetail`, `getMyEarnings`,
+  `getBankDetails`, `submitDeliverable`, `requestRevision`, `approveDeliverable`
+
+#### `FirmDashboardController::getCandidates()` city block
+- Removed server-enforced city filter (`whereJsonContains` from `firm_profiles.city`)
+- Restored client-driven filter: accepts `cities[]` from request; filters only when non-empty
+- Empty `cities` → all candidates returned regardless of location
+
+### Rollback Plan
+- `forbidNonCreator()`: restore role-only check (`$user->role !== 'student'`)
+- City block: restore `$firmCity` server-enforcement, remove `$request->input('cities', [])` block
+
+---
+
+> Append-only. Never delete previous entries. Date format: YYYY-MM-DD.
+
+---
+
 ## 2026-06-09 — Creator Profile Enhancement
 
 ### Files Modified

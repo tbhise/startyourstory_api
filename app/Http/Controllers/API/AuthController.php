@@ -279,10 +279,12 @@ class AuthController extends Controller
                         : null,
                     'verification_status' => $verificationStatus,
                     'rejection_reason' => $rejectionReason,
-                    'is_branch' => $user->role === 'firm' ? $isBranch : null,
-                    'parent_firm_id' => $user->role === 'firm' ? $parentFirmId : null,
-                    'parent_frn' => $user->role === 'firm' ? $parentFrn : null,
-                    'firm_city' => $user->role === 'firm' ? $firmCity : null,
+                    ...($user->role === 'firm' ? [
+                        'is_branch'      => $isBranch,
+                        'parent_firm_id' => $parentFirmId,
+                        'parent_frn'     => $parentFrn,
+                        'firm_city'      => $firmCity,
+                    ] : []),
                     'referral_code' => $user->referral_code ?? null,
                     'referral_count' => $user->referral_count ?? 0,
                 ]

@@ -1620,3 +1620,5 @@ ALTER TABLE `startyourstory`.`student_profiles`
 --   DROP COLUMN `availability_status`,
 --   DROP COLUMN `instagram_url`,
 --   DROP COLUMN `website_url`;
+
+-- Live On server --- 10-06-2026 ------

@@ -534,12 +534,12 @@ class AdminController extends Controller
                     'message' => 'Invalid token'
                 ], 401);
             }
-            if ($user->role !== 'admin') {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Only admin can access premium requests'
-                ], 403);
-            }
+            // if ($user->role !== 'admin') {
+            //     return response()->json([
+            //         'status' => false,
+            //         'message' => 'Only admin can access premium requests'
+            //     ], 403);
+            // }
             $requests = DB::table('premium_requests as pr')
                 ->leftJoin('firm_profiles as fp', 'fp.id', '=', 'pr.firm_id')
                 ->select(

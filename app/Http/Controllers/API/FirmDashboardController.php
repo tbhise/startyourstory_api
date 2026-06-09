@@ -30,6 +30,8 @@ class FirmDashboardController extends Controller
                     'student_profiles.resume_path',
                     'student_profiles.registration_type',
                     'student_profiles.preferred_categories',
+                    'student_profiles.availability_status',
+                    'student_profiles.experience_years',
                     'users.profile_image',
                     DB::raw("
                     CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE recruiter_actions.student_id = users.id AND recruiter_actions.firm_id = {$firm->id}
@@ -54,12 +56,16 @@ class FirmDashboardController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
-        | City Filter — enforced from firm's registered city (not client-driven)
+        | City Filter — client-driven (empty = show all candidates)
         |--------------------------------------------------------------------------
         */
-            $firmCity = ucwords(strtolower(trim($firm->city ?? '')));
-            if (!empty($firmCity)) {
-                $query->whereJsonContains('student_profiles.preferred_location', $firmCity);
+            $cities = $request->input('cities', []);
+            if (!empty($cities)) {
+                $query->where(function ($q) use ($cities) {
+                    foreach ($cities as $city) {
+                        $q->orWhereJsonContains('student_profiles.preferred_location', $city);
+                    }
+                });
             }
             /*
         |--------------------------------------------------------------------------

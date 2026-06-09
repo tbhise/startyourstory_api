@@ -2435,22 +2435,23 @@ class CreatorMarketplaceController extends Controller
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Returns a 403 JsonResponse if the authenticated user is not a student.
-     * Returns null when the check passes. All student sub-roles are allowed.
-     */
     private function forbidNonCreator(Request $request): ?JsonResponse
     {
         $user = $request->attributes->get('auth_user');
         if (! $user || $user->role !== 'student') {
             return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
         }
+        $profile = DB::table('student_profiles')
+            ->where('user_id', $user->id)
+            ->value('looking_for');
+        if ($profile !== 'creator') {
+            return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
+        }
         return null;
     }
 
     /**
-     * Allows firms AND creator students. Blocks unauthenticated users and
-     * non-creator students (regular job-seekers have no marketplace notifications).
+     * Allows firms and all authenticated students.
      */
     private function forbidNonMarketplaceUser(Request $request): ?JsonResponse
     {
@@ -2458,14 +2459,8 @@ class CreatorMarketplaceController extends Controller
         if (! $user) {
             return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
         }
-        if ($user->role === 'firm') {
-            return null; // firms are always allowed
-        }
-        if ($user->role === 'student') {
-            $lf = DB::table('student_profiles')->where('user_id', $user->id)->value('looking_for');
-            if ($lf === 'creator') {
-                return null;
-            }
+        if ($user->role === 'firm' || $user->role === 'student') {
+            return null;
         }
         return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
     }

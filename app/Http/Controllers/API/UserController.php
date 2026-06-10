@@ -247,6 +247,9 @@ class UserController extends Controller
                     $registrationType = 'confirm';
                 }
             }
+
+
+            Log::info($registrationType);
             $preferredLocations = [];
             if (!empty($request->preferred_locations_json)) {
                 $preferredLocations =
@@ -315,50 +318,7 @@ class UserController extends Controller
                 DB::table('student_profiles')
                     ->insert($profileData);
             }
-            // $isProfileComplete = false;
-            // if ($request->looking_for === 'articleship') {
-            //     $isProfileComplete =
-            //         !empty($request->srn) &&
-            //         !empty($request->city) &&
-            //         !empty($request->gender);
-            //     if ($registrationType === 'confirm') {
-            //         $confirmFieldsComplete =
-            //             !empty($request->preferred_locations_json) &&
-            //             !empty($request->it_oc_status) &&
-            //             !empty($request->exposure_type) &&
-            //             !empty($request->core_department) &&
-            //             (
-            //                 $resumePath ||
-            //                 !empty($existingProfile->resume_path ?? null)
-            //             ) &&
-            //             (
-            //                 $marksheetPath ||
-            //                 !empty($existingProfile->marksheet_path ?? null)
-            //             );
-            //         $isProfileComplete =
-            //             $isProfileComplete &&
-            //             $confirmFieldsComplete;
-            //     }
-            // } elseif (
-            //     in_array(
-            //         $request->looking_for,
-            //         ['semi-qualified', 'qualified']
-            //     )
-            // ) {
-            //     $isProfileComplete =
-            //         !empty($request->srn) &&
-            //         !empty($request->city) &&
-            //         !empty($request->gender) &&
-            //         !empty($request->experience_years) &&
-            //         !empty($request->current_ctc) &&
-            //         !empty($request->expected_ctc) &&
-            //         (
-            //             $resumePath ||
-            //             !empty($existingProfile->resume_path ?? null)
-            //         );
-            // } elseif ($request->looking_for === 'creator') {
-            //     $isProfileComplete = !empty($request->city);
-            // }
+
             $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
 
             $isProfileComplete = false;
@@ -370,12 +330,44 @@ class UserController extends Controller
             $basicInfoComplete =
                 !empty($request->city) &&
                 !empty($request->gender);
+            // if ($request->looking_for === 'articleship') {
+            //     $isProfileComplete =
+            //         $basicInfoComplete &&
+            //         !empty($request->srn) &&
+            //         $preferredLocationExists &&
+            //         $resumeExists;
+            //     if ($registrationType === 'confirm') {
+            //         $isProfileComplete =
+            //             $isProfileComplete &&
+            //             !empty($request->it_oc_status) &&
+            //             !empty($request->exposure_type) &&
+            //             !empty($request->core_department);
+            //     }
+            // }
+
             if ($request->looking_for === 'articleship') {
+
+                $skipLocationAndResume =
+                    $registrationType !== 'confirm' &&
+                    in_array($request->ca_status, [
+                        'inter-g2',
+                        'doing-articleship',
+                        'inter-g1',
+                        'pursuing-inter',
+                        'foundation'
+                    ]);
+
                 $isProfileComplete =
                     $basicInfoComplete &&
-                    !empty($request->srn) &&
-                    $preferredLocationExists &&
-                    $resumeExists;
+                    !empty($request->srn);
+
+                if (!$skipLocationAndResume) {
+                    $isProfileComplete =
+                        $isProfileComplete &&
+                        $preferredLocationExists &&
+                        $resumeExists;
+                }
+
                 if ($registrationType === 'confirm') {
                     $isProfileComplete =
                         $isProfileComplete &&
@@ -408,6 +400,10 @@ class UserController extends Controller
                     !empty($request->experience_years) &&
                     $hasPrefCats;
             }
+
+
+            Log::info($request->ca_status);
+            Log::info($isProfileComplete);
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
@@ -452,20 +448,20 @@ class UserController extends Controller
     public function dismissApplyLimitModal(Request $request)
     {
         try {
-        $token = $request->cookie('auth_token');
-        if (!$token) {
-            return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
-        }
-        $user = DB::table('users')->where('api_token', $token)->where('is_deleted', false)->first();
-        if (!$user) {
-            return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
-        }
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
+            }
+            $user = DB::table('users')->where('api_token', $token)->where('is_deleted', false)->first();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+            }
 
-        DB::table('student_profiles')
-            ->where('user_id', $user->id)
-            ->update(['apply_limit_modal_dismissed' => 1, 'updated_at' => now()]);
+            DB::table('student_profiles')
+                ->where('user_id', $user->id)
+                ->update(['apply_limit_modal_dismissed' => 1, 'updated_at' => now()]);
 
-        return response()->json(['status' => true, 'message' => 'Dismissed.']);
+            return response()->json(['status' => true, 'message' => 'Dismissed.']);
         } catch (\Exception $e) {
             Log::error('UserController@dismissApplyLimitModal: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
@@ -828,37 +824,37 @@ class UserController extends Controller
     public function verificationStatus(Request $request)
     {
         try {
-        $token = $request->cookie('auth_token');
+            $token = $request->cookie('auth_token');
 
-        if (!$token) {
+            if (!$token) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $user = User::where('api_token', $token)
+                ->where('is_deleted', false)
+                ->first();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token',
+                ], 401);
+            }
+
+
+
+
+
             return response()->json([
-                'status' => false,
-                'message' => 'Unauthorized',
-            ], 401);
-        }
-
-        $user = User::where('api_token', $token)
-            ->where('is_deleted', false)
-            ->first();
-
-        if (!$user) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid token',
-            ], 401);
-        }
-
-
-
-
-
-        return response()->json([
-            'status' => true,
-            'verified' => !is_null($user->email_verified_at),
-            'email_verified_at' => $user->email_verified_at,
-            'email' => $user->email,
-            'looking_for' => $user->looking_for,
-        ]);
+                'status' => true,
+                'verified' => !is_null($user->email_verified_at),
+                'email_verified_at' => $user->email_verified_at,
+                'email' => $user->email,
+                'looking_for' => $user->looking_for,
+            ]);
         } catch (\Exception $e) {
             Log::error('UserController@verificationStatus: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);

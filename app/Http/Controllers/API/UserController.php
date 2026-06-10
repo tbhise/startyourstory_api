@@ -185,6 +185,7 @@ class UserController extends Controller
                 'current_ctc' => 'nullable|string',
                 'expected_ctc' => 'nullable|string',
                 'show_in_directory' => 'nullable|boolean',
+                'is_creator' => 'nullable|boolean',
                 'resume_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
                 'marksheet_path' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
             ]);
@@ -298,9 +299,10 @@ class UserController extends Controller
                 'why_should_hire_you' => $request->why_should_hire_you,
                 'current_ctc' => $request->current_ctc,
                 'expected_ctc' => $request->expected_ctc,
-                'show_in_directory' => $request->has('show_in_directory')
-                    ? (bool) $request->show_in_directory
-                    : ($existingProfile->show_in_directory ?? true),
+                'show_in_directory' => true,
+                'is_creator' => $request->has('is_creator')
+                    ? (bool)$request->is_creator
+                    : ($existingProfile->is_creator ?? false),
                 'updated_at' => now(),
             ];
             if ($resumePath) {
@@ -401,6 +403,25 @@ class UserController extends Controller
                     $hasPrefCats;
             }
 
+
+            // Extend completion check: students who opted into creator also need creator fields done
+            $isCreatorOptin = $request->has('is_creator')
+                ? (bool)$request->is_creator
+                : (bool)($existingProfile->is_creator ?? false);
+
+            if ($isCreatorOptin && $request->looking_for !== 'creator') {
+                $prefCatsArr = $request->has('preferred_categories')
+                    ? ($request->preferred_categories ?? [])
+                    : json_decode($existingProfile->preferred_categories ?? '[]', true);
+                $hasPrefCats = is_array($prefCatsArr) && count($prefCatsArr) > 0;
+                $isCreatorFieldsComplete =
+                    !empty($request->qualification) &&
+                    !empty($request->availability_status) &&
+                    !empty(trim($request->why_should_hire_you ?? '')) &&
+                    !empty($request->experience_years) &&
+                    $hasPrefCats;
+                $isProfileComplete = $isProfileComplete && $isCreatorFieldsComplete;
+            }
 
             Log::info($request->ca_status);
             Log::info($isProfileComplete);

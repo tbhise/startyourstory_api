@@ -146,6 +146,10 @@ Route::post('/admin/users/{id}/toggle-active',    [AdminUserController::class, '
 Route::post('/master/cities',              [MasterController::class, 'getCities']);
 Route::post('/master/companies',           [MasterController::class, 'getCompanies']);
 
+// Admin — directory listings (POST-for-list, matching other admin list endpoints)
+Route::post('/admin/firms',                [AdminController::class, 'getFirms']);
+Route::post('/admin/students',             [AdminController::class, 'getStudents']);
+
 // Admin — firm manual verification
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
 Route::post('/admin/firms/{id}/approve',   [AdminController::class, 'approveFirm']);

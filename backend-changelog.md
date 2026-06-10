@@ -307,3 +307,98 @@ ALTER TABLE firm_profiles DROP COLUMN is_branch;
 - Remove `lookupByFRN()` method and `/firm/lookup-by-frn` route
 - Revert `me()` select to exclude `is_branch`, `parent_firm_id`, `parent_frn`, `city`
 - Revert `getFirmProfileDetails()` response to exclude branch fields
+
+## Phase 8 — Student Creator Opt-In Flow
+
+### Feature: Student Creator Opt-In (UserController, AuthController, CreatorMarketplaceController)
+
+#### Modified: `app/Http/Controllers/API/UserController.php` — `updateProfile()`
+- Added `'is_creator' => 'nullable|boolean'` to validation rules
+- `$profileData` array: always sets `show_in_directory = true` (toggle removed from UI); saves `is_creator` from request or falls back to existing profile value
+- After existing `$isProfileComplete` logic: if student opted-in as creator (`is_creator = true` and `looking_for !== 'creator'`), also checks that qualification, availability_status, why_should_hire_you, experience_years, and preferred_categories are all filled before marking profile complete
+
+#### Modified: `app/Http/Controllers/API/AuthController.php` — `me()`
+- `student_profiles` SELECT now includes `is_creator` column
+- Response array includes `'is_creator' => (bool)($studentProfile->is_creator ?? false)`
+
+#### Modified: `app/Http/Controllers/API/CreatorMarketplaceController.php` — `forbidNonCreator()`
+- Now queries `student_profiles` directly for `looking_for` AND `is_creator`
+- Allows access when `looking_for = 'creator'` OR `is_creator = 1`
+- All 14 creator-side endpoint methods are covered automatically
+
+### DB Change
+```sql
+ALTER TABLE `startyourstory`.`student_profiles`
+  ADD COLUMN `is_creator` TINYINT(1) NOT NULL DEFAULT 0 AFTER `looking_for`;
+UPDATE `startyourstory`.`student_profiles` SET `show_in_directory` = 1;
+```
+
+### Rollback Plan
+- Revert `updateProfile()` validation to remove `is_creator` rule
+- Revert `$profileData` to restore `show_in_directory` from request; remove `is_creator` field
+- Remove the `$isCreatorOptin` block from `$isProfileComplete` logic
+- Revert `me()` select to exclude `is_creator`; remove `is_creator` from response
+- Revert `forbidNonCreator()` to original single-line check against `auth_user->looking_for`
+```sql
+ALTER TABLE `startyourstory`.`student_profiles` DROP COLUMN `is_creator`;
+```
+
+## Phase 9 — Student+Creator Hybrid Enhancements (2026-06-10)
+
+No backend changes required for this phase.
+
+### Coverage confirmation
+- `forbidNonCreator()` in `CreatorMarketplaceController.php` already allows `is_creator = true` students through all bid endpoints (implemented in Phase 8)
+- All bid routes (`GET /creator-marketplace/my-bids`, `POST /creator-marketplace/bids/{id}`, etc.) are already accessible to student+creators
+- No DB schema changes needed
+
+## Firm Candidate Filter — Include is_creator Opt-ins (2026-06-10)
+
+### Modified: `app/Http/Controllers/API/FirmDashboardController.php` — `getCandidates()`
+- "Registered For" filter: when `registered_for` includes `'creator'`, results now also include students with `is_creator = 1` even if their `looking_for` is not `'creator'` (grouped as `looking_for IN (...) OR is_creator = 1`)
+- Aligns with the creator rule used by `forbidNonCreator()` in `CreatorMarketplaceController.php` (`looking_for = 'creator'` OR `is_creator = 1`)
+- Behavior unchanged when `'creator'` is not among the selected `registered_for` values
+
+### Rollback Plan
+- Revert the "Registered For" block to the plain `whereIn('student_profiles.looking_for', $registeredFor)`
+
+## Navigation & Permission Pass — Student / Student+Creator / Creator (2026-06-10)
+
+No backend changes required.
+
+### Authorization verification (existing coverage confirmed)
+- All 11 creator-side endpoints in `CreatorMarketplaceController.php` (`submitBid`, `withdrawBid`, `getMyBids`, `getSelectedBidDetails`, `creatorRespondToBid`, `getMyEngagements`, `getBankDetails`, `saveBankDetails`, `getPayoutStatus`, `getBidDetail`, `getMyEarnings`) call `forbidNonCreator()` → returns 403 for non-students and for students with `looking_for != 'creator'` AND `is_creator = 0`; student+creators (`is_creator = 1`) are allowed
+- Firm project/payment endpoints remain behind `ApiAuthMiddleware` + `FirmVerifiedMiddleware` — unchanged
+- `GET /creator-marketplace/projects` and `/projects/{id}` remain intentionally public (browse without login, pre-existing design); page access is gated by frontend route guards
+- No DB schema changes — nothing appended to db_changes.txt
+
+## Admin Section Fixes — Directory Listings + Student Filters (2026-06-10)
+
+### Feature
+Implemented the missing admin directory list endpoints (root cause of the Firms 405 and Students 404 — the frontend POSTs `/admin/firms` and `/admin/students` but only `GET /admin/firms` (verification) existed and `/admin/students` was never built). Added backend-level student filters for email verification and profile completion.
+
+#### Modified: `routes/api.php`
+- Added `POST /admin/firms` → `AdminController@getFirms` (coexists with `GET /admin/firms` verification endpoint)
+- Added `POST /admin/students` → `AdminController@getStudents`
+- POST-for-list matches existing admin conventions (`/admin/subscriptions`, `/admin/wallet/recharges`)
+
+#### Modified: `app/Http/Controllers/API/AdminController.php`
+- New `getFirms()`: admin-token auth via `adminFromRequest()`; joins `firm_profiles` + `users` (role=firm, not deleted); `search` (firm_name/email/mobile), `city` filters; returns `plan` derived from `fp.is_premium`; shape `{firms, total}`
+- New `getStudents()`: admin-token auth; joins `users` + `student_profiles` (role=student, not deleted); `search` (name/email/mobile), `city` filters
+  - `email_verified` filter: `verified` → `email_verified_at IS NOT NULL`; `not_verified` → `IS NULL`; anything else → no filter
+  - `profile_completion` filter: `completed` → `users.profile_completed = 1`; `incomplete` → `= 0 OR NULL` (uses the platform's existing completion flag)
+  - All filters applied in SQL before `paginate(page_size)` (default 25, capped 100); response `{students, current_page, last_page, total}`
+
+### API Changes
+- `POST /api/admin/firms` body: `{search?, city?}` — 401 without valid `admin_token` cookie
+- `POST /api/admin/students` body: `{search?, city?, email_verified?, profile_completion?, page?, page_size?}` — 401 without valid `admin_token` cookie
+
+### DB Changes
+None — no schema changes, nothing added to db_changes.txt.
+
+### Known gap (pre-existing, not addressed)
+`POST /admin/{firms|students}/{id}/toggle-active` called by the admin UI still has no backend, and `users` has no `is_active` column — needs a product decision (what deactivation enforces) before implementing.
+
+### Rollback Plan
+- Remove the two routes from `routes/api.php`
+- Remove `getFirms()` and `getStudents()` from `AdminController.php`

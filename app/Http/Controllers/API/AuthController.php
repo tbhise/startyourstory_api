@@ -233,12 +233,13 @@ class AuthController extends Controller
             if ($user->role === 'student') {
                 $studentProfile = DB::table('student_profiles')
                     ->where('user_id', $user->id)
-                    ->select('looking_for', 'preferred_categories')
+                    ->select('looking_for', 'preferred_categories', 'is_creator')
                     ->first();
                 $lookingFor = $studentProfile->looking_for ?? null;
                 $preferredCategories = $studentProfile && $studentProfile->preferred_categories
                     ? json_decode($studentProfile->preferred_categories)
                     : [];
+                $isCreatorOptin = (bool)($studentProfile->is_creator ?? false);
                 $sub = DB::table('student_subscriptions')
                     ->where('user_id', $user->id)
                     ->where('status', 'active')
@@ -266,6 +267,7 @@ class AuthController extends Controller
                     'mobile' => $user->mobile,
                     'role' => $user->role,
                     'looking_for' => $lookingFor,
+                    'is_creator' => $isCreatorOptin ?? false,
                     'preferred_categories' => $preferredCategories,
                     'is_premium' => $isPremium,
                     'premium_plan' => $premiumPlan,

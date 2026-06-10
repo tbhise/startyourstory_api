@@ -866,6 +866,134 @@ class AdminController extends Controller
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN — Firm & Student directory listings
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function getFirms(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $query = DB::table('firm_profiles as fp')
+                ->join('users as u', 'u.id', '=', 'fp.user_id')
+                ->where('u.role', 'firm')
+                ->where('u.is_deleted', false);
+
+            if ($request->filled('search')) {
+                $s = '%' . trim($request->search) . '%';
+                $query->where(function ($q) use ($s) {
+                    $q->where('fp.firm_name', 'like', $s)
+                        ->orWhere('u.email', 'like', $s)
+                        ->orWhere('u.mobile', 'like', $s);
+                });
+            }
+
+            if ($request->filled('city')) {
+                $query->where('fp.city', $request->city);
+            }
+
+            $firms = $query
+                ->select(
+                    'fp.user_id as id',
+                    'fp.firm_name',
+                    'fp.firm_type',
+                    'fp.city',
+                    'fp.verification_status',
+                    'fp.created_at',
+                    'u.email',
+                    'u.mobile',
+                    DB::raw("CASE WHEN fp.is_premium = 1 THEN 'premium' ELSE 'free' END as plan")
+                )
+                ->orderByDesc('fp.created_at')
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data' => ['firms' => $firms, 'total' => $firms->count()]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getFirms Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    public function getStudents(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $pageSize = min(max((int) $request->input('page_size', 25), 1), 100);
+
+            $query = DB::table('users as u')
+                ->leftJoin('student_profiles as sp', 'sp.user_id', '=', 'u.id')
+                ->where('u.role', 'student')
+                ->where('u.is_deleted', false);
+
+            if ($request->filled('search')) {
+                $s = '%' . trim($request->search) . '%';
+                $query->where(function ($q) use ($s) {
+                    $q->where('u.name', 'like', $s)
+                        ->orWhere('u.email', 'like', $s)
+                        ->orWhere('u.mobile', 'like', $s);
+                });
+            }
+
+            if ($request->filled('city')) {
+                $query->where('sp.city', $request->city);
+            }
+
+            // Email verification filter: all | verified | not_verified
+            $emailVerified = $request->input('email_verified');
+            if ($emailVerified === 'verified') {
+                $query->whereNotNull('u.email_verified_at');
+            } elseif ($emailVerified === 'not_verified') {
+                $query->whereNull('u.email_verified_at');
+            }
+
+            // Profile completion filter: all | completed | incomplete
+            // Uses the platform's existing users.profile_completed flag.
+            $profileCompletion = $request->input('profile_completion');
+            if ($profileCompletion === 'completed') {
+                $query->where('u.profile_completed', 1);
+            } elseif ($profileCompletion === 'incomplete') {
+                $query->where(function ($q) {
+                    $q->where('u.profile_completed', 0)->orWhereNull('u.profile_completed');
+                });
+            }
+
+            $students = $query
+                ->select(
+                    'u.id',
+                    'u.name',
+                    'u.email',
+                    'u.mobile',
+                    'u.profile_completed',
+                    'u.created_at',
+                    'sp.looking_for',
+                    'sp.city',
+                    DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified')
+                )
+                ->orderByDesc('u.created_at')
+                ->paginate($pageSize);
+
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'students' => $students->items(),
+                    'current_page' => $students->currentPage(),
+                    'last_page' => $students->lastPage(),
+                    'total' => $students->total(),
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getStudents Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     public function rejectPremiumRequest(
         Request $request,
         $encId = null

@@ -95,20 +95,7 @@ class FirmDashboardController extends Controller
                     $departments
                 );
             }
-            /*
-        |--------------------------------------------------------------------------
-        | Registered For
-        |--------------------------------------------------------------------------
-        */
-            if ($request->filled('registered_for')) {
-                $registeredFor = is_array($request->registered_for)
-                    ? $request->registered_for
-                    : [$request->registered_for];
-                $query->whereIn(
-                    'student_profiles.looking_for',
-                    $registeredFor
-                );
-            }
+
             /*
         |--------------------------------------------------------------------------
         | Creator Category Filter
@@ -144,10 +131,12 @@ class FirmDashboardController extends Controller
                 $registeredFor = is_array($request->registered_for)
                     ? $request->registered_for
                     : [$request->registered_for];
-                $query->whereIn(
-                    'student_profiles.looking_for',
-                    $registeredFor
-                );
+                $query->where(function ($q) use ($registeredFor) {
+                    $q->whereIn('student_profiles.looking_for', $registeredFor);
+                    if (in_array('creator', $registeredFor)) {
+                        $q->orWhere('student_profiles.is_creator', true);
+                    }
+                });
             }
             /*
         |--------------------------------------------------------------------------

@@ -1622,3 +1622,19 @@ ALTER TABLE `startyourstory`.`student_profiles`
 --   DROP COLUMN `website_url`;
 
 -- Live On server --- 10-06-2026 ------
+
+-- ============================================================
+--  Phase 7 — Student Creator Opt-In (2026-06-10)
+-- ============================================================
+
+-- Add is_creator opt-in flag to student_profiles
+ALTER TABLE `startyourstory`.`student_profiles`
+  ADD COLUMN `is_creator` TINYINT(1) NOT NULL DEFAULT 0 AFTER `looking_for`;
+
+-- Make all existing students visible in directory (toggle removed from UI)
+UPDATE `startyourstory`.`student_profiles` SET `show_in_directory` = 1;
+
+-- ── Rollback ─────────────────────────────────────────────────────────────────
+-- ALTER TABLE `startyourstory`.`student_profiles` DROP COLUMN `is_creator`;
+-- (show_in_directory rollback: manual — set back to 0 for affected rows if needed)
+-- Live On server --- 10-06-2026 ------

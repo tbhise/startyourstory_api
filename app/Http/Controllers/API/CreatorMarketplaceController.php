@@ -2438,13 +2438,14 @@ class CreatorMarketplaceController extends Controller
     private function forbidNonCreator(Request $request): ?JsonResponse
     {
         $user = $request->attributes->get('auth_user');
-        if (! $user || $user->role !== 'student') {
+        if (!$user || $user->role !== 'student') {
             return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
         }
         $profile = DB::table('student_profiles')
             ->where('user_id', $user->id)
-            ->value('looking_for');
-        if ($profile !== 'creator') {
+            ->select(['looking_for', 'is_creator'])
+            ->first();
+        if (!$profile || ($profile->looking_for !== 'creator' && !$profile->is_creator)) {
             return response()->json(['status' => false, 'message' => 'Forbidden'], 403);
         }
         return null;

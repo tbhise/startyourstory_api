@@ -289,6 +289,8 @@ class AdminBlogController extends Controller
 
         $blog->tag_ids = $tagIds;
 
+        $blog->topic_id = DB::table('blog_topics')->where('blog_id', $id)->value('id');
+
         return response()->json(['status' => true, 'data' => $blog]);
     }
 
@@ -309,6 +311,7 @@ class AdminBlogController extends Controller
             'tag_ids.*'        => 'integer|exists:blog_tags,id',
             'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096',
             'slug'             => 'nullable|string|max:350',
+            'topic_id'         => 'nullable|integer|exists:blog_topics,id',
         ]);
 
         if ($validator->fails()) {
@@ -328,31 +331,46 @@ class AdminBlogController extends Controller
 
             $status      = $request->status ?? 'draft';
             $publishedAt = $status === 'published' ? now() : null;
+            $topicId     = $request->filled('topic_id') ? (int) $request->topic_id : null;
 
-            $id = DB::table('blogs')->insertGetId([
-                'title'            => trim($request->title),
-                'slug'             => $slug,
-                'excerpt'          => $request->excerpt,
-                'content'          => $request->content,
-                'featured_image'   => $featuredImage,
-                'meta_title'       => $request->meta_title,
-                'meta_description' => $request->meta_description,
-                'status'           => $status,
-                'category_id'      => $request->category_id ?: null,
-                'published_at'     => $publishedAt,
-                'created_at'       => now(),
-                'updated_at'       => now(),
-            ]);
+            $result = DB::transaction(function () use ($request, $slug, $featuredImage, $status, $publishedAt, $topicId) {
+                $id = DB::table('blogs')->insertGetId([
+                    'title'            => trim($request->title),
+                    'slug'             => $slug,
+                    'excerpt'          => $request->excerpt,
+                    'content'          => $request->content,
+                    'featured_image'   => $featuredImage,
+                    'meta_title'       => $request->meta_title,
+                    'meta_description' => $request->meta_description,
+                    'status'           => $status,
+                    'category_id'      => $request->category_id ?: null,
+                    'published_at'     => $publishedAt,
+                    'created_at'       => now(),
+                    'updated_at'       => now(),
+                ]);
 
-            if (!empty($request->tag_ids)) {
-                $rows = array_map(fn($tid) => ['blog_id' => $id, 'tag_id' => $tid], $request->tag_ids);
-                DB::table('blog_tag_map')->insert($rows);
-            }
+                if (!empty($request->tag_ids)) {
+                    $rows = array_map(fn($tid) => ['blog_id' => $id, 'tag_id' => $tid], $request->tag_ids);
+                    DB::table('blog_tag_map')->insert($rows);
+                }
+
+                if ($topicId) {
+                    DB::table('blog_topics')
+                        ->where('id', $topicId)
+                        ->update([
+                            'status'     => 'published',
+                            'blog_id'    => $id,
+                            'updated_at' => now(),
+                        ]);
+                }
+
+                return ['id' => $id, 'slug' => $slug];
+            });
 
             return response()->json([
                 'status'  => true,
                 'message' => 'Blog created successfully.',
-                'data'    => ['id' => $id, 'slug' => $slug],
+                'data'    => $result,
             ]);
         } catch (\Throwable $e) {
             Log::error('AdminBlogController::createBlog', ['message' => $e->getMessage()]);
@@ -382,6 +400,7 @@ class AdminBlogController extends Controller
             'tag_ids.*'        => 'integer|exists:blog_tags,id',
             'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096',
             'slug'             => 'nullable|string|max:350',
+            'topic_id'         => 'nullable|integer|exists:blog_topics,id',
         ]);
 
         if ($validator->fails()) {
@@ -421,17 +440,51 @@ class AdminBlogController extends Controller
                     ->store('blog-images/featured', 'public');
             }
 
-            DB::table('blogs')->where('id', $id)->update($data);
+            // topic_id sent as empty string means "clear"; filled means "link this topic"
+            $newTopicId = $request->filled('topic_id') ? (int) $request->topic_id : null;
 
-            // Sync tags
-            if ($request->has('tag_ids')) {
-                DB::table('blog_tag_map')->where('blog_id', $id)->delete();
-                $tagIds = $request->tag_ids ?? [];
-                if (!empty($tagIds)) {
-                    $rows = array_map(fn($tid) => ['blog_id' => $id, 'tag_id' => $tid], $tagIds);
-                    DB::table('blog_tag_map')->insert($rows);
+            DB::transaction(function () use ($id, $data, $request, $newTopicId) {
+                DB::table('blogs')->where('id', $id)->update($data);
+
+                // Sync tags
+                if ($request->has('tag_ids')) {
+                    DB::table('blog_tag_map')->where('blog_id', $id)->delete();
+                    $tagIds = $request->tag_ids ?? [];
+                    if (!empty($tagIds)) {
+                        $rows = array_map(fn($tid) => ['blog_id' => $id, 'tag_id' => $tid], $tagIds);
+                        DB::table('blog_tag_map')->insert($rows);
+                    }
                 }
-            }
+
+                // Sync topic link
+                $currentTopic = DB::table('blog_topics')->where('blog_id', $id)->first();
+
+                if ($newTopicId === null) {
+                    // Admin cleared the topic — unlink if one was set
+                    if ($currentTopic) {
+                        DB::table('blog_topics')->where('id', $currentTopic->id)->update([
+                            'blog_id'    => null,
+                            'status'     => 'generated',
+                            'updated_at' => now(),
+                        ]);
+                    }
+                } elseif (!$currentTopic || $currentTopic->id !== $newTopicId) {
+                    // Different topic selected — unlink old, link new
+                    if ($currentTopic) {
+                        DB::table('blog_topics')->where('id', $currentTopic->id)->update([
+                            'blog_id'    => null,
+                            'status'     => 'generated',
+                            'updated_at' => now(),
+                        ]);
+                    }
+                    DB::table('blog_topics')->where('id', $newTopicId)->update([
+                        'blog_id'    => $id,
+                        'status'     => 'published',
+                        'updated_at' => now(),
+                    ]);
+                }
+                // same topic as before — no change needed
+            });
 
             return response()->json(['status' => true, 'message' => 'Blog updated successfully.']);
         } catch (\Throwable $e) {

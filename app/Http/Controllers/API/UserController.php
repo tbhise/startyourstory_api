@@ -180,7 +180,8 @@ class UserController extends Controller
                 'current_firm_name' => 'nullable|string',
                 'experience_years' => 'nullable|string',
                 'industry_worked_in' => 'nullable|string',
-                'experience_department' => 'nullable',
+                'experience_department'   => 'nullable|array',
+                'experience_department.*' => 'nullable|string',
                 'why_should_hire_you' => 'nullable|string',
                 'current_ctc' => 'nullable|string',
                 'expected_ctc' => 'nullable|string',
@@ -197,6 +198,64 @@ class UserController extends Controller
             }
             $existingProfile = DB::table('student_profiles')
                 ->where('user_id', $user->id)->first();
+
+            // ── Business-logic validation ──────────────────────────────────────
+            $lookingForNorm = strtolower(trim($request->looking_for ?? ''));
+            $caStatusNorm   = strtolower(trim($request->ca_status   ?? ''));
+
+            // 1. Professional status required for articleship flow
+            if ($lookingForNorm === 'articleship' && empty(trim($request->ca_status ?? ''))) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Please select your professional status.',
+                ]);
+            }
+
+            // 2. Core domain required for Cases A (inter-both), C (semi-qualified), D (qualified)
+            $needsCoreDept = in_array($lookingForNorm, ['semi-qualified', 'qualified'])
+                || ($lookingForNorm === 'articleship'
+                    && in_array($caStatusNorm, ['inter-both', 'inter both groups passed']));
+            if ($needsCoreDept && empty(trim($request->core_department ?? ''))) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Please select your core domain.',
+                ]);
+            }
+
+            // 3. Exposure preference: domain-wise mode must have at least one domain selected
+            $needsExposure = in_array($lookingForNorm, ['semi-qualified', 'qualified'])
+                || ($lookingForNorm === 'articleship'
+                    && in_array($caStatusNorm, ['inter-both', 'inter both groups passed']));
+            if ($needsExposure && $request->has('exposure_type')) {
+                $exposureRaw   = trim($request->exposure_type ?? '');
+                if ($exposureRaw !== 'overall') {
+                    $exposureParts = array_values(array_filter(
+                        array_map('trim', explode(',', $exposureRaw))
+                    ));
+                    if (empty($exposureParts)) {
+                        DB::rollBack();
+                        return response()->json([
+                            'status'  => false,
+                            'message' => 'Please select at least one preferred domain.',
+                        ]);
+                    }
+                }
+            }
+
+            // 4. Resume required when no existing resume is on file
+            $hasExistingResume = !empty($existingProfile->resume_path ?? null);
+            $resumeRequired    = in_array($lookingForNorm, ['articleship', 'semi-qualified', 'qualified']);
+            if ($resumeRequired && !$hasExistingResume && !$request->hasFile('resume_path')) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Please upload your resume.',
+                ]);
+            }
+            // ── End business-logic validation ──────────────────────────────────
+
             $resumePath = null;
             $marksheetPath = null;
             if ($request->hasFile('resume_path')) {
@@ -294,7 +353,12 @@ class UserController extends Controller
                 'experience_years' => $request->experience_years,
                 'industry_worked_in' => $request->industry_worked_in,
                 'experience_department' => !empty($request->experience_department)
-                    ? json_encode($request->experience_department)
+                    ? json_encode(array_values(array_filter(
+                        is_array($request->experience_department)
+                            ? $request->experience_department
+                            : [],
+                        fn($v) => is_string($v) && trim($v) !== ''
+                    )))
                     : null,
                 'why_should_hire_you' => $request->why_should_hire_you,
                 'current_ctc' => $request->current_ctc,

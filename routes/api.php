@@ -41,6 +41,8 @@ Route::get('/platform-settings',      [AdminSettingsController::class, 'getPubli
 // Public blog listing (published blogs only)
 Route::get('/blogs/public',            [BlogController::class, 'getPublishedBlogs']);
 Route::get('/blogs/public/categories', [BlogController::class, 'getPublicBlogCategories']);
+// NOTE: keep {slug} AFTER /categories so "categories" is not captured as a slug
+Route::get('/blogs/public/{slug}',     [BlogController::class, 'getPublishedBlogBySlug']);
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);

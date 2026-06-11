@@ -4,6 +4,103 @@
 
 ---
 
+## 2026-06-11 — Fix: Student Profile — backend business-logic validation
+
+### Files Modified
+- `app/Http/Controllers/API/UserController.php` — `updateProfile()` method
+
+### Added validation block (runs after main Validator, before file processing)
+
+All four rules call `DB::rollBack()` before returning to stay consistent with the surrounding transaction.
+
+1. **Professional status required** — if `looking_for = 'articleship'` and `ca_status` is empty → 422-style error "Please select your professional status."
+
+2. **Core domain required** — if flow is semi-qualified, qualified, or articleship with inter-both status AND `core_department` is empty → "Please select your core domain."
+
+3. **Exposure preference — domain-wise requires at least one domain** — if the flow needs exposure AND `exposure_type` is sent as neither "overall" nor a valid comma-separated list → "Please select at least one preferred domain." (Catches the edge case where frontend sends `exposure_type = ""` when domain-wise mode is active but nothing is checked.)
+
+4. **Resume required when no existing resume** — if flow is articleship/semi-qualified/qualified AND no `resume_path` file uploaded AND `student_profiles.resume_path` is empty → "Please upload your resume."
+
+### Intent
+These rules are the server-side enforcement of the frontend wizard's section-level validation, ensuring the same constraints hold for direct API calls.
+
+---
+
+## 2026-06-11 — Fix: Experience Department — backend storage normalization
+
+### Files Modified
+- `app/Http/Controllers/API/UserController.php`
+
+### Root cause
+`experience_department` was declared `nullable` (single scalar). When the frontend sent `experience_department[]` array items, PHP assembled them into an array but the validator didn't enforce the shape. The storage code called `json_encode()` on that array, producing clean JSON — but the old frontend prefill used `.split(",")` on that string, fragmenting it. Re-submit then sent both a CSV string AND individual fragment items; PHP received a mixed array; backend double-encoded it. Each round trip added one nesting level.
+
+### Fixes
+
+**1. Validator rule corrected**:
+```php
+'experience_department'   => 'nullable|array',
+'experience_department.*' => 'nullable|string',
+```
+Laravel now correctly maps `experience_department[]` → clean PHP array and rejects non-string members.
+
+**2. Storage normalization hardened**: Strips empty strings/nulls from the array before encoding; uses `array_values` to ensure stored JSON is always a flat indexed array with no gaps.
+
+---
+
+## 2026-06-11 — Feature: topic_id on blog create/update with DB transaction
+
+### Files Modified
+- `app/Http/Controllers/API/AdminBlogController.php`
+  - `getBlog`: appends `topic_id` to response by querying `blog_topics WHERE blog_id = $id`.
+  - `createBlog`: added `topic_id` (nullable integer, exists:blog_topics) to validator; wrapped blog insert + tag insert + topic update in `DB::transaction()`; if `topic_id` provided → sets `blog_topics.status = 'published'` and `blog_topics.blog_id = $newBlogId`. Full try-catch rolls back on any failure.
+  - `updateBlog`: added `topic_id` to validator; wrapped blog update + tag sync + topic sync in `DB::transaction()`; three cases handled atomically: (1) clear topic → unlink, revert status to `generated`; (2) change topic → unlink old, link new as `published`; (3) same topic → no-op.
+
+### Transaction scope (createBlog)
+```
+DB::transaction {
+  INSERT blogs
+  INSERT blog_tag_map (if tags)
+  UPDATE blog_topics SET status='published', blog_id=$id WHERE id=$topicId
+}
+```
+
+### Transaction scope (updateBlog)
+```
+DB::transaction {
+  UPDATE blogs
+  DELETE + INSERT blog_tag_map (if tag_ids sent)
+  UPDATE blog_topics (unlink old / link new / clear)
+}
+```
+
+---
+
+## 2026-06-11 — Blog Module Phase 3: Public Blog Detail API
+
+### Files Modified
+- `app/Http/Controllers/API/BlogController.php` — added `getPublishedBlogBySlug()`
+- `routes/api.php` — added `GET /blogs/public/{slug}` (registered AFTER `/blogs/public/categories` so "categories" is never captured as a slug)
+
+### DB Changes
+No database changes required.
+
+### API Endpoints Added
+```
+GET /blogs/public/{slug}
+```
+
+### Changes
+- `getPublishedBlogBySlug()`: published-only (`status='published'` in WHERE — drafts 404 publicly); returns full content + meta_title/meta_description for SEO, category name/slug, featured_image_url
+- Includes `tags` array (joined via blog_tag_map, ordered by name)
+- Includes `prev` (next-older published) and `next` (next-newer published) `{title, slug}` objects by `published_at` for the detail page navigation cards — null when at either end
+- 404 JSON `{status:false}` when slug missing or unpublished
+
+### Rollback Plan
+- Remove `getPublishedBlogBySlug()` from `BlogController.php`
+- Remove the `/blogs/public/{slug}` route + comment from `routes/api.php`
+
+---
+
 ## 2026-06-11 — Blog Module Phase 2: Public Blog Listing API
 
 ### Files Created

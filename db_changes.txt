@@ -1638,3 +1638,122 @@ UPDATE `startyourstory`.`student_profiles` SET `show_in_directory` = 1;
 -- ALTER TABLE `startyourstory`.`student_profiles` DROP COLUMN `is_creator`;
 -- (show_in_directory rollback: manual — set back to 0 for affected rows if needed)
 -- Live On server --- 10-06-2026 ------
+
+
+-- ============================================================
+--  Blog Module — Phase 1 (2026-06-11)
+-- ============================================================
+-- New tables:
+--   blog_categories  (taxonomy for blogs)
+--   blog_tags        (many-to-many tags)
+--   blogs            (blog posts with SEO, status, featured image)
+--   blog_tag_map     (pivot: blog ↔ tag)
+--
+-- NOTE: No public pages yet. Admin CRUD only in Phase 1.
+-- ============================================================
+
+-- ── blog_categories ───────────────────────────────────────────────────────────
+CREATE TABLE `blog_categories` (
+  `id`          BIGINT        NOT NULL AUTO_INCREMENT,
+  `name`        VARCHAR(100)  NOT NULL,
+  `slug`        VARCHAR(120)  NOT NULL,
+  `description` TEXT          NULL,
+  `created_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_bc_slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `blog_categories`;
+
+-- ── blog_tags ─────────────────────────────────────────────────────────────────
+CREATE TABLE `blog_tags` (
+  `id`         BIGINT       NOT NULL AUTO_INCREMENT,
+  `name`       VARCHAR(80)  NOT NULL,
+  `slug`       VARCHAR(100) NOT NULL,
+  `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_bt_slug` (`slug`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `blog_tags`;
+
+-- ── blogs ─────────────────────────────────────────────────────────────────────
+CREATE TABLE `blogs` (
+  `id`               BIGINT        NOT NULL AUTO_INCREMENT,
+  `title`            VARCHAR(300)  NOT NULL,
+  `slug`             VARCHAR(350)  NOT NULL,
+  `excerpt`          TEXT          NULL,
+  `content`          LONGTEXT      NOT NULL,
+  `featured_image`   VARCHAR(500)  NULL COMMENT 'storage-relative path',
+  `meta_title`       VARCHAR(300)  NULL,
+  `meta_description` TEXT          NULL,
+  `status`           ENUM('draft','published') NOT NULL DEFAULT 'draft',
+  `category_id`      BIGINT        NULL,
+  `published_at`     DATETIME      NULL,
+  `created_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_blogs_slug` (`slug`),
+  KEY `idx_blogs_status`      (`status`),
+  KEY `idx_blogs_category`    (`category_id`),
+  KEY `idx_blogs_published`   (`published_at`),
+  CONSTRAINT `fk_blogs_category` FOREIGN KEY (`category_id`)
+    REFERENCES `blog_categories` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `blogs`;
+
+-- ── blog_tag_map ──────────────────────────────────────────────────────────────
+CREATE TABLE `blog_tag_map` (
+  `id`      BIGINT NOT NULL AUTO_INCREMENT,
+  `blog_id` BIGINT NOT NULL,
+  `tag_id`  BIGINT NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_btm_blog_tag` (`blog_id`, `tag_id`),
+  KEY `idx_btm_tag` (`tag_id`),
+  CONSTRAINT `fk_btm_blog` FOREIGN KEY (`blog_id`) REFERENCES `blogs` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_btm_tag`  FOREIGN KEY (`tag_id`)  REFERENCES `blog_tags` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `blog_tag_map`;
+
+
+-- ============================================================
+--  Blog Module — Blog Topics Enhancement (2026-06-11)
+-- ============================================================
+-- Content-planning pipeline foundation for future AI generation.
+-- Future workflow: admin creates topic → AI generates article →
+-- blog draft created → status=generated, blog_id linked.
+-- No AI implementation yet; admin CRUD only.
+--
+-- created_by stores admin_users.id as plain BIGINT — no FK by design
+-- (admins live in admin_users, not users).
+-- ============================================================
+
+CREATE TABLE `blog_topics` (
+  `id`                BIGINT       NOT NULL AUTO_INCREMENT,
+  `title`             VARCHAR(300) NOT NULL,
+  `slug`              VARCHAR(350) NOT NULL,
+  `category_id`       BIGINT       NULL,
+  `target_keywords`   TEXT         NULL,
+  `search_intent`     VARCHAR(50)  NULL,
+  `notes`             TEXT         NULL,
+  `priority`          ENUM('low','medium','high') NOT NULL DEFAULT 'medium',
+  `status`            ENUM('pending','generating','generated','published','rejected') NOT NULL DEFAULT 'pending',
+  `blog_id`           BIGINT       NULL,
+  `generation_source` ENUM('manual','gpt','claude','other') NOT NULL DEFAULT 'manual',
+  `ai_model`          VARCHAR(100) NULL,
+  `generated_at`      DATETIME     NULL,
+  `published_at`      DATETIME     NULL,
+  `created_by`        BIGINT       NULL COMMENT 'admin_users.id — no FK by design',
+  `created_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_bt_slug` (`slug`),
+  KEY `idx_bt_status`   (`status`),
+  KEY `idx_bt_category` (`category_id`),
+  KEY `idx_bt_priority` (`priority`),
+  KEY `idx_bt_blog`     (`blog_id`),
+  KEY `idx_bt_created`  (`created_at`),
+  CONSTRAINT `fk_bt_category` FOREIGN KEY (`category_id`) REFERENCES `blog_categories` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_bt_blog`     FOREIGN KEY (`blog_id`)     REFERENCES `blogs` (`id`)          ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ROLLBACK: DROP TABLE IF EXISTS `blog_topics`;

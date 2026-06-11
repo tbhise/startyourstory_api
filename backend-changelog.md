@@ -4,6 +4,131 @@
 
 ---
 
+## 2026-06-11 — Blog Module Phase 2: Public Blog Listing API
+
+### Files Created
+- `app/Http/Controllers/API/BlogController.php` — public (no-auth) blog endpoints
+
+### Files Modified
+- `routes/api.php` — 2 public routes added to the no-auth section
+
+### DB Changes
+No database changes required.
+
+### API Endpoints Added
+```
+GET /blogs/public             ?search, ?category (slug), ?page, ?per_page (cap 30, default 10)
+GET /blogs/public/categories
+```
+
+### Changes
+- `getPublishedBlogs()`: hard-coded `WHERE blogs.status='published'` — drafts can never appear publicly regardless of params; selects only public-safe fields (no content/meta in list); search LIKE on title + excerpt only; category filter by `blog_categories.slug` (SEO-friendly URLs); ordered `published_at` DESC; paginated
+- `getPublicBlogCategories()`: only categories with ≥1 published blog, with `published_count`
+- Separate controller from `AdminBlogController` so the Phase 3 public detail page extends it
+
+### Rollback Plan
+- Delete `app/Http/Controllers/API/BlogController.php`
+- Remove the two `/blogs/public*` routes and the `BlogController` import from `routes/api.php`
+
+---
+
+## 2026-06-11 — Blog Topics Management Module (Phase 1 Enhancement)
+
+### Files Modified
+- `app/Http/Controllers/API/AdminBlogController.php` — added Blog Topics section (5 methods)
+- `routes/api.php` — added 5 topic routes inside existing `admin/blog` prefix group
+- `db_changes.txt` — appended `blog_topics` table
+
+### DB Changes
+New table `blog_topics`:
+- Core: id, title, slug (unique), category_id FK→blog_categories SET NULL, target_keywords TEXT, search_intent VARCHAR(50), notes TEXT
+- Pipeline: priority ENUM('low','medium','high') default medium; status ENUM('pending','generating','generated','published','rejected') default pending; blog_id FK→blogs SET NULL (nullable); generation_source ENUM('manual','gpt','claude','other') default manual; ai_model; generated_at; published_at
+- Audit: created_by (admin_users.id, plain BIGINT — no FK by design), timestamps
+- Indexes: status, category_id, priority, blog_id, created_at
+
+### API Endpoints Added
+```
+GET    /admin/blog/topics          ?search, ?status, ?category_id, ?priority, ?page, ?per_page
+POST   /admin/blog/topics
+GET    /admin/blog/topics/{id}
+POST   /admin/blog/topics/{id}
+DELETE /admin/blog/topics/{id}
+```
+
+### Changes
+- `getTopics()` leftJoins blog_categories (category_name) and blogs (blog_title/blog_slug/blog_status); 4 filters + search across title/slug/target_keywords; paginated, per_page capped at 50
+- `createTopic()` reuses existing `generateSlug()` helper; sets `created_by` from admin cookie auth; `generation_source` forced to 'manual'
+- `updateTopic()` does NOT touch pipeline fields (blog_id, generation_source, ai_model, generated_at, published_at) — those are reserved for future AI automation
+- `deleteTopic()` hard delete; linked blogs unaffected (FK SET NULL not needed since we delete the topic, not the blog)
+- Future AI workflow supported by schema: automation picks status='pending' topics → sets status='generating' → creates blog draft → sets status='generated', blog_id=<new blog>, generation_source/ai_model/generated_at
+
+### Rollback Plan
+```sql
+DROP TABLE IF EXISTS `blog_topics`;
+```
+Remove the 5 `/topics` routes from the `admin/blog` group in `routes/api.php`.
+Remove the "Blog Topics" section (getTopics, getTopic, createTopic, updateTopic, deleteTopic) from `AdminBlogController.php`.
+
+---
+
+## 2026-06-11 — Blog Module Phase 1: Admin CRUD
+
+### Files Created
+- `app/Http/Controllers/API/AdminBlogController.php`
+
+### Files Modified
+- `routes/api.php` — added `Route::prefix('admin/blog')` group
+- `db_changes.txt` — appended Blog Phase 1 schema
+
+### DB Changes
+New tables:
+- `blog_categories` (id, name, slug unique, description, timestamps)
+- `blog_tags` (id, name, slug unique, timestamps)
+- `blogs` (id, title, slug unique, excerpt, content, featured_image, meta_title, meta_description, status ENUM('draft','published'), category_id FK→blog_categories, published_at, timestamps)
+- `blog_tag_map` (blog_id FK cascade, tag_id FK cascade, unique blog+tag pair)
+
+### API Endpoints Added
+```
+GET    /admin/blog/categories
+POST   /admin/blog/categories
+POST   /admin/blog/categories/{id}
+DELETE /admin/blog/categories/{id}
+
+GET    /admin/blog/tags
+POST   /admin/blog/tags
+POST   /admin/blog/tags/{id}
+DELETE /admin/blog/tags/{id}
+
+GET    /admin/blog/blogs            ?search, ?status, ?category_id, ?page, ?per_page
+POST   /admin/blog/blogs
+GET    /admin/blog/blogs/{id}
+POST   /admin/blog/blogs/{id}
+DELETE /admin/blog/blogs/{id}
+POST   /admin/blog/blogs/{id}/publish
+POST   /admin/blog/blogs/{id}/unpublish
+```
+
+### Changes
+- `AdminBlogController` uses `getAdminUser()` cookie auth matching existing admin pattern
+- `generateSlug()` private helper: derives unique slug from text via `Str::slug()` with numeric suffix loop
+- Categories: `deleteCategory()` nulls `blogs.category_id` before deletion (FK SET NULL already handles at DB level, but explicit null-out ensures clean state)
+- Blogs: create/update handle featured image upload to `blog-images/featured` storage; old image deleted on update
+- `publishBlog()` stamps `published_at` at first publish; `unpublishBlog()` reverts status to draft (does NOT clear `published_at`)
+- `updateBlog()` syncs tag_map only when `tag_ids` key is present in request (partial update safe)
+- No public endpoints — admin only in Phase 1
+
+### Rollback Plan
+```sql
+DROP TABLE IF EXISTS `blog_tag_map`;
+DROP TABLE IF EXISTS `blogs`;
+DROP TABLE IF EXISTS `blog_tags`;
+DROP TABLE IF EXISTS `blog_categories`;
+```
+Remove `Route::prefix('admin/blog')` block from `routes/api.php`.
+Delete `app/Http/Controllers/API/AdminBlogController.php`.
+
+---
+
 ## 2026-06-10 — Auth: me() Omits Firm Fields for Non-Firm Users
 
 ### Files Modified

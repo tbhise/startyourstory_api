@@ -30,11 +30,17 @@ use App\Http\Controllers\API\AdminSettingsController;
 use App\Http\Controllers\API\AdminUserController;
 use App\Http\Controllers\API\SessionController;
 use App\Http\Controllers\API\FreeContentController;
+use App\Http\Controllers\API\AdminBlogController;
+use App\Http\Controllers\API\BlogController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
 Route::post('/newsletter/subscribe',  [PublicController::class, 'subscribeNewsletter']);
 Route::get('/platform-settings',      [AdminSettingsController::class, 'getPublicSettings']);
+
+// Public blog listing (published blogs only)
+Route::get('/blogs/public',            [BlogController::class, 'getPublishedBlogs']);
+Route::get('/blogs/public/categories', [BlogController::class, 'getPublicBlogCategories']);
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
@@ -330,3 +336,34 @@ Route::post('/error-logs',                [ErrorLogController::class, 'store']);
 Route::get('/admin/error-logs',           [ErrorLogController::class, 'index']);
 Route::get('/admin/error-logs/stats',     [ErrorLogController::class, 'stats']);
 Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']);
+
+// ── Admin — Blog Module (Phase 1) ─────────────────────────────────────────────
+Route::prefix('admin/blog')->group(function () {
+    // Categories
+    Route::get('/categories',              [AdminBlogController::class, 'getCategories']);
+    Route::post('/categories',             [AdminBlogController::class, 'createCategory']);
+    Route::post('/categories/{id}',        [AdminBlogController::class, 'updateCategory']);
+    Route::delete('/categories/{id}',      [AdminBlogController::class, 'deleteCategory']);
+
+    // Tags
+    Route::get('/tags',                    [AdminBlogController::class, 'getTags']);
+    Route::post('/tags',                   [AdminBlogController::class, 'createTag']);
+    Route::post('/tags/{id}',              [AdminBlogController::class, 'updateTag']);
+    Route::delete('/tags/{id}',            [AdminBlogController::class, 'deleteTag']);
+
+    // Blogs
+    Route::get('/blogs',                   [AdminBlogController::class, 'getBlogs']);
+    Route::post('/blogs',                  [AdminBlogController::class, 'createBlog']);
+    Route::get('/blogs/{id}',              [AdminBlogController::class, 'getBlog']);
+    Route::post('/blogs/{id}',             [AdminBlogController::class, 'updateBlog']);
+    Route::delete('/blogs/{id}',           [AdminBlogController::class, 'deleteBlog']);
+    Route::post('/blogs/{id}/publish',     [AdminBlogController::class, 'publishBlog']);
+    Route::post('/blogs/{id}/unpublish',   [AdminBlogController::class, 'unpublishBlog']);
+
+    // Topics (content-planning pipeline)
+    Route::get('/topics',                  [AdminBlogController::class, 'getTopics']);
+    Route::post('/topics',                 [AdminBlogController::class, 'createTopic']);
+    Route::get('/topics/{id}',             [AdminBlogController::class, 'getTopic']);
+    Route::post('/topics/{id}',            [AdminBlogController::class, 'updateTopic']);
+    Route::delete('/topics/{id}',          [AdminBlogController::class, 'deleteTopic']);
+});

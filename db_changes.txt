@@ -1788,17 +1788,16 @@ WHERE `industry_worked_in` IS NOT NULL
 ALTER TABLE `startyourstory`.`student_profiles`
 CHANGE COLUMN `industry_worked_in` `industry_worked_in` JSON NULL DEFAULT NULL;
 
+-- ROLLBACK
 
 -- Step 1: Change column back to VARCHAR(255)
-ALTER TABLE `startyourstory`.`student_profiles`
-CHANGE COLUMN `industry_worked_in` `industry_worked_in` VARCHAR(255) NULL DEFAULT NULL;
+-- ALTER TABLE `startyourstory`.`student_profiles` CHANGE COLUMN `industry_worked_in` `industry_worked_in` VARCHAR(255) NULL DEFAULT -- NULL;
 
 -- Step 2: The JSON arrays are now stored as plain strings like '["Manufacturing"]'
 -- Extract the first element back to a plain string
-UPDATE `startyourstory`.`student_profiles`
-SET `industry_worked_in` = JSON_UNQUOTE(JSON_EXTRACT(`industry_worked_in`, '$[0]'))
-WHERE `industry_worked_in` IS NOT NULL
-  AND `industry_worked_in` LIKE '[%';
+-- UPDATE `startyourstory`.`student_profiles`
+-- SET `industry_worked_in` = JSON_UNQUOTE(JSON_EXTRACT(`industry_worked_in`, '$[0]'))
+-- WHERE `industry_worked_in` IS NOT NULL AND `industry_worked_in` LIKE '[%';
 
 
 -- ============================================================

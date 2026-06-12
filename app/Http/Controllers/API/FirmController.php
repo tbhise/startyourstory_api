@@ -199,6 +199,23 @@ class FirmController extends Controller
             $userId = $user->id;
             /*
         |--------------------------------------------------------------------------
+        | Validate
+        |--------------------------------------------------------------------------
+        */
+            $validator = Validator::make($request->all(), [
+                'address' => 'required|string',
+            ], [
+                'address.required' => 'Address is required.',
+            ]);
+            if ($validator->fails()) {
+                DB::rollBack();
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
+            /*
+        |--------------------------------------------------------------------------
         | Check Existing Firm Profile
         |--------------------------------------------------------------------------
         */

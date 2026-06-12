@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-06-13 — Firm Profile: Address required validation
+
+### Files Modified
+- `app/Http/Controllers/API/FirmController.php` — `firm_profile_update()`: added a `Validator::make` at the top of the method enforcing `address` => `required|string` with message "Address is required."; on failure it `DB::rollBack()`s and returns the controller's standard `{status:false, message}` shape (matching the existing validator blocks in this file). `Validator` was already imported.
+
+### Notes
+- Validation applies only to profile create/update. The read path (`getFirmProfileDetails`) is untouched, so existing firms with an empty address still load without breaking.
+- The "Other Domains" feature is frontend-only: custom domains are merged into the existing `exposure_type` JSON array by the client, so no controller, validation, or schema change was needed for it.
+
+### DB Changes
+None. No migration.
+
+### Rollback Plan
+- Remove the `address` `Validator::make` block from `firm_profile_update()`.
+
+---
+
+## 2026-06-12 — Feature: Admin Student Detail Endpoint
+
+### Files Modified
+- `app/Http/Controllers/API/AdminController.php` — added `getStudent(Request $request, $id)`: admin-auth via `adminFromRequest()`; joins `users` + `student_profiles`; returns full profile fields (id, name, email, mobile, profile_image as full URL, profile_completed, is_verified, created_at, is_deleted, deletion_requested_at, scheduled_deletion_at, plus all student_profiles columns); JSON-decodes `exposure_type` and `preferred_location`; 404 if student not found.
+- `routes/api.php` — added `Route::get('/admin/students/{id}', [AdminController::class, 'getStudent'])` alongside the existing POST list route.
+
+### No DB changes.
+
+### Rollback Plan
+- Remove `getStudent()` from `AdminController.php`
+- Remove the `GET /admin/students/{id}` route from `routes/api.php`
+
+---
+
 ## 2026-06-12 — Feature: Student Account Deletion (30-day soft delete)
 
 ### Reason

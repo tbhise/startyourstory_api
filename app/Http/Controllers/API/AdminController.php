@@ -1006,6 +1006,74 @@ class AdminController extends Controller
         }
     }
 
+    public function getStudent(Request $request, $id)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $student = DB::table('users as u')
+                ->leftJoin('student_profiles as sp', 'sp.user_id', '=', 'u.id')
+                ->where('u.id', $id)
+                ->where('u.role', 'student')
+                ->select(
+                    'u.id',
+                    'u.name',
+                    'u.email',
+                    'u.mobile',
+                    'u.profile_image',
+                    'u.profile_completed',
+                    'u.email_verified_at',
+                    'u.created_at',
+                    'u.is_deleted',
+                    'u.deletion_requested_at',
+                    'u.scheduled_deletion_at',
+                    'sp.looking_for',
+                    'sp.ca_status',
+                    'sp.address',
+                    'sp.city',
+                    'sp.gender',
+                    'sp.registration_type',
+                    'sp.passing_month',
+                    'sp.core_department',
+                    'sp.exposure_type',
+                    'sp.preferred_location',
+                    'sp.experience_years',
+                    'sp.current_firm_name',
+                    'sp.industry_worked_in',
+                    'sp.experience_department',
+                    'sp.why_should_hire_you',
+                    'sp.current_ctc',
+                    'sp.expected_ctc',
+                    'sp.resume_path',
+                    'sp.marksheet_path',
+                    'sp.linkedin_url',
+                    'sp.portfolio_url',
+                    'sp.instagram_url',
+                    'sp.website_url',
+                    'sp.qualification',
+                    'sp.availability_status',
+                    'sp.is_creator'
+                )
+                ->first();
+
+            if (!$student) {
+                return response()->json(['status' => false, 'message' => 'Student not found'], 404);
+            }
+
+            $data = (array) $student;
+            $data['profile_image'] = $student->profile_image ? asset('storage/' . $student->profile_image) : null;
+            $data['is_verified']   = !empty($student->email_verified_at);
+            $data['exposure_type']      = $data['exposure_type']      ? (json_decode($data['exposure_type'])      ?? []) : [];
+            $data['preferred_location'] = $data['preferred_location'] ? (json_decode($data['preferred_location']) ?? []) : [];
+
+            return response()->json(['status' => true, 'data' => $data]);
+        } catch (\Exception $e) {
+            Log::error('getStudent Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     public function rejectPremiumRequest(
         Request $request,
         $encId = null

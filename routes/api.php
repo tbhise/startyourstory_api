@@ -164,6 +164,7 @@ Route::post('/master/companies',           [MasterController::class, 'getCompani
 // Admin — directory listings (POST-for-list, matching other admin list endpoints)
 Route::post('/admin/firms',                [AdminController::class, 'getFirms']);
 Route::post('/admin/students',             [AdminController::class, 'getStudents']);
+Route::get('/admin/students/{id}',         [AdminController::class, 'getStudent']);
 
 // Admin — firm manual verification
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);

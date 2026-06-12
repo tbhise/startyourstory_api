@@ -1757,3 +1757,163 @@ CREATE TABLE `blog_topics` (
   CONSTRAINT `fk_bt_blog`     FOREIGN KEY (`blog_id`)     REFERENCES `blogs` (`id`)          ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- ROLLBACK: DROP TABLE IF EXISTS `blog_topics`;
+
+-- =========================================
+-- 2026-06-12 — Admin PWA
+-- =========================================
+-- No database changes required.
+-- This feature is frontend-only: vite-plugin-pwa manifest + service worker.
+-- See frontend-changelog.md for full implementation details.
+
+
+-- =========================================
+-- 2026-06-12 — Homepage Latest Insights blog section
+-- =========================================
+-- No database changes required.
+-- This feature is frontend-only: reads from existing blogs/public API.
+-- See frontend-changelog.md for full implementation details.
+
+
+-- =========================================
+-- 2026-06-12 — industry_worked_in: convert to JSON array (multi-industry support)
+-- =========================================
+-- Step 1: Migrate existing plain strings to single-element JSON arrays
+UPDATE `startyourstory`.`student_profiles`
+SET `industry_worked_in` = JSON_ARRAY(`industry_worked_in`)
+WHERE `industry_worked_in` IS NOT NULL
+  AND `industry_worked_in` != ''
+  AND `industry_worked_in` NOT LIKE '[%';
+
+-- Step 2: Change column type to JSON
+ALTER TABLE `startyourstory`.`student_profiles`
+CHANGE COLUMN `industry_worked_in` `industry_worked_in` JSON NULL DEFAULT NULL;
+
+
+-- Step 1: Change column back to VARCHAR(255)
+ALTER TABLE `startyourstory`.`student_profiles`
+CHANGE COLUMN `industry_worked_in` `industry_worked_in` VARCHAR(255) NULL DEFAULT NULL;
+
+-- Step 2: The JSON arrays are now stored as plain strings like '["Manufacturing"]'
+-- Extract the first element back to a plain string
+UPDATE `startyourstory`.`student_profiles`
+SET `industry_worked_in` = JSON_UNQUOTE(JSON_EXTRACT(`industry_worked_in`, '$[0]'))
+WHERE `industry_worked_in` IS NOT NULL
+  AND `industry_worked_in` LIKE '[%';
+
+
+-- ============================================================
+--  PhonePe TEST MODE Integration (2026-06-12)
+-- ============================================================
+-- Adds PhonePe as a second payment gateway for wallet recharges.
+-- Razorpay is unchanged. Both gateways coexist.
+--
+-- Changes:
+--   1. Extend wallet_recharges.payment_method ENUM to include 'phonepe'
+--   2. Add gateway_response JSON column for non-Razorpay gateway payloads
+--
+-- New backend files:
+--   app/Services/Payment/PhonePeGateway.php
+--   app/Http/Controllers/API/PhonePeWalletController.php
+--
+-- New API routes:
+--   POST /api/wallet/recharge/phonepe/initiate  (auth required)
+--   POST /api/wallet/recharge/phonepe/verify    (auth required)
+--   POST /api/wallet/recharge/phonepe/webhook   (public, sig-verified)
+--
+-- ENV vars required:
+--   PHONEPE_MERCHANT_ID=PGTESTPAYUAT
+--   PHONEPE_SALT_KEY=099eb0cd-02cf-4e2a-8aca-3e6c6aff0399
+--   PHONEPE_SALT_INDEX=1
+--   PHONEPE_BASE_URL=https://api-preprod.phonepe.com/apis/pg-sandbox
+--   FRONTEND_URL=http://localhost:3000   (or production URL)
+-- ============================================================
+
+-- Step 1: Add 'phonepe' to the payment_method ENUM
+ALTER TABLE `wallet_recharges`
+  MODIFY COLUMN `payment_method` ENUM('razorpay','phonepe','manual') NOT NULL DEFAULT 'razorpay';
+
+-- Step 2: Add gateway_response JSON column (stores PhonePe/future gateway raw responses)
+ALTER TABLE `wallet_recharges`
+  ADD COLUMN `gateway_response` JSON NULL AFTER `razorpay_response`;
+
+-- ROLLBACK:
+-- ALTER TABLE `wallet_recharges` DROP COLUMN `gateway_response`;
+-- ALTER TABLE `wallet_recharges`
+--   MODIFY COLUMN `payment_method` ENUM('razorpay','manual') NOT NULL DEFAULT 'razorpay';
+
+
+-- ============================================================
+--  Razorpay Removal + PhonePe Full Integration (2026-06-12)
+-- ============================================================
+-- Extends PhonePe to firm subscriptions and creator engagement payments.
+-- Razorpay removed from all active payment flows.
+--
+-- New backend files:
+--   app/Http/Controllers/API/PhonePeFirmController.php
+--   app/Http/Controllers/API/PhonePeEngagementController.php
+--
+-- New API routes:
+--   POST /api/payments/phonepe/initiate          (auth required)
+--   POST /api/payments/phonepe/verify            (auth required)
+--   POST/GET /api/payments/phonepe/webhook       (public, sig-verified)
+--   POST /api/creator-marketplace/engagements/{id}/payment/phonepe/initiate
+--   POST /api/creator-marketplace/engagements/{id}/payment/phonepe/verify
+--   POST/GET /api/creator-marketplace/payments/phonepe/webhook
+--
+-- Deleted backend files:
+--   app/Http/Controllers/API/PaymentController.php
+--   app/Services/Payment/RazorpayGateway.php
+--   composer package: razorpay/razorpay removed
+-- ============================================================
+
+-- Extend firm_subscriptions.payment_gateway to include phonepe
+ALTER TABLE `firm_subscriptions`
+  MODIFY COLUMN `payment_gateway` ENUM('manual','razorpay','phonepe') DEFAULT 'manual';
+
+-- Extend creator_engagement_payments.payment_method to include phonepe
+ALTER TABLE `creator_engagement_payments`
+  MODIFY COLUMN `payment_method` ENUM('razorpay','phonepe','manual') NOT NULL;
+
+-- ROLLBACK:
+-- ALTER TABLE `firm_subscriptions`
+--   MODIFY COLUMN `payment_gateway` ENUM('manual','razorpay') DEFAULT 'manual';
+-- ALTER TABLE `creator_engagement_payments`
+--   MODIFY COLUMN `payment_method` ENUM('razorpay','manual') NOT NULL;
+
+-- ============================================================
+-- 2026-06-12 — Student Account Deletion (30-day soft delete)
+-- ============================================================
+-- Adds the grace-window timestamps to `users`. `is_deleted` already exists
+-- (it is part of the users index and auth queries); the guarded ALTER below
+-- only creates it on environments that somehow lack it. Migration:
+--   database/migrations/2026_06_12_000001_add_account_deletion_to_users_table.php
+--
+-- NOTE: MySQL has no "ADD COLUMN IF NOT EXISTS" before 8.0.29. If is_deleted
+-- already exists (it does in this project), run ONLY the two timestamp ALTERs.
+
+-- (Run only if missing — is_deleted already exists in this project's schema)
+-- ALTER TABLE `users`
+--   ADD COLUMN `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 AFTER `id`;
+
+ALTER TABLE `users`
+  ADD COLUMN `deletion_requested_at` DATETIME NULL AFTER `token_expires_at`,
+  ADD COLUMN `scheduled_deletion_at` DATETIME NULL AFTER `deletion_requested_at`;
+
+-- Optional index to speed up the daily finalizer sweep
+ALTER TABLE `users`
+  ADD INDEX `idx_users_scheduled_deletion` (`scheduled_deletion_at`, `is_deleted`);
+
+-- New application status string written by the deletion flow (no schema change —
+-- applications.recruiter_status is a free-text/VARCHAR column):
+--   'Withdrawn by Candidate'  (recruiter_status)
+--   'Withdrawn'               (student_interview_response, when an interview was upcoming)
+
+-- ROLLBACK:
+-- ALTER TABLE `users` DROP INDEX `idx_users_scheduled_deletion`;
+-- ALTER TABLE `users`
+--   DROP COLUMN `scheduled_deletion_at`,
+--   DROP COLUMN `deletion_requested_at`;
+-- (Do NOT drop `is_deleted` — it predates this feature.)
+-- To clear any in-flight requests instead of dropping columns:
+-- UPDATE `users` SET deletion_requested_at = NULL, scheduled_deletion_at = NULL
+--   WHERE role = 'student' AND is_deleted = 0;

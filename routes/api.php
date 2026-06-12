@@ -13,7 +13,8 @@ use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
-use App\Http\Controllers\API\PaymentController;
+use App\Http\Controllers\API\PhonePeFirmController;
+use App\Http\Controllers\API\PhonePeEngagementController;
 use App\Http\Middleware\FirmVerifiedMiddleware;
 
 use App\Http\Controllers\API\TrainingPartnerController;
@@ -32,6 +33,7 @@ use App\Http\Controllers\API\SessionController;
 use App\Http\Controllers\API\FreeContentController;
 use App\Http\Controllers\API\AdminBlogController;
 use App\Http\Controllers\API\BlogController;
+use App\Http\Controllers\API\PhonePeWalletController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
@@ -82,6 +84,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/student/directory-visibility',        [UserController::class, 'updateDirectoryVisibility']);
     Route::post('/dismiss-apply-limit-modal',            [UserController::class, 'dismissApplyLimitModal']);
 
+    // Student account deletion (30-day soft delete) — student-only (enforced in controller)
+    Route::post('/account/request-deletion',             [UserController::class, 'requestAccountDeletion']);
+
     // Company employee directory (verified members working at a firm)
     Route::post('/companies/{id}/employees/preview',         [CompanyEmployeeController::class, 'getPreview']);
     Route::post('/companies/{id}/employees',                 [CompanyEmployeeController::class, 'getDirectory']);
@@ -111,10 +116,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::get('/student/apply-status',             [WalletController::class, 'getApplyStatus']);
     Route::post('/wallet/ledger',                   [WalletController::class, 'getLedger']);
     Route::post('/wallet/recharges',                [WalletController::class, 'getRechargeHistory']);
-    Route::post('/wallet/recharge/order',           [WalletController::class, 'createOrder']);
-    Route::post('/wallet/recharge/verify',          [WalletController::class, 'verifyPayment']);
     Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge']);
     Route::post('/student/premium-request',         [WalletController::class, 'submitPremiumRequest']);
+
+    // ── PhonePe wallet recharge (TEST MODE) ──
+    Route::post('/wallet/recharge/phonepe/initiate', [PhonePeWalletController::class, 'initiate']);
+    Route::post('/wallet/recharge/phonepe/verify',   [PhonePeWalletController::class, 'verify']);
 
     // ── Firm dashboard routes — require manual verification approval ──
     Route::middleware([FirmVerifiedMiddleware::class])->group(function () {
@@ -209,10 +216,10 @@ Route::prefix('admin/training-partners')->group(function () {
     Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
 
 
-Route::post('/payments/create-order', [PaymentController::class, 'createOrder']);
-
-Route::post('/payments/verify', [PaymentController::class, 'verifyPayment']);
-Route::post('/payments/failure', [PaymentController::class, 'paymentFailure']);
+Route::post('/payments/phonepe/initiate', [PhonePeFirmController::class, 'initiate']);
+Route::post('/payments/phonepe/verify',   [PhonePeFirmController::class, 'verify']);
+Route::post('/payments/phonepe/webhook',  [PhonePeFirmController::class, 'webhook']);
+Route::get('/payments/phonepe/webhook',   fn() => response()->json(['status' => 'ok']));
 
 // ── Messaging ─────────────────────────────────────────────────────────────────
 Route::middleware([ApiAuthMiddleware::class])->prefix('messaging')->group(function () {
@@ -291,11 +298,10 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/bids/{bidId}/status',       [CreatorMarketplaceController::class, 'updateBidStatus']);
     Route::post('/creator-marketplace/bids/{bidId}/accept-creator',[CreatorMarketplaceController::class, 'acceptCreator']);
     Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
-    // Payment — firm-only actions
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/initiate', [CreatorMarketplaceController::class, 'initiatePayment']);
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/verify',   [CreatorMarketplaceController::class, 'verifyEngagementPayment']);
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/failure',  [CreatorMarketplaceController::class, 'engagementPaymentFailure']);
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',   [CreatorMarketplaceController::class, 'submitManualPayment']);
+    // Payment — firm-only actions (PhonePe)
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/verify',   [PhonePeEngagementController::class, 'verify']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',           [CreatorMarketplaceController::class, 'submitManualPayment']);
 });
 
 // ── Free Content Credits (Firm) ───────────────────────────────────────────────
@@ -329,6 +335,12 @@ Route::get('/admin/commission-rate',                   [AdminPayoutsController::
 Route::post('/admin/commission-rate',                  [AdminPayoutsController::class, 'updateCommissionRate']);
 Route::get('/admin/platform-settings',                 [AdminSettingsController::class, 'getSettings']);
 Route::post('/admin/platform-settings/{key}',          [AdminSettingsController::class, 'updateSetting']);
+
+// ── PhonePe webhook (no auth — PhonePe S2S; signature verified inside controller) ──
+Route::post('/wallet/recharge/phonepe/webhook', [PhonePeWalletController::class, 'webhook']);
+Route::get('/wallet/recharge/phonepe/webhook', fn() => response()->json(['status' => 'ok'], 200));
+Route::post('/creator-marketplace/payments/phonepe/webhook', [PhonePeEngagementController::class, 'webhook']);
+Route::get('/creator-marketplace/payments/phonepe/webhook',  fn() => response()->json(['status' => 'ok'], 200));
 
 // ── Error Logging ─────────────────────────────────────────────────────────────
 // Public — no auth required so errors during login/registration are captured too

@@ -4,6 +4,113 @@
 
 ---
 
+## 2026-06-12 — Feature: Student Account Deletion (30-day soft delete)
+
+### Reason
+Allow students to delete their own account with a 30-day recovery window. Not a hard delete — records are preserved; after 30 days the account is flagged `is_deleted = true`. Firm and admin accounts are unaffected.
+
+### Files Created
+- `database/migrations/2026_06_12_000001_add_account_deletion_to_users_table.php` — adds `deletion_requested_at` and `scheduled_deletion_at` to `users` (guards `is_deleted`, which already exists).
+
+### Files Modified
+- `app/Http/Controllers/API/UserController.php` — added `requestAccountDeletion()` (student-only). Sets `deletion_requested_at = now()`, `scheduled_deletion_at = now()+30d`; withdraws active applications (`recruiter_status = 'Withdrawn by Candidate'`); cancels upcoming interviews (`student_interview_response = 'Withdrawn'`) and notifies the firm via `NotificationHelper` + a firm-visible `recruiter_actions` row; clears `api_token`/`user_sessions` (logout) and expires the auth cookie. Added `use App\Helpers\NotificationHelper;`.
+- `app/Http/Controllers/API/AuthController.php` — `login()`: no longer pre-filters `is_deleted`; a permanently-deleted account returns `403 "Your account has been deleted."`; a student logging in during the grace window has `deletion_requested_at`/`scheduled_deletion_at` cleared (auto-restore) and receives a "Welcome back…" message plus `data.account_restored = true`.
+- `app/Http/Controllers/API/FirmDashboardController.php` — `getCandidates()` now excludes students with a pending deletion (`whereNull('users.deletion_requested_at')`) so their profile is hidden during the grace window (reversible on login).
+- `app/Http/Controllers/API/AdminController.php` — `getStudents()` accepts `deletion_status` (`active` default | `deleted` | `all`) and returns `is_deleted`, `deletion_requested_at`, `scheduled_deletion_at`.
+- `routes/api.php` — added `POST /account/request-deletion` inside the `ApiAuthMiddleware` group.
+- `routes/console.php` — added daily `finalize-student-account-deletions` schedule (03:00): sets `is_deleted = true` for students whose `scheduled_deletion_at <= now()` and `is_deleted = false`. No physical deletion.
+
+### DB changes
+See `db_changes.txt` (2026-06-12 entry) — two nullable DATETIME columns + index, with rollback SQL.
+
+### Notes
+- Wallet holds on withdrawn applications are intentionally left untouched (they auto-expire via the existing `expire-application-holds` job).
+- Auto-restore reactivates the account/profile only; it does not reinstate already-withdrawn applications or cancelled interviews.
+
+---
+
+## 2026-06-12 — Fix: PhonePe API Migration v1 → v2 (OAuth2)
+
+### Reason
+PhonePe deprecated the v1 salt-key / X-VERIFY signature scheme. The current dashboard only exposes `client_id`, `client_secret`, and `merchant_id` — there is no `salt_key`. All endpoints and auth headers have changed.
+
+### Files Modified
+- `app/Services/Payment/PhonePeGateway.php` — Full rewrite. Replaced per-request SHA256 X-VERIFY with OAuth2 `client_credentials` token flow (`POST /v1/oauth/token`). Token cached via Laravel `Cache` until 60s before `expires_at`. Initiate now POSTs to `/checkout/v2/pay` with `O-Bearer` auth. Status check now GETs `/checkout/v2/order/{id}/status`. Webhook signature now verifies `SHA256(username:password)` against `Authorization` header.
+- `config/services.php` — Replaced `PHONEPE_SALT_KEY` / `PHONEPE_SALT_INDEX` with `PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`, `PHONEPE_CLIENT_VERSION`. Added `PHONEPE_WEBHOOK_USERNAME` / `PHONEPE_WEBHOOK_PASSWORD`.
+- `app/Http/Controllers/API/PhonePeWalletController.php` — `verify()`: success check changed from `code === 'PAYMENT_SUCCESS'` to `state === 'COMPLETED'`; transactionId path updated to `paymentDetails[0].transactionId`. `webhook()`: removed base64 decode; now reads plain JSON body; uses `Authorization` header for sig verification; reads `payload.merchantOrderId` and `payload.state`.
+
+### ENV Variables — Replace in `.env`
+```
+# Remove:
+# PHONEPE_SALT_KEY=...
+# PHONEPE_SALT_INDEX=...
+
+# Add:
+PHONEPE_MERCHANT_ID=<from PhonePe dashboard>
+PHONEPE_CLIENT_ID=<from PhonePe dashboard>
+PHONEPE_CLIENT_SECRET=<from PhonePe dashboard>
+PHONEPE_CLIENT_VERSION=1
+PHONEPE_BASE_URL=https://api-preprod.phonepe.com/apis/pg-sandbox
+FRONTEND_URL=http://localhost:3000
+PHONEPE_WEBHOOK_USERNAME=<configured in PhonePe dashboard webhook settings>
+PHONEPE_WEBHOOK_PASSWORD=<configured in PhonePe dashboard webhook settings>
+```
+
+After updating `.env`, run: `php artisan config:clear`
+
+### No DB changes. No route changes. No frontend changes.
+
+---
+
+## 2026-06-12 — Feature: PhonePe TEST MODE Payment Gateway Integration
+
+### Scope
+Wallet Recharge flow only. Razorpay is unchanged. Both gateways coexist.
+
+### Files Created
+- `app/Services/Payment/PhonePeGateway.php` — Implements `PaymentGateway` interface. SHA256 X-VERIFY signature for both initiate and webhook. Calls PhonePe UAT API using Laravel `Http` facade (no PHP SDK needed).
+- `app/Http/Controllers/API/PhonePeWalletController.php` — Handles `initiate`, `verify`, and `webhook` endpoints. Idempotency guard on `payment_status = 'paid'`. Signature verified server-side before any DB write.
+
+### Files Modified
+- `app/Services/Payment/PaymentGatewayFactory.php` — Uncommented `'phonepe' => new PhonePeGateway()` case.
+- `config/services.php` — Added `phonepe` config block reading from `PHONEPE_MERCHANT_ID`, `PHONEPE_SALT_KEY`, `PHONEPE_SALT_INDEX`, `PHONEPE_BASE_URL`, `FRONTEND_URL`.
+- `routes/api.php` — Added 3 routes: `POST /wallet/recharge/phonepe/initiate` (auth), `POST /wallet/recharge/phonepe/verify` (auth), `POST /wallet/recharge/phonepe/webhook` (public, sig-verified).
+
+### DB Changes (see db_changes.txt)
+- `ALTER TABLE wallet_recharges MODIFY payment_method ENUM('razorpay','phonepe','manual')`
+- `ALTER TABLE wallet_recharges ADD COLUMN gateway_response JSON NULL`
+
+### ENV Variables Required
+```
+PHONEPE_MERCHANT_ID=PGTESTPAYUAT
+PHONEPE_SALT_KEY=099eb0cd-02cf-4e2a-8aca-3e6c6aff0399
+PHONEPE_SALT_INDEX=1
+PHONEPE_BASE_URL=https://api-preprod.phonepe.com/apis/pg-sandbox
+FRONTEND_URL=http://localhost:3000
+```
+
+### Payment Flow
+1. Frontend `POST /wallet/recharge/phonepe/initiate` → backend creates `wallet_recharges` record, calls PhonePe UAT API, returns `redirect_url`
+2. Frontend redirects user to PhonePe checkout
+3. PhonePe redirects user to `FRONTEND_URL/wallet/recharge?phonepe_txn={merchantTxnId}`
+4. Frontend auto-calls `POST /wallet/recharge/phonepe/verify` → backend queries PhonePe status API → credits wallet
+5. PhonePe also POSTs to webhook → backend verifies X-VERIFY signature → idempotently credits wallet
+
+### Security
+- Signatures verified server-side with `hash_equals()` before any DB write
+- Idempotency guard: `payment_status = 'paid'` check prevents double-credit
+- No credentials hardcoded; all via env vars
+
+### Rollback
+```sql
+ALTER TABLE `wallet_recharges` DROP COLUMN `gateway_response`;
+ALTER TABLE `wallet_recharges`
+  MODIFY COLUMN `payment_method` ENUM('razorpay','manual') NOT NULL DEFAULT 'razorpay';
+```
+Backend: delete `PhonePeGateway.php`, `PhonePeWalletController.php`; re-comment factory case; remove routes; remove `phonepe` config block.
+
+---
+
 ## 2026-06-11 — Fix: Student Profile — backend business-logic validation
 
 ### Files Modified

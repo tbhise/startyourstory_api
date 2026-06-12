@@ -40,6 +40,9 @@ class FirmDashboardController extends Controller
                 )
                 ->leftJoin('student_profiles', 'users.id', '=', 'student_profiles.user_id')
                 ->where('users.is_deleted', false)
+                // Hide students who have requested account deletion (30-day grace).
+                // Reversible: a login clears deletion_requested_at and they reappear.
+                ->whereNull('users.deletion_requested_at')
                 ->where('users.role', 'student');
             /*
         |--------------------------------------------------------------------------

@@ -35,9 +35,15 @@ return [
         ],
     ],
 
-    'razorpay' => [
-        'key' => env('RAZORPAY_KEY'),
-        'secret' => env('RAZORPAY_SECRET'),
+    'phonepe' => [
+        'merchant_id'      => env('PHONEPE_MERCHANT_ID'),
+        'client_id'        => env('PHONEPE_CLIENT_ID'),
+        'client_secret'    => env('PHONEPE_CLIENT_SECRET'),
+        'client_version'   => env('PHONEPE_CLIENT_VERSION', 1),
+        'base_url'         => env('PHONEPE_BASE_URL', 'https://api-preprod.phonepe.com/apis/pg-sandbox'),
+        'frontend_url'     => env('FRONTEND_URL', env('APP_URL')),
+        'webhook_username' => env('PHONEPE_WEBHOOK_USERNAME'),
+        'webhook_password' => env('PHONEPE_WEBHOOK_PASSWORD'),
     ],
 
 ];

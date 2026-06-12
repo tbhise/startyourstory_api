@@ -831,7 +831,12 @@ class JobsController extends Controller
                                 is_array(json_decode($item->core_department ?? '', true))
                                     ? json_decode($item->core_department, true)
                                     : (empty($item->core_department) ? [] : [$item->core_department]),
-                                [$item->industry_worked_in],
+                                // industry_worked_in is now a JSON array
+                                !empty($item->industry_worked_in)
+                                    ? (is_array(json_decode($item->industry_worked_in ?? '', true))
+                                        ? array_values(array_filter(json_decode($item->industry_worked_in, true)))
+                                        : (trim($item->industry_worked_in ?? '') !== '' ? [$item->industry_worked_in] : []))
+                                    : [],
                                 // experience_department may be doubly-encoded; strip stray quotes/brackets
                                 !empty($item->experience_department)
                                     ? array_values(array_filter(array_map(
@@ -1382,7 +1387,12 @@ class JobsController extends Controller
                         is_array(json_decode($updatedApplication->core_department ?? '', true))
                             ? json_decode($updatedApplication->core_department, true)
                             : (empty($updatedApplication->core_department) ? [] : [$updatedApplication->core_department]),
-                        [$updatedApplication->industry_worked_in],
+                        // industry_worked_in is now a JSON array
+                        !empty($updatedApplication->industry_worked_in)
+                            ? (is_array(json_decode($updatedApplication->industry_worked_in ?? '', true))
+                                ? array_values(array_filter(json_decode($updatedApplication->industry_worked_in, true)))
+                                : (trim($updatedApplication->industry_worked_in ?? '') !== '' ? [$updatedApplication->industry_worked_in] : []))
+                            : [],
                         // experience_department may be doubly-encoded; strip stray quotes/brackets
                         !empty($updatedApplication->experience_department)
                             ? array_values(array_filter(array_map(

@@ -199,3 +199,27 @@ Schedule::job(new SendHourlyApplicationDigestJob())
     ->hourly()
     ->name('send-hourly-application-digest')
     ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Finalize 30-day student account deletions
+|--------------------------------------------------------------------------
+| Runs daily. Permanently deactivates (soft-delete) any student whose
+| 30-day grace window has elapsed and who has NOT logged back in (a login
+| clears scheduled_deletion_at — see AuthController@login). Records are
+| never physically removed; only is_deleted is set to TRUE.
+| Scoped to role = 'student' so firm/admin accounts are never affected.
+*/
+Schedule::call(function () {
+    DB::table('users')
+        ->where('role', 'student')
+        ->where('is_deleted', false)
+        ->whereNotNull('scheduled_deletion_at')
+        ->where('scheduled_deletion_at', '<=', now())
+        ->update([
+            'is_deleted'       => true,
+            'api_token'        => null,
+            'token_expires_at' => null,
+            'updated_at'       => now(),
+        ]);
+})->dailyAt('03:00')->name('finalize-student-account-deletions')->withoutOverlapping();

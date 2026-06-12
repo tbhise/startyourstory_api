@@ -10,7 +10,6 @@
         "laravel/framework": "^13.0",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^3.0",
-        "razorpay/razorpay": "^2.9",
         "vinkla/hashids": "^14.0"
     },
     "require-dev": {

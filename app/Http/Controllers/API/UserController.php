@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
+use App\Helpers\NotificationHelper;
 
 class UserController extends Controller
 {
@@ -179,7 +180,8 @@ class UserController extends Controller
                 'current_firm_id' => 'nullable',
                 'current_firm_name' => 'nullable|string',
                 'experience_years' => 'nullable|string',
-                'industry_worked_in' => 'nullable|string',
+                'industry_worked_in'    => 'nullable|array',
+                'industry_worked_in.*'  => 'nullable|string',
                 'experience_department'   => 'nullable|array',
                 'experience_department.*' => 'nullable|string',
                 'why_should_hire_you' => 'nullable|string',
@@ -244,9 +246,13 @@ class UserController extends Controller
                 }
             }
 
-            // 4. Resume required when no existing resume is on file
+            // 4. Resume required only when the Upload Docs section is shown in the wizard:
+            //    Semi-Qualified, Qualified, or Articleship with Inter-Both status.
+            //    (Mirrors the frontend buildSections() visibility rule — see $needsCoreDept above.)
             $hasExistingResume = !empty($existingProfile->resume_path ?? null);
-            $resumeRequired    = in_array($lookingForNorm, ['articleship', 'semi-qualified', 'qualified']);
+            $resumeRequired    = in_array($lookingForNorm, ['semi-qualified', 'qualified'])
+                || ($lookingForNorm === 'articleship'
+                    && in_array($caStatusNorm, ['inter-both', 'inter both groups passed']));
             if ($resumeRequired && !$hasExistingResume && !$request->hasFile('resume_path')) {
                 DB::rollBack();
                 return response()->json([
@@ -351,7 +357,14 @@ class UserController extends Controller
                 'current_firm_id' => $request->current_firm_id,
                 'current_firm_name' => $request->current_firm_name,
                 'experience_years' => $request->experience_years,
-                'industry_worked_in' => $request->industry_worked_in,
+                'industry_worked_in' => !empty($request->industry_worked_in)
+                    ? json_encode(array_values(array_filter(
+                        is_array($request->industry_worked_in)
+                            ? $request->industry_worked_in
+                            : [],
+                        fn($v) => is_string($v) && trim($v) !== ''
+                    )))
+                    : null,
                 'experience_department' => !empty($request->experience_department)
                     ? json_encode(array_values(array_filter(
                         is_array($request->experience_department)
@@ -393,9 +406,9 @@ class UserController extends Controller
                 !empty($existingProfile->resume_path ?? null);
             $preferredLocationExists =
                 !empty($preferredLocations);
+            // Gender is optional in the wizard — do not gate completion on it.
             $basicInfoComplete =
-                !empty($request->city) &&
-                !empty($request->gender);
+                !empty($request->city);
             // if ($request->looking_for === 'articleship') {
             //     $isProfileComplete =
             //         $basicInfoComplete &&
@@ -413,11 +426,14 @@ class UserController extends Controller
 
             if ($request->looking_for === 'articleship') {
 
+                // Preferred location + resume are only shown for Inter-Both (Case A).
+                // Doing-Articleship (Case B) shows neither, so it must skip them even though
+                // its registration_type is 'confirm'.
                 $skipLocationAndResume =
-                    $registrationType !== 'confirm' &&
                     in_array($request->ca_status, [
                         'inter-g2',
                         'doing-articleship',
+                        'doing articleship',
                         'inter-g1',
                         'pursuing-inter',
                         'foundation'
@@ -434,13 +450,30 @@ class UserController extends Controller
                         $resumeExists;
                 }
 
-                if ($registrationType === 'confirm') {
+                // Inter-Both (Case A) wizard requires exposure, core domain and attempts.
+                // IT/OC is shown but optional in the wizard, so it is NOT gated here.
+                if ($registrationType === 'confirm' && !$skipLocationAndResume) {
                     $isProfileComplete =
                         $isProfileComplete &&
-                        !empty($request->it_oc_status) &&
                         !empty($request->exposure_type) &&
-                        !empty($request->core_department);
+                        !empty($request->core_department) &&
+                        !empty($request->attempts);
                 }
+
+                // Doing-Articleship status (Case B) also collects the current articleship firm.
+                if (in_array($request->ca_status, ['doing-articleship', 'doing articleship'])) {
+                    $isProfileComplete =
+                        $isProfileComplete &&
+                        !empty($request->current_firm_name);
+                }
+            } elseif (
+                strtolower(trim($request->looking_for ?? '')) === 'doing-articleship'
+            ) {
+                // Case B — wizard collects basic info, srn and the current articleship firm only.
+                $isProfileComplete =
+                    $basicInfoComplete &&
+                    !empty($request->srn) &&
+                    !empty($request->current_firm_name);
             } elseif (
                 in_array(
                     $request->looking_for,
@@ -551,6 +584,132 @@ class UserController extends Controller
             Log::error('UserController@dismissApplyLimitModal: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // POST /account/request-deletion  (student only)
+    // Schedules a 30-day soft delete: withdraws active applications, cancels
+    // upcoming interviews (notifying firms), and logs the student out.
+    // Logging in again within 30 days cancels the request (see AuthController@login).
+    // ─────────────────────────────────────────────────────────────────────────
+    public function requestAccountDeletion(Request $request)
+    {
+        $token = $request->cookie('auth_token');
+        if (!$token) {
+            return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
+        }
+        $user = DB::table('users')
+            ->where('api_token', $token)
+            ->where('is_deleted', false)
+            ->first();
+        if (!$user) {
+            return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+        }
+        // Students only — never affect firm or admin accounts.
+        if ($user->role !== 'student') {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Account deletion is only available for student accounts.',
+            ], 403);
+        }
+
+        DB::beginTransaction();
+        try {
+            $now         = now();
+            $scheduledAt = $now->copy()->addDays(30);
+
+            // 1. Schedule the deletion.
+            DB::table('users')->where('id', $user->id)->update([
+                'deletion_requested_at' => $now,
+                'scheduled_deletion_at' => $scheduledAt,
+                'updated_at'            => $now,
+            ]);
+
+            // 2. Withdraw active applications + cancel upcoming interviews; notify firms.
+            $activeApps = DB::table('applications')
+                ->leftJoin('jobs', 'applications.job_id', '=', 'jobs.id')
+                ->leftJoin('firm_profiles', 'jobs.firm_id', '=', 'firm_profiles.id')
+                ->where('applications.student_id', $user->id)
+                ->where(function ($q) {
+                    $q->whereNull('applications.recruiter_status')
+                        ->orWhereNotIn('applications.recruiter_status', ['Rejected', 'Withdrawn by Candidate']);
+                })
+                ->select(
+                    'applications.id',
+                    'applications.job_id',
+                    'applications.interview_date',
+                    'jobs.title as job_title',
+                    'jobs.firm_id as firm_id',
+                    'firm_profiles.user_id as firm_user_id'
+                )
+                ->get();
+
+            foreach ($activeApps as $app) {
+                $hasFutureInterview = !empty($app->interview_date)
+                    && strtotime((string) $app->interview_date) > time();
+
+                $update = [
+                    'recruiter_status' => 'Withdrawn by Candidate',
+                    'updated_at'       => $now,
+                ];
+                if ($hasFutureInterview) {
+                    $update['student_interview_response'] = 'Withdrawn';
+                }
+                DB::table('applications')->where('id', $app->id)->update($update);
+
+                // Notify the firm (only if a notification target exists).
+                if (!empty($app->firm_user_id)) {
+                    NotificationHelper::create(
+                        (int) $app->firm_user_id,
+                        $hasFutureInterview ? 'Interview cancelled' : 'Application withdrawn',
+                        $hasFutureInterview
+                            ? $user->name . ' deleted their account; their interview for "' . ($app->job_title ?? 'a job') . '" has been cancelled.'
+                            : $user->name . ' withdrew their application for "' . ($app->job_title ?? 'a job') . '".'
+                    );
+                }
+
+                // Firm-visible tracking entry.
+                if (!empty($app->firm_id)) {
+                    DB::table('recruiter_actions')->insert([
+                        'firm_id'        => $app->firm_id,
+                        'student_id'     => $user->id,
+                        'visible_to'     => 'firm',
+                        'job_id'         => $app->job_id,
+                        'application_id' => $app->id,
+                        'action_type'    => $hasFutureInterview ? 'interview_cancelled_by_candidate' : 'application_withdrawn',
+                        'action_status'  => $hasFutureInterview ? 'cancelled' : 'withdrawn',
+                        'title'          => $hasFutureInterview ? 'Interview Cancelled by Candidate' : 'Application Withdrawn by Candidate',
+                        'message'        => $hasFutureInterview
+                            ? 'The candidate cancelled their scheduled interview after deleting their account.'
+                            : 'The candidate withdrew their application after deleting their account.',
+                        'action_date'    => $hasFutureInterview ? $app->interview_date : null,
+                        'created_at'     => $now,
+                    ]);
+                }
+            }
+
+            // 3. Log the student out (invalidate token + sessions).
+            DB::table('users')->where('id', $user->id)->update([
+                'api_token'        => null,
+                'token_expires_at' => null,
+            ]);
+            DB::table('user_sessions')->where('user_id', $user->id)->delete();
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('requestAccountDeletion Error: ' . $e->getMessage());
+            return response()->json([
+                'status'  => false,
+                'message' => 'Could not process account deletion. Please try again.',
+            ], 500);
+        }
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'Your account has been scheduled for deletion. Log in again within 30 days to cancel and restore it.',
+            'data'    => ['scheduled_deletion_at' => $scheduledAt->toDateTimeString()],
+        ])->cookie('auth_token', '', -1);
     }
 
     public function updateDirectoryVisibility(Request $request)

@@ -929,8 +929,17 @@ class AdminController extends Controller
 
             $query = DB::table('users as u')
                 ->leftJoin('student_profiles as sp', 'sp.user_id', '=', 'u.id')
-                ->where('u.role', 'student')
-                ->where('u.is_deleted', false);
+                ->where('u.role', 'student');
+
+            // Account status filter: active (default) | deleted | all
+            $deletionStatus = $request->input('deletion_status', 'active');
+            if ($deletionStatus === 'deleted') {
+                $query->where('u.is_deleted', true);
+            } elseif ($deletionStatus === 'all') {
+                // no is_deleted constraint
+            } else {
+                $query->where('u.is_deleted', false);
+            }
 
             if ($request->filled('search')) {
                 $s = '%' . trim($request->search) . '%';
@@ -972,6 +981,9 @@ class AdminController extends Controller
                     'u.mobile',
                     'u.profile_completed',
                     'u.created_at',
+                    'u.is_deleted',
+                    'u.deletion_requested_at',
+                    'u.scheduled_deletion_at',
                     'sp.looking_for',
                     'sp.city',
                     DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified')

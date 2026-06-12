@@ -27,10 +27,12 @@ class AuthController extends Controller
                     'message' => $validator->errors()->first()
                 ], 422);
             }
+            // NOTE: do NOT filter is_deleted here — we must distinguish a
+            // permanently-deleted account (clear message) from a non-existent
+            // one, and auto-restore students still within the 30-day grace window.
             $user = DB::table('users')
                 ->where('email', $request->email)
                 ->where('role', $request->role)
-                ->where('is_deleted', false)
                 ->first();
             if (!$user) {
                 return response()->json([
@@ -44,6 +46,29 @@ class AuthController extends Controller
                     'message' => 'Invalid password'
                 ], 401);
             }
+            // Permanently deactivated (30-day window elapsed) — cannot log in.
+            if ($user->is_deleted) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Your account has been deleted.'
+                ], 403);
+            }
+
+            // ── Account-deletion recovery ──────────────────────────────────
+            // A student who logs in during the 30-day grace period
+            // automatically cancels their pending deletion request.
+            $accountRestored = false;
+            if ($user->role === 'student' && !empty($user->deletion_requested_at)) {
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update([
+                        'deletion_requested_at' => null,
+                        'scheduled_deletion_at' => null,
+                        'updated_at'            => now(),
+                    ]);
+                $accountRestored = true;
+            }
+
             $token     = base64_encode(Str::random(40));
             $expiresAt = now()->addDays(7);
 
@@ -116,7 +141,9 @@ class AuthController extends Controller
             return response()
                 ->json([
                     'status' => true,
-                    'message' => 'Login successful',
+                    'message' => $accountRestored
+                        ? 'Welcome back. Your account deletion request has been cancelled and your profile has been restored.'
+                        : 'Login successful',
                     'data' => [
                         'id' => $user->id,
                         'name' => $user->name,
@@ -129,6 +156,7 @@ class AuthController extends Controller
                             : null,
                         'verification_status' => $verificationStatus,
                         'rejection_reason' => $rejectionReason,
+                        'account_restored' => $accountRestored,
                     ]
                 ])
                 ->cookie(

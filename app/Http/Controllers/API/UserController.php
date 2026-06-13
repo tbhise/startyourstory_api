@@ -11,6 +11,8 @@ use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\NotificationHelper;
+use App\Helpers\ReferralHelper;
+use App\Helpers\SysCoinHelper;
 
 class UserController extends Controller
 {
@@ -32,18 +34,13 @@ class UserController extends Controller
                     'message' => $validator->errors()->first()
                 ]);
             }
-            $referrer = null;
-            if ($request->referral_code) {
-                $referrer = DB::table('users')
-                    ->where('referral_code', strtoupper($request->referral_code))
-                    ->first();
-                if (!$referrer) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'Invalid referral code'
-                    ]);
-                }
-            }
+            // Referral code is optional. Unknown / self-referral codes are dropped
+            // silently (the registration form already blocks submitting an invalid code).
+            $referrerId = ReferralHelper::resolveReferrerId(
+                $request->referral_code,
+                $request->email,
+                $request->mobile
+            );
             $namePrefix = strtoupper(
                 substr(preg_replace('/[^A-Za-z]/', '', $request->name), 0, 4)
             );
@@ -67,7 +64,7 @@ class UserController extends Controller
                     'password' => bcrypt($request->password),
                     'role' => 'student',
                     'referral_code' => $myReferralCode,
-                    'referred_by' => $referrer?->id,
+                    'referred_by' => $referrerId,
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
@@ -78,9 +75,9 @@ class UserController extends Controller
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
-            if ($referrer) {
+            if ($referrerId) {
                 DB::table('users')
-                    ->where('id', $referrer->id)
+                    ->where('id', $referrerId)
                     ->increment('referral_count');
             }
 
@@ -544,6 +541,14 @@ class UserController extends Controller
             }
 
             DB::commit();
+
+            // SYS Coin rewards — granted once profile is complete AND email is verified.
+            // Idempotent + order-independent (also attempted on email verification).
+            if ($isProfileComplete) {
+                SysCoinHelper::maybeGrantWelcomeBonus($user->id);
+                SysCoinHelper::maybeGrantStudentReferralBonus($user->id);
+            }
+
             return response()->json([
                 'status'               => true,
                 'message'              => 'Profile updated successfully',
@@ -1170,6 +1175,12 @@ class UserController extends Controller
                 $userType,
                 120
             );
+
+            // SYS Coin rewards — attempt here too, in case the profile was completed
+            // before the email was verified. Idempotent (no-op if already granted or
+            // profile not yet complete).
+            SysCoinHelper::maybeGrantWelcomeBonus($user->id);
+            SysCoinHelper::maybeGrantStudentReferralBonus($user->id);
         }
 
         return redirect()->away(

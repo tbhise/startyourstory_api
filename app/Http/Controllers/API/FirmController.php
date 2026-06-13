@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
+use App\Helpers\ReferralHelper;
 
 class FirmController extends Controller
 {
@@ -89,18 +90,13 @@ class FirmController extends Controller
                 $firmName     = $parentFirm->firm_name . ' - ' . $city;
             }
 
-            $referrer = null;
-            if ($request->referral_code) {
-                $referrer = DB::table('users')
-                    ->where('referral_code', strtoupper($request->referral_code))
-                    ->first();
-                if (!$referrer) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'Invalid referral code'
-                    ]);
-                }
-            }
+            // Referral code is optional. Unknown / self-referral codes are dropped
+            // silently (the registration form already blocks submitting an invalid code).
+            $referrerId = ReferralHelper::resolveReferrerId(
+                $request->referral_code,
+                $request->email,
+                $request->mobile
+            );
             $firmPrefix = strtoupper(
                 substr(preg_replace('/[^A-Za-z]/', '', $firmName), 0, 4)
             );
@@ -128,7 +124,7 @@ class FirmController extends Controller
                     'password' => bcrypt($request->password),
                     'role' => 'firm',
                     'referral_code' => $myReferralCode,
-                    'referred_by' => $referrer?->id,
+                    'referred_by' => $referrerId,
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
@@ -143,9 +139,9 @@ class FirmController extends Controller
                     'created_at'     => now(),
                     'updated_at'     => now()
                 ]);
-            if ($referrer) {
+            if ($referrerId) {
                 DB::table('users')
-                    ->where('id', $referrer->id)
+                    ->where('id', $referrerId)
                     ->increment('referral_count');
             }
             DB::commit();

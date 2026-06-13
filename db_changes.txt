@@ -1916,3 +1916,114 @@ ALTER TABLE `users`
 -- To clear any in-flight requests instead of dropping columns:
 -- UPDATE `users` SET deletion_requested_at = NULL, scheduled_deletion_at = NULL
 --   WHERE role = 'student' AND is_deleted = 0;
+
+
+-- ============================================================
+-- 2026-06-13 — Referral Rewards + SYS Coins
+-- ============================================================
+-- Adds a SYS Coin points currency (kept STRICTLY separate from wallet money) using
+-- the same available/hold/consumed + ledger + holds pattern as the wallet, plus a
+-- real-money referral payout ledger for referred firms that purchase premium.
+-- No Eloquent migration — apply this SQL directly (project convention; code uses DB::table).
+--
+-- Coins are integers. Application coin cost = 50 (a deliberate round value, distinct
+-- from the ₹49 money fee). Reward amounts live as constants in app/Helpers/SysCoinHelper.php
+-- (WELCOME_BONUS=100, STUDENT_REFERRAL_BONUS=10, APPLICATION_COST=50, HOLD_DAYS=10) and
+-- app/Helpers/ReferralHelper.php (FIRM_REFERRAL_REWARD=2000.00).
+
+-- 1) Coin balance per user (mirrors student_wallets)
+CREATE TABLE `sys_coin_accounts` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`         BIGINT UNSIGNED NOT NULL,
+  `available_coins` INT NOT NULL DEFAULT 0,
+  `hold_coins`      INT NOT NULL DEFAULT 0,
+  `consumed_coins`  INT NOT NULL DEFAULT 0,
+  `lifetime_earned` INT NOT NULL DEFAULT 0,
+  `created_at`      TIMESTAMP NULL DEFAULT NULL,
+  `updated_at`      TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_sys_coin_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2) Coin ledger (mirrors wallet_transactions). type ∈
+--    WELCOME_BONUS, REFERRAL_BONUS, APPLICATION_HOLD, APPLICATION_RELEASE,
+--    APPLICATION_CONSUMED, ADMIN_CREDIT, BLOG_REWARD
+CREATE TABLE `sys_coin_transactions` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`        BIGINT UNSIGNED NOT NULL,
+  `amount`         INT NOT NULL,
+  `type`           VARCHAR(40) NOT NULL,
+  `reference_type` VARCHAR(40) NULL DEFAULT NULL,
+  `reference_id`   BIGINT UNSIGNED NULL DEFAULT NULL,
+  `application_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+  `job_id`         BIGINT UNSIGNED NULL DEFAULT NULL,
+  `description`    VARCHAR(255) NULL DEFAULT NULL,
+  `balance_before` INT NOT NULL DEFAULT 0,
+  `balance_after`  INT NOT NULL DEFAULT 0,
+  `created_at`     TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_sys_coin_tx_user` (`user_id`),
+  KEY `idx_sys_coin_tx_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3) Coin holds per application (mirrors application_holds). status ∈
+--    held, consumed, released, expired
+CREATE TABLE `sys_coin_holds` (
+  `id`                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`               BIGINT UNSIGNED NOT NULL,
+  `application_id`        BIGINT UNSIGNED NOT NULL,
+  `job_id`                BIGINT UNSIGNED NULL DEFAULT NULL,
+  `amount`                INT NOT NULL,
+  `status`                VARCHAR(20) NOT NULL DEFAULT 'held',
+  `held_at`               TIMESTAMP NULL DEFAULT NULL,
+  `expires_at`            TIMESTAMP NULL DEFAULT NULL,
+  `consumed_at`           TIMESTAMP NULL DEFAULT NULL,
+  `released_at`           TIMESTAMP NULL DEFAULT NULL,
+  `release_reason`        VARCHAR(40) NULL DEFAULT NULL,
+  `hold_transaction_id`   BIGINT UNSIGNED NULL DEFAULT NULL,
+  `settle_transaction_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+  `created_at`            TIMESTAMP NULL DEFAULT NULL,
+  `updated_at`            TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_sys_coin_hold_application` (`application_id`),
+  KEY `idx_sys_coin_hold_user_status` (`user_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4) Real-money referral payouts for referred firms (mark-only; admin settles
+--    externally — no wallet credit). status ∈ pending, approved, paid.
+--    UNIQUE(referred_user_id) => one payout per referred firm (idempotency).
+CREATE TABLE `referral_payouts` (
+  `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `referrer_user_id`     BIGINT UNSIGNED NOT NULL,
+  `referred_user_id`     BIGINT UNSIGNED NOT NULL,
+  `firm_subscription_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+  `plan`                 VARCHAR(40) NULL DEFAULT NULL,
+  `reward_amount`        DECIMAL(10,2) NOT NULL DEFAULT 2000.00,
+  `status`               VARCHAR(20) NOT NULL DEFAULT 'pending',
+  `approved_by`          BIGINT UNSIGNED NULL DEFAULT NULL,
+  `approved_at`          TIMESTAMP NULL DEFAULT NULL,
+  `paid_at`              TIMESTAMP NULL DEFAULT NULL,
+  `paid_reference`       VARCHAR(120) NULL DEFAULT NULL,
+  `remarks`              VARCHAR(255) NULL DEFAULT NULL,
+  `created_at`           TIMESTAMP NULL DEFAULT NULL,
+  `updated_at`           TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_referral_payout_referred` (`referred_user_id`),
+  KEY `idx_referral_payout_referrer` (`referrer_user_id`),
+  KEY `idx_referral_payout_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5) Track which currency paid each application + link the coin hold.
+--    payment_source ∈ free | sys_coin | wallet. coin_hold_id mirrors wallet_hold_id.
+ALTER TABLE `applications`
+  ADD COLUMN `payment_source` VARCHAR(10) NULL DEFAULT NULL AFTER `application_fee`,
+  ADD COLUMN `coin_hold_id`   BIGINT      NULL DEFAULT NULL AFTER `wallet_hold_id`;
+ALTER TABLE `applications` ADD INDEX `idx_coin_hold` (`coin_hold_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `applications` DROP INDEX `idx_coin_hold`;
+-- ALTER TABLE `applications` DROP COLUMN `payment_source`, DROP COLUMN `coin_hold_id`;
+-- DROP TABLE IF EXISTS `sys_coin_holds`;
+-- DROP TABLE IF EXISTS `sys_coin_transactions`;
+-- DROP TABLE IF EXISTS `sys_coin_accounts`;
+-- DROP TABLE IF EXISTS `referral_payouts`;

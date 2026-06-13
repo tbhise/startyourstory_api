@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-06-13 — Referral Rewards + SYS Coins
+
+### Goal
+Add two separate reward systems on top of the existing referral linkage (`users.referral_code`/`referred_by`/`referral_count`) **without** changing how wallet money works:
+1. **SYS Coins** — a points currency (welcome bonus for provisional students; +10 to referrer per referred student; new application-payment tier Free → Coins → Wallet). Mirrors `WalletHelper`'s hold/consume/release ledger pattern.
+2. **Real-money firm-referral payouts** — when a referred firm buys premium, a pending ₹2,000 payout record is created for the referrer; admin settles it externally (mark-only, no wallet credit).
+
+Coins and wallet money are never mixed.
+
+### Files Created
+- `app/Helpers/SysCoinHelper.php` — coin account/ledger/holds (constants `WELCOME_BONUS=100`, `STUDENT_REFERRAL_BONUS=10`, `APPLICATION_COST=50`, `HOLD_DAYS=10`); `getOrCreate/getBalance/hasEnoughCoins/grant/hold/consume/release`; idempotent `maybeGrantWelcomeBonus` (provisional only) + `maybeGrantStudentReferralBonus` (rewards the referrer).
+- `app/Helpers/ReferralHelper.php` — `validateCode()` + `resolveReferrerId()` (drops unknown/self-referral codes); `onFirmPremiumActivated()` creates the pending payout (idempotent; UNIQUE on referred firm).
+- `app/Http/Controllers/API/SysCoinController.php` — `GET /sys-coins` (balance), `POST /sys-coins/ledger`.
+- `app/Http/Controllers/API/AdminReferralController.php` — `listPayouts/approvePayout/markPayoutPaid/listCoinTransactions/listReferralTransactions` (admin_token auth, mirrors AdminWalletController).
+
+### Files Modified
+- `app/Http/Controllers/API/ReferralController.php` — added public `validate()` for live registration feedback.
+- `app/Http/Controllers/API/UserController.php` — `registerStudent`: replaced hard "Invalid referral code" rejection with `ReferralHelper::resolveReferrerId()` (self-referral dropped, registration continues); `verify` + `updateProfile`: call `SysCoinHelper::maybeGrantWelcomeBonus` + `maybeGrantStudentReferralBonus` (idempotent, order-independent).
+- `app/Http/Controllers/API/FirmController.php` — `registerFirm`: same self-referral-tolerant resolution.
+- `app/Http/Controllers/API/JobsController.php` — `applyJob`: payment tier Free → SYS Coins (≥50) → Wallet (₹49); returns `requires_payment_confirmation` when wallet money would be charged without `confirm_wallet`; sets `payment_source`/`coin_hold_id`. Added `SysCoinHelper::consume`/`release` beside the existing wallet calls (each no-ops if not the paying currency).
+- `routes/console.php` — added a parallel `sys_coin_holds` 10-day auto-expiry loop → `SysCoinHelper::release(...,'auto_expired')`.
+- `app/Http/Controllers/API/AdminController.php` (×2: manual subscription add + premium-request approval) & `app/Http/Controllers/API/PhonePeFirmController.php` (×2: verify + webhook) — call `ReferralHelper::onFirmPremiumActivated($firmProfileId)` after each `is_premium=1`.
+- `routes/api.php` — `GET /referral/validate` (public); `GET /sys-coins`, `POST /sys-coins/ledger` (auth); admin `/admin/referral-payouts`(+`/{id}/approve`,`/{id}/mark-paid`), `/admin/sys-coins/transactions`, `/admin/referral-transactions`.
+
+### DB Changes
+See `db_changes.txt` (2026-06-13 section). New tables `sys_coin_accounts`, `sys_coin_transactions`, `sys_coin_holds`, `referral_payouts`; `applications` gains `payment_source` + `coin_hold_id`. Apply that SQL before deploying. No Eloquent migration (project convention).
+
+### Rollback Plan
+- Revert the 6 modified controllers + `routes/console.php` + `routes/api.php`; delete the 2 helpers + 2 controllers.
+- Run the ROLLBACK block in `db_changes.txt` (drops the 4 tables + 2 `applications` columns). No wallet-money data is touched.
+
+### Testing Checklist
+- [ ] Referral code valid / invalid / empty / self (email & mobile) — registration always proceeds; self-ref dropped.
+- [ ] Provisional student: verify email + complete profile → +100 coins once; not for semi-qualified/qualified/firm.
+- [ ] Referred student completes onboarding → referrer +10 coins once.
+- [ ] Referred firm buys premium (all 4 activation paths) → one pending ₹2,000 payout; no duplicate.
+- [ ] Apply: ≥50 coins → 50 held; interview accepted → consumed; rejected/auto-expiry → released. Wallet path unchanged.
+- [ ] `confirm_wallet` gate: no row created until confirmed.
+- [ ] Admin: list/approve/mark-paid payouts (status only); coin + referral ledgers.
+
+---
+
 ## 2026-06-13 — Firm Profile: Address required validation
 
 ### Files Modified

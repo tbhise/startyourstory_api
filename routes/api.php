@@ -34,6 +34,8 @@ use App\Http\Controllers\API\FreeContentController;
 use App\Http\Controllers\API\AdminBlogController;
 use App\Http\Controllers\API\BlogController;
 use App\Http\Controllers\API\PhonePeWalletController;
+use App\Http\Controllers\API\SysCoinController;
+use App\Http\Controllers\API\AdminReferralController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
@@ -49,6 +51,7 @@ Route::get('/blogs/public/{slug}',     [BlogController::class, 'getPublishedBlog
 Route::post('/registerStudent', [UserController::class, 'registerStudent']);
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
 Route::get('/firm/lookup-by-frn', [FirmController::class, 'lookupByFRN']);
+Route::get('/referral/validate',  [ReferralController::class, 'validate']); // public — live form feedback
 Route::post('/login',           [AuthController::class, 'login']);
 Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
@@ -110,6 +113,10 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
     Route::get('/referrals', [ReferralController::class, 'index']);
+
+    // ── SYS Coins (points currency, separate from wallet money) ──
+    Route::get('/sys-coins',         [SysCoinController::class, 'getAccount']);
+    Route::post('/sys-coins/ledger', [SysCoinController::class, 'getLedger']);
 
     // ── Student wallet ──
     Route::post('/wallet',                          [WalletController::class, 'getWallet']);
@@ -175,6 +182,13 @@ Route::post('/admin/firms/{id}/reject',    [AdminController::class, 'rejectFirm'
 Route::post('/admin/wallet/recharges',                   [AdminWalletController::class, 'getRecharges']);
 Route::post('/admin/wallet/recharges/{id}/approve',      [AdminWalletController::class, 'approveRecharge']);
 Route::post('/admin/wallet/recharges/{id}/reject',       [AdminWalletController::class, 'rejectRecharge']);
+
+// Admin — referral payouts (firm referral, real money — mark-only) + reward ledgers
+Route::post('/admin/referral-payouts',                   [AdminReferralController::class, 'listPayouts']);
+Route::post('/admin/referral-payouts/{id}/approve',      [AdminReferralController::class, 'approvePayout']);
+Route::post('/admin/referral-payouts/{id}/mark-paid',    [AdminReferralController::class, 'markPayoutPaid']);
+Route::post('/admin/sys-coins/transactions',             [AdminReferralController::class, 'listCoinTransactions']);
+Route::post('/admin/referral-transactions',              [AdminReferralController::class, 'listReferralTransactions']);
 
 Route::post('/admin/subscriptions',        [AdminController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [AdminController::class, 'addSubscriptions']);

@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use App\Helpers\ReferralHelper;
 
 class PhonePeFirmController extends Controller
 {
@@ -201,6 +202,9 @@ class PhonePeFirmController extends Controller
                     ->where('id', $firmProfile->id)
                     ->update(['is_premium' => 1, 'updated_at' => now()]);
 
+                // Firm referral: create a pending ₹2,000 payout if this firm was referred.
+                ReferralHelper::onFirmPremiumActivated((int) $firmProfile->id);
+
                 DB::table('payment_logs')->insert([
                     'firm_subscription_id' => $subscription->id,
                     'event_type'           => 'phonepe_payment_verified',
@@ -303,6 +307,9 @@ class PhonePeFirmController extends Controller
                 DB::table('firm_profiles')
                     ->where('id', $subscription->firm_id)
                     ->update(['is_premium' => 1, 'updated_at' => now()]);
+
+                // Firm referral: create a pending ₹2,000 payout if this firm was referred.
+                ReferralHelper::onFirmPremiumActivated((int) $subscription->firm_id);
 
                 DB::commit();
                 Log::info("PhonePeFirmController webhook: subscription {$subscription->id} activated via txn {$merchantTxnId}");

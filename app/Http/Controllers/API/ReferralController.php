@@ -6,9 +6,33 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\ReferralHelper;
 
 class ReferralController extends Controller
 {
+    /**
+     * GET /referral/validate  [public — used during registration]
+     *
+     * Validates a referral code for live form feedback. When the registrant's
+     * email/mobile is passed, flags self-referral so the form can auto-clear it.
+     * Returns: { valid, self, referrer_name, referrer_role }.
+     */
+    public function validate(Request $request)
+    {
+        try {
+            $result = ReferralHelper::validateCode(
+                $request->input('code'),
+                $request->input('email'),
+                $request->input('mobile')
+            );
+
+            return response()->json(['status' => true, 'data' => $result]);
+        } catch (\Exception $e) {
+            Log::error('ReferralController@validate: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     /**
      * GET /referrals
      *

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
+use App\Helpers\SysCoinHelper;
 
 
 class JobsController extends Controller
@@ -70,11 +71,14 @@ class JobsController extends Controller
 
             /*
         |--------------------------------------------------------------------------
-        | Wallet check — free quota or sufficient balance
+        | Payment tier — Free → SYS Coins → Wallet money (never mixed)
         |--------------------------------------------------------------------------
         */
-            $isFree = WalletHelper::isFreeApplication($user->id);
-            if (!$isFree && !WalletHelper::hasEnoughBalance($user->id)) {
+            $isFree    = WalletHelper::isFreeApplication($user->id);
+            $useCoins  = !$isFree && SysCoinHelper::hasEnoughCoins($user->id);                 // ≥ 50 coins
+            $useWallet = !$isFree && !$useCoins && WalletHelper::hasEnoughBalance($user->id);  // ≥ ₹49
+
+            if (!$isFree && !$useCoins && !$useWallet) {
                 return response()->json([
                     'status'               => false,
                     'message'              => 'Free application limit reached. Please recharge your wallet or upgrade your plan to continue applying.',
@@ -84,19 +88,40 @@ class JobsController extends Controller
                 ]);
             }
 
+            // Spending REAL wallet money requires explicit confirmation — never deduct
+            // silently. (Free applications and SYS Coins proceed without a prompt.)
+            if ($useWallet && !$request->boolean('confirm_wallet')) {
+                return response()->json([
+                    'status'                        => false,
+                    'requires_payment_confirmation' => true,
+                    'payment_source'                => 'wallet',
+                    'application_fee'               => WalletHelper::APPLICATION_FEE,
+                    'coin_balance'                  => SysCoinHelper::getBalance($user->id),
+                    'message'                       => 'Not enough SYS Coins. Use ₹' . WalletHelper::APPLICATION_FEE . ' from your wallet to apply?',
+                ]);
+            }
+
+            $paymentSource = $isFree ? 'free' : ($useCoins ? 'sys_coin' : 'wallet');
+
             DB::beginTransaction();
             $applicationId = DB::table('applications')->insertGetId([
                 'job_id'                => $id,
                 'student_id'            => $user->id,
                 'status'                => 'Applied',
                 'is_free_application'   => $isFree ? 1 : 0,
-                'application_fee'       => $isFree ? 0.00 : WalletHelper::APPLICATION_FEE,
+                'application_fee'       => $useWallet ? WalletHelper::APPLICATION_FEE : 0.00,
+                'payment_source'        => $paymentSource,
                 'applied_at'            => now(),
                 'updated_at'            => now(),
             ]);
 
             if ($isFree) {
                 WalletHelper::incrementFreeUsage($user->id);
+            } elseif ($useCoins) {
+                $coinHoldId = SysCoinHelper::hold($user->id, $applicationId, $job->id);
+                DB::table('applications')
+                    ->where('id', $applicationId)
+                    ->update(['coin_hold_id' => $coinHoldId]);
             } else {
                 $holdId = WalletHelper::hold($user->id, $applicationId, $job->id);
                 DB::table('applications')
@@ -1018,9 +1043,11 @@ class JobsController extends Controller
                 ->where('id', $applicationId)
                 ->update($updateData);
 
-            // Wallet: release hold on rejection
+            // Wallet / SYS Coins: release hold on rejection (each no-ops if not the
+            // currency that paid for this application).
             if ($status === 'Rejected') {
                 WalletHelper::release((int) $applicationId, 'rejected');
+                SysCoinHelper::release((int) $applicationId, 'rejected');
             }
 
             /*
@@ -1808,9 +1835,11 @@ class JobsController extends Controller
                 ->where('id', $applicationId)
                 ->update($updateData);
 
-            // Wallet: consume hold when student accepts interview
+            // Wallet / SYS Coins: consume hold when student accepts interview (each
+            // no-ops if not the currency that paid for this application).
             if ($request->response === 'Accepted') {
                 WalletHelper::consume((int) $applicationId);
+                SysCoinHelper::consume((int) $applicationId);
             }
 
             /*

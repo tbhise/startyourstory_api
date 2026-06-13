@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\WalletHelper;
+use App\Helpers\SysCoinHelper;
 
 class WalletController extends Controller
 {

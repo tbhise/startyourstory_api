@@ -13,6 +13,7 @@ use Vinkla\Hashids\Facades\Hashids;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use App\Services\Notifications\EmailNotificationService;
+use App\Helpers\ReferralHelper;
 
 class AdminController extends Controller
 {
@@ -302,6 +303,11 @@ class AdminController extends Controller
             DB::table('firm_profiles')
                 ->where('id', $firm->id)
                 ->update(['is_premium' => $isPremiumPlan ? 1 : 0, 'updated_at' => now()]);
+
+            // Firm referral: create a pending ₹2,000 payout if this firm was referred.
+            if ($isPremiumPlan) {
+                ReferralHelper::onFirmPremiumActivated((int) $firm->id);
+            }
 
             DB::commit();
             $subscription =
@@ -694,6 +700,9 @@ class AdminController extends Controller
             DB::table('firm_profiles')
                 ->where('id', $premiumRequest->firm_id)
                 ->update(['is_premium' => 1, 'updated_at' => now()]);
+
+            // Firm referral: create a pending ₹2,000 payout if this firm was referred.
+            ReferralHelper::onFirmPremiumActivated((int) $premiumRequest->firm_id);
             $updatedRequest =
                 DB::table('premium_requests')
                 ->select(

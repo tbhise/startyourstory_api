@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schedule;
 use App\Helpers\WalletHelper;
+use App\Helpers\SysCoinHelper;
 use App\Helpers\NotificationHelper;
 
 Artisan::command('inspire', function () {
@@ -65,6 +66,22 @@ Schedule::call(function () {
             $hold->user_id,
             'Application Expired',
             "Your application has expired after " . WalletHelper::HOLD_DAYS . " days. ₹{$hold->amount} has been returned to your wallet."
+        );
+    }
+
+    // SYS Coin holds — same 10-day auto-expiry, coins returned to available.
+    $expiredCoinHolds = DB::table('sys_coin_holds')
+        ->where('status', 'held')
+        ->where('expires_at', '<', now())
+        ->get();
+
+    foreach ($expiredCoinHolds as $hold) {
+        SysCoinHelper::release((int) $hold->application_id, 'auto_expired');
+
+        NotificationHelper::create(
+            $hold->user_id,
+            'Application Expired',
+            "Your application has expired after " . SysCoinHelper::HOLD_DAYS . " days. {$hold->amount} SYS Coins have been returned."
         );
     }
 })->hourly()->name('expire-application-holds')->withoutOverlapping();

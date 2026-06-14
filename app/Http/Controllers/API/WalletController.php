@@ -89,6 +89,15 @@ class WalletController extends Controller
             $freeLimit    = (int) $wallet->free_applications_limit;
             $freeRemaining = max(0, $freeLimit - $freeUsed);
 
+            $coins         = SysCoinHelper::getBalance($user->id);
+            $coinCost      = SysCoinHelper::APPLICATION_COST;
+            $walletBalance = (float) $wallet->available_balance;
+
+            // Can apply by ANY method: free quota, enough SYS Coins, or enough wallet money.
+            $canApply = $freeRemaining > 0
+                || $coins >= $coinCost
+                || $walletBalance >= WalletHelper::APPLICATION_FEE;
+
             return response()->json([
                 'status' => true,
                 'data'   => [
@@ -97,6 +106,10 @@ class WalletController extends Controller
                     'free_used'        => $freeUsed,
                     'can_apply_free'   => $freeRemaining > 0,
                     'application_fee'  => WalletHelper::APPLICATION_FEE,
+                    'available_coins'  => $coins,
+                    'coin_cost'        => $coinCost,
+                    'wallet_balance'   => $walletBalance,
+                    'can_apply'        => $canApply,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -190,12 +203,20 @@ class WalletController extends Controller
             $validator = Validator::make($request->all(), [
                 'amount'           => 'required|numeric|min:1',
                 'payment_date'     => 'required|date',
-                'utr_number'       => 'nullable|string|max:100',
-                'reference_number' => 'nullable|string|max:100',
-                'screenshot'       => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:5120',
+                'utr_number'       => 'nullable|string|max:100',          // optional
+                'reference_number' => 'required|string|max:100',          // Transaction ID — mandatory
+                'screenshot'       => 'required|file|mimes:jpg,jpeg,png,pdf|max:5120', // proof — mandatory
+            ], [
+                'amount.required'           => 'Amount is required.',
+                'amount.min'                => 'Amount must be at least ₹1.',
+                'reference_number.required' => 'Transaction ID is required.',
+                'screenshot.required'       => 'Payment proof attachment is required.',
+                'screenshot.file'           => 'Payment proof must be a valid file.',
+                'screenshot.mimes'          => 'Payment proof must be a JPG, PNG or PDF file.',
+                'screenshot.max'            => 'Payment proof must not exceed 5 MB.',
             ]);
             if ($validator->fails()) {
-                return response()->json(['status' => false, 'message' => $validator->errors()->first()]);
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
             }
 
             $screenshotUrl = null;
@@ -220,6 +241,13 @@ class WalletController extends Controller
                 'created_at'       => now(),
                 'updated_at'       => now(),
             ]);
+
+            // Admin notification feed — payment proof awaiting verification (non-throwing)
+            \App\Services\Notifications\AdminNotificationService::paymentVerification(
+                $user->name ?? 'A student',
+                (float) $request->amount,
+                $rechargeId
+            );
 
             return response()->json([
                 'status'  => true,

@@ -2027,3 +2027,133 @@ ALTER TABLE `applications` ADD INDEX `idx_coin_hold` (`coin_hold_id`);
 -- DROP TABLE IF EXISTS `sys_coin_transactions`;
 -- DROP TABLE IF EXISTS `sys_coin_accounts`;
 -- DROP TABLE IF EXISTS `referral_payouts`;
+
+
+-- ============================================================
+-- 2026-06-13 — Referral Dashboard UI Redesign
+-- ============================================================
+-- No database changes required.
+-- The redesign is frontend-only plus a read-only enrichment of GET /referrals
+-- (ReferralController::index), which reads existing tables only:
+-- users, sys_coin_accounts, sys_coin_transactions, referral_payouts.
+
+
+-- ============================================================
+-- 2026-06-14 — Financial Integrity: duplicate-application protection
+-- ============================================================
+-- Audit fix (Task 2): guarantee one application per (job, student) at the
+-- DATABASE level. Previously only an application-level exists() check guarded
+-- duplicates, which two concurrent requests (rapid clicks / multiple tabs)
+-- could both pass -> two applications -> two wallet/coin holds -> double charge.
+-- A concurrent/duplicate insert now fails with errno 1062; JobsController@applyJob
+-- catches it and returns the existing "You already applied for this job" (409).
+-- Verified: zero pre-existing duplicate (job_id, student_id) rows before adding.
+
+ALTER TABLE `applications`
+  ADD CONSTRAINT `uq_application_job_student` UNIQUE (`job_id`, `student_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `applications` DROP INDEX `uq_application_job_student`;
+
+
+-- ============================================================
+-- 2026-06-14 — Admin Notification System (Phase 1: infrastructure)
+-- ============================================================
+-- Centralized admin notification storage. Written via
+-- App\Services\Notifications\AdminNotificationService from 4 sources:
+-- firm verification, payment proof upload, creator payout pending, contact form.
+-- Applied via Laravel migration 2026_06_14_000001_create_admin_notifications_table
+-- (run with: php artisan migrate --path=database/migrations/2026_06_14_000001_create_admin_notifications_table.php).
+-- SQL equivalent below for manual environments.
+
+CREATE TABLE `admin_notifications` (
+  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `type`       VARCHAR(50)  NOT NULL COMMENT 'firm_verification | payment_verification | creator_payout | contact_submission | system_alert | future',
+  `title`      VARCHAR(255) NOT NULL,
+  `message`    TEXT         NOT NULL,
+  `action_url` VARCHAR(500) NULL COMMENT 'relative admin path to act on the notification',
+  `metadata`   JSON         NULL COMMENT 'structured context (ids, amounts, names…)',
+  `is_read`    TINYINT(1)   NOT NULL DEFAULT 0,
+  `read_at`    DATETIME     NULL,
+  `created_at` TIMESTAMP    NULL,
+  `updated_at` TIMESTAMP    NULL,
+  PRIMARY KEY (`id`),
+  KEY `admin_notifications_type_index` (`type`),
+  KEY `idx_admin_notifications_unread` (`is_read`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `admin_notifications`;
+
+
+-- ============================================================
+-- 2026-06-14 — Admin Notifications Phase 4: FCM device tokens
+-- ============================================================
+-- Stores admin device registration tokens for Firebase Cloud Messaging push.
+-- One row per device; multiple rows per admin (multi-device). Only admins
+-- register tokens, so students/firms can never receive admin push.
+-- Applied via migration 2026_06_14_000002_create_admin_fcm_tokens_table
+-- (php artisan migrate --path=database/migrations/2026_06_14_000002_create_admin_fcm_tokens_table.php).
+
+CREATE TABLE `admin_fcm_tokens` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_user_id`  BIGINT UNSIGNED NOT NULL,
+  `token`          VARCHAR(512) NOT NULL,
+  `device_info`    VARCHAR(255) NULL COMMENT 'user-agent / platform label',
+  `last_active_at` DATETIME NULL,
+  `created_at`     TIMESTAMP NULL,
+  `updated_at`     TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_admin_fcm_token` (`token`),
+  KEY `idx_admin_fcm_admin` (`admin_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `admin_fcm_tokens`;
+
+
+-- ============================================================
+-- 2026-06-14 — Platform Settings (dynamic business configuration)
+-- ============================================================
+-- Centralized, cached, admin-editable business values (referral rewards, welcome
+-- bonus, fees, limits, future rules). Read via App\Services\SystemSettingService.
+-- SEPARATE from the existing key/value `platform_settings` table (untouched).
+-- Applied via migration 2026_06_14_000003_create_system_settings_table, then
+--   php artisan db:seed --class=SystemSettingsSeeder
+-- Seeds: student_referral_reward=50, firm_premium_purchase_reward=2000,
+--        welcome_bonus_coins=100, free_applications_count=3,
+--        application_fee_amount=49, minimum_wallet_recharge=150.
+
+CREATE TABLE `system_settings` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `setting_key`   VARCHAR(100) NOT NULL,
+  `setting_value` TEXT NULL,
+  `setting_type`  VARCHAR(20)  NOT NULL DEFAULT 'string' COMMENT 'string|integer|decimal|boolean',
+  `title`         VARCHAR(255) NOT NULL,
+  `description`   TEXT NULL,
+  `category`      VARCHAR(50)  NOT NULL DEFAULT 'general',
+  `is_editable`   TINYINT(1)   NOT NULL DEFAULT 1,
+  `created_at`    TIMESTAMP NULL,
+  `updated_at`    TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `system_settings_setting_key_unique` (`setting_key`),
+  KEY `idx_system_settings_category` (`category`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Audit log for every setting change (no prior activity-log infra existed).
+CREATE TABLE `system_setting_audits` (
+  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `setting_key`   VARCHAR(100) NOT NULL,
+  `old_value`     TEXT NULL,
+  `new_value`     TEXT NULL,
+  `admin_user_id` BIGINT UNSIGNED NULL,
+  `admin_name`    VARCHAR(255) NULL,
+  `created_at`    TIMESTAMP NULL,
+  `updated_at`    TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_setting_audits_key` (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `system_setting_audits`;
+-- DROP TABLE IF EXISTS `system_settings`;

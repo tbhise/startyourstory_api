@@ -38,8 +38,8 @@ use App\Http\Controllers\API\SysCoinController;
 use App\Http\Controllers\API\AdminReferralController;
 
 // Public (no auth)
-Route::post('/contact-submission',    [PublicController::class, 'submitContact']);
-Route::post('/newsletter/subscribe',  [PublicController::class, 'subscribeNewsletter']);
+Route::post('/contact-submission',    [PublicController::class, 'submitContact'])->middleware('throttle:contact');
+Route::post('/newsletter/subscribe',  [PublicController::class, 'subscribeNewsletter'])->middleware('throttle:contact');
 Route::get('/platform-settings',      [AdminSettingsController::class, 'getPublicSettings']);
 
 // Public blog listing (published blogs only)
@@ -48,21 +48,21 @@ Route::get('/blogs/public/categories', [BlogController::class, 'getPublicBlogCat
 // NOTE: keep {slug} AFTER /categories so "categories" is not captured as a slug
 Route::get('/blogs/public/{slug}',     [BlogController::class, 'getPublishedBlogBySlug']);
 
-Route::post('/registerStudent', [UserController::class, 'registerStudent']);
-Route::post('/registerFirm',    [FirmController::class, 'registerFirm']);
+Route::post('/registerStudent', [UserController::class, 'registerStudent'])->middleware('throttle:auth-register');
+Route::post('/registerFirm',    [FirmController::class, 'registerFirm'])->middleware('throttle:auth-register');
 Route::get('/firm/lookup-by-frn', [FirmController::class, 'lookupByFRN']);
 Route::get('/referral/validate',  [ReferralController::class, 'validate']); // public — live form feedback
-Route::post('/login',           [AuthController::class, 'login']);
+Route::post('/login',           [AuthController::class, 'login'])->middleware('throttle:auth-login');
 Route::post('/logout',          [AuthController::class, 'logout']);
 Route::get('/me',               [AuthController::class, 'me']);
 
-Route::post('/auth/forgot-password', [PasswordResetController::class, 'forgotPassword']);
+Route::post('/auth/forgot-password', [PasswordResetController::class, 'forgotPassword'])->middleware('throttle:auth-forgot');
 Route::post('/auth/reset-password',  [PasswordResetController::class, 'resetPassword']);
 
 Route::post(
     '/email/send-verification-link',
     [UserController::class, 'sendVerificationLink']
-);
+)->middleware('throttle:email-verify');
 Route::get(
     '/email/verification-status',
     [UserController::class, 'verificationStatus']
@@ -104,7 +104,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::get('/getJobs',                 [FirmController::class, 'getJobs']);
 
     // Student job actions
-    Route::post('/jobs/{id}/apply',                          [JobsController::class, 'applyJob']);
+    Route::post('/jobs/{id}/apply',                          [JobsController::class, 'applyJob'])->middleware('throttle:apply');
     Route::post('/jobs/{id}/save',                           [JobsController::class, 'saveJob']);
     Route::delete('/jobs/{id}/save',                         [JobsController::class, 'saveJob']);
     Route::post('/getAppliedJobs',                           [JobsController::class, 'getAppliedJobs']);
@@ -123,11 +123,11 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::get('/student/apply-status',             [WalletController::class, 'getApplyStatus']);
     Route::post('/wallet/ledger',                   [WalletController::class, 'getLedger']);
     Route::post('/wallet/recharges',                [WalletController::class, 'getRechargeHistory']);
-    Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge']);
-    Route::post('/student/premium-request',         [WalletController::class, 'submitPremiumRequest']);
+    Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge'])->middleware('throttle:payment-proof');
+    Route::post('/student/premium-request',         [WalletController::class, 'submitPremiumRequest'])->middleware('throttle:payment-proof');
 
     // ── PhonePe wallet recharge (TEST MODE) ──
-    Route::post('/wallet/recharge/phonepe/initiate', [PhonePeWalletController::class, 'initiate']);
+    Route::post('/wallet/recharge/phonepe/initiate', [PhonePeWalletController::class, 'initiate'])->middleware('throttle:payment-initiate');
     Route::post('/wallet/recharge/phonepe/verify',   [PhonePeWalletController::class, 'verify']);
 
     // ── Firm dashboard routes — require manual verification approval ──
@@ -157,6 +157,23 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 Route::post('/admin/login',   [AdminController::class, 'login']);
 Route::get('/admin/me',       [AdminController::class, 'me']);
 Route::post('/admin/logout',  [AdminController::class, 'logout']);
+
+// Admin — application-level system health widget
+Route::get('/admin/system-health', [\App\Http\Controllers\API\AdminSystemHealthController::class, 'health']);
+
+// Admin — notifications (Phase 1: storage + read state; auth via admin_token in controller)
+Route::get('/admin/notifications',               [\App\Http\Controllers\API\AdminNotificationController::class, 'index']);
+Route::get('/admin/notifications/unread-count',  [\App\Http\Controllers\API\AdminNotificationController::class, 'unreadCount']);
+Route::post('/admin/notifications/{id}/read',    [\App\Http\Controllers\API\AdminNotificationController::class, 'markRead']);
+Route::post('/admin/notifications/read-all',     [\App\Http\Controllers\API\AdminNotificationController::class, 'markAllRead']);
+// Admin — FCM device token registration (admin-only push)
+Route::post('/admin/fcm/token',   [\App\Http\Controllers\API\AdminNotificationController::class, 'registerFcmToken']);
+Route::delete('/admin/fcm/token', [\App\Http\Controllers\API\AdminNotificationController::class, 'deleteFcmToken']);
+
+// Admin — dynamic Platform Settings (system_settings; separate from key/value platform_settings)
+Route::get('/admin/system-settings',         [\App\Http\Controllers\API\AdminSystemSettingController::class, 'index']);
+Route::get('/admin/system-settings/audit',   [\App\Http\Controllers\API\AdminSystemSettingController::class, 'audit']);
+Route::post('/admin/system-settings/{key}',  [\App\Http\Controllers\API\AdminSystemSettingController::class, 'update']);
 
 // Admin — admin user management (CRUD)
 Route::get('/admin/users',                        [AdminUserController::class, 'index']);
@@ -231,7 +248,7 @@ Route::prefix('admin/training-partners')->group(function () {
     Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
 
 
-Route::post('/payments/phonepe/initiate', [PhonePeFirmController::class, 'initiate']);
+Route::post('/payments/phonepe/initiate', [PhonePeFirmController::class, 'initiate'])->middleware('throttle:payment-initiate');
 Route::post('/payments/phonepe/verify',   [PhonePeFirmController::class, 'verify']);
 Route::post('/payments/phonepe/webhook',  [PhonePeFirmController::class, 'webhook']);
 Route::get('/payments/phonepe/webhook',   fn() => response()->json(['status' => 'ok']));
@@ -314,9 +331,9 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/bids/{bidId}/accept-creator',[CreatorMarketplaceController::class, 'acceptCreator']);
     Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
     // Payment — firm-only actions (PhonePe)
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate'])->middleware('throttle:payment-initiate');
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/verify',   [PhonePeEngagementController::class, 'verify']);
-    Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',           [CreatorMarketplaceController::class, 'submitManualPayment']);
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',           [CreatorMarketplaceController::class, 'submitManualPayment'])->middleware('throttle:payment-proof');
 });
 
 // ── Free Content Credits (Firm) ───────────────────────────────────────────────

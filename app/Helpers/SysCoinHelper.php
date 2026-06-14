@@ -4,6 +4,8 @@ namespace App\Helpers;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Exceptions\InsufficientFundsException;
+use App\Services\SystemSettingService;
 
 /**
  * SYS Coins — a points currency kept STRICTLY separate from wallet money.
@@ -16,10 +18,10 @@ use Illuminate\Support\Facades\Log;
  */
 class SysCoinHelper
 {
-    /** Welcome bonus for provisional-registration students (once). */
+    /** Fallback only — canonical value lives in system_settings (welcome_bonus_coins). */
     const WELCOME_BONUS          = 100;
-    /** Coins credited to the referrer when a referred student completes onboarding (once). */
-    const STUDENT_REFERRAL_BONUS = 10;
+    /** Fallback only — canonical value lives in system_settings (student_referral_reward). */
+    const STUDENT_REFERRAL_BONUS = 50;
     /** Coins required to pay for one job application. */
     const APPLICATION_COST       = 50;
     /** Days a coin hold survives with no recruiter action before auto-release. */
@@ -119,10 +121,21 @@ class SysCoinHelper
         $holdId = 0;
 
         DB::transaction(function () use ($userId, $applicationId, $jobId, &$holdId) {
-            $acc    = self::getOrCreate($userId);
+            self::getOrCreate($userId);
+
+            // Lock the coin account row for the lifetime of the (outer) transaction
+            // so concurrent applies are serialized — prevents double-spend.
+            $acc    = DB::table('sys_coin_accounts')->where('user_id', $userId)->lockForUpdate()->first();
             $amount = self::APPLICATION_COST;
             $before = (int) $acc->available_coins;
-            $after  = $before - $amount;
+
+            // Re-validate INSIDE the locked transaction — a concurrent request that
+            // already spent the coins fails here instead of going negative.
+            if ($before < $amount) {
+                throw new InsufficientFundsException('Insufficient SYS Coins');
+            }
+
+            $after = $before - $amount;
 
             DB::table('sys_coin_accounts')
                 ->where('user_id', $userId)
@@ -175,14 +188,17 @@ class SysCoinHelper
     public static function consume(int $applicationId): void
     {
         DB::transaction(function () use ($applicationId) {
+            // Lock the hold row + re-check status under the lock so two concurrent
+            // settlements cannot both move the same hold → double consume.
             $hold = DB::table('sys_coin_holds')
                 ->where('application_id', $applicationId)
                 ->where('status', 'held')
+                ->lockForUpdate()
                 ->first();
 
             if (!$hold) return; // free / wallet application, or already settled
 
-            $acc = self::getOrCreate($hold->user_id);
+            $acc = DB::table('sys_coin_accounts')->where('user_id', $hold->user_id)->lockForUpdate()->first();
 
             DB::table('sys_coin_accounts')
                 ->where('user_id', $hold->user_id)
@@ -226,14 +242,17 @@ class SysCoinHelper
     public static function release(int $applicationId, string $reason = 'rejected'): void
     {
         DB::transaction(function () use ($applicationId, $reason) {
+            // Lock the hold row + re-check status under the lock so a reject racing
+            // the auto-expiry job cannot release the same hold twice.
             $hold = DB::table('sys_coin_holds')
                 ->where('application_id', $applicationId)
                 ->where('status', 'held')
+                ->lockForUpdate()
                 ->first();
 
             if (!$hold) return; // free / wallet application, or already settled
 
-            $acc    = self::getOrCreate($hold->user_id);
+            $acc    = DB::table('sys_coin_accounts')->where('user_id', $hold->user_id)->lockForUpdate()->first();
             $before = (int) $acc->available_coins;
             $after  = $before + (int) $hold->amount;
 
@@ -305,13 +324,15 @@ class SysCoinHelper
                 ->exists();
             if ($exists) return;
 
+            // Amount comes from dynamic Platform Settings (falls back to WELCOME_BONUS).
+            $amount = SystemSettingService::getWelcomeBonusCoins();
             self::grant(
                 $userId,
-                self::WELCOME_BONUS,
+                $amount,
                 self::TYPE_WELCOME_BONUS,
                 'welcome',
                 $userId,
-                self::WELCOME_BONUS . " SYS Coins welcome bonus"
+                $amount . " SYS Coins welcome bonus"
             );
         } catch (\Exception $e) {
             Log::error('SysCoinHelper@maybeGrantWelcomeBonus: ' . $e->getMessage());
@@ -346,13 +367,15 @@ class SysCoinHelper
                 ->exists();
             if ($exists) return;
 
+            // Amount comes from dynamic Platform Settings (falls back to STUDENT_REFERRAL_BONUS).
+            $amount = SystemSettingService::getStudentReferralReward();
             self::grant(
                 (int) $referrer->id,
-                self::STUDENT_REFERRAL_BONUS,
+                $amount,
                 self::TYPE_REFERRAL_BONUS,
                 'referral',
                 $referredUserId,
-                self::STUDENT_REFERRAL_BONUS . " SYS Coins for referring " . ($referred->name ?? 'a student')
+                $amount . " SYS Coins for referring " . ($referred->name ?? 'a student')
             );
         } catch (\Exception $e) {
             Log::error('SysCoinHelper@maybeGrantStudentReferralBonus: ' . $e->getMessage());

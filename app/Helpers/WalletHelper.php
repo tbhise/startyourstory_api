@@ -4,6 +4,7 @@ namespace App\Helpers;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Exceptions\InsufficientFundsException;
 
 class WalletHelper
 {
@@ -108,10 +109,21 @@ class WalletHelper
         $holdId = 0;
 
         DB::transaction(function () use ($userId, $applicationId, $jobId, &$holdId) {
-            $w      = self::getOrCreate($userId);
+            self::getOrCreate($userId);
+
+            // Lock the wallet row for the lifetime of the (outer) transaction so
+            // concurrent applies are serialized — prevents double-spend.
+            $w      = DB::table('student_wallets')->where('user_id', $userId)->lockForUpdate()->first();
             $amount = self::APPLICATION_FEE;
             $before = (float) $w->available_balance;
-            $after  = $before - $amount;
+
+            // Re-validate INSIDE the locked transaction. A concurrent request that
+            // already drained the balance will fail here instead of going negative.
+            if ($before < $amount) {
+                throw new InsufficientFundsException('Insufficient wallet balance');
+            }
+
+            $after = $before - $amount;
 
             DB::table('student_wallets')
                 ->where('user_id', $userId)
@@ -163,14 +175,18 @@ class WalletHelper
     public static function consume(int $applicationId): void
     {
         DB::transaction(function () use ($applicationId) {
+            // Lock the hold row + re-check status under the lock so two concurrent
+            // settlements (e.g. manual action racing the auto-expiry job) cannot
+            // both move the same hold → double consume.
             $hold = DB::table('application_holds')
                 ->where('application_id', $applicationId)
                 ->where('status', 'held')
+                ->lockForUpdate()
                 ->first();
 
             if (!$hold) return; // free application or already settled
 
-            $w = self::getOrCreate($hold->user_id);
+            $w = DB::table('student_wallets')->where('user_id', $hold->user_id)->lockForUpdate()->first();
 
             DB::table('student_wallets')
                 ->where('user_id', $hold->user_id)
@@ -213,14 +229,17 @@ class WalletHelper
     public static function release(int $applicationId, string $reason = 'rejected'): void
     {
         DB::transaction(function () use ($applicationId, $reason) {
+            // Lock the hold row + re-check status under the lock so a reject racing
+            // the auto-expiry job cannot release the same hold twice.
             $hold = DB::table('application_holds')
                 ->where('application_id', $applicationId)
                 ->where('status', 'held')
+                ->lockForUpdate()
                 ->first();
 
             if (!$hold) return; // free application or already settled
 
-            $w      = self::getOrCreate($hold->user_id);
+            $w      = DB::table('student_wallets')->where('user_id', $hold->user_id)->lockForUpdate()->first();
             $before = (float) $w->available_balance;
             $after  = $before + (float) $hold->amount;
 

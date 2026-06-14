@@ -146,7 +146,9 @@ class FirmController extends Controller
             }
             DB::commit();
 
-
+            // Admin notification feed — new firm awaiting verification (non-throwing)
+            $newFirmProfileId = (int) DB::table('firm_profiles')->where('user_id', $userId)->value('id');
+            \App\Services\Notifications\AdminNotificationService::firmVerification($firmName, $newFirmProfileId);
 
 
 

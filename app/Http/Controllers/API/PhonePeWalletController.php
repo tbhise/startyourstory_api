@@ -146,7 +146,7 @@ class PhonePeWalletController extends Controller
                 return response()->json(['status' => false, 'message' => 'Transaction not found'], 404);
             }
 
-            // Idempotency — already credited
+            // Idempotency — already credited (fast path; re-checked under lock below)
             if ($recharge->payment_status === 'paid') {
                 $wallet = WalletHelper::getOrCreate($user->id);
                 return response()->json([
@@ -163,42 +163,57 @@ class PhonePeWalletController extends Controller
 
             $gatewayPaymentId = $statusData['paymentDetails'][0]['transactionId'] ?? null;
 
-            DB::beginTransaction();
-
-            if ($isSuccess) {
-                DB::table('wallet_recharges')
+            // Mutate atomically under a row lock so verify() racing the S2S webhook
+            // (or a double-submitted verify) can never double-credit. Outcome:
+            // 'credited' | 'already' | 'failed'.
+            $outcome = DB::transaction(function () use ($recharge, $isSuccess, $gatewayPaymentId, $statusData) {
+                $fresh = DB::table('wallet_recharges')
                     ->where('id', $recharge->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($fresh->payment_status === 'paid') {
+                    return 'already';
+                }
+
+                if ($isSuccess) {
+                    DB::table('wallet_recharges')
+                        ->where('id', $fresh->id)
+                        ->update([
+                            'gateway_payment_id' => $gatewayPaymentId,
+                            'payment_status'     => 'paid',
+                            'status'             => 'approved',
+                            'gateway_response'   => json_encode($statusData),
+                            'approved_at'        => now(),
+                            'updated_at'         => now(),
+                        ]);
+
+                    WalletHelper::credit($fresh->user_id, (float) $fresh->amount, $fresh->id);
+                    return 'credited';
+                }
+
+                DB::table('wallet_recharges')
+                    ->where('id', $fresh->id)
                     ->update([
-                        'gateway_payment_id' => $gatewayPaymentId,
-                        'payment_status'     => 'paid',
-                        'status'             => 'approved',
-                        'gateway_response'   => json_encode($statusData),
-                        'approved_at'        => now(),
-                        'updated_at'         => now(),
+                        'payment_status'   => 'failed',
+                        'status'           => 'rejected',
+                        'gateway_response' => json_encode($statusData),
+                        'rejected_at'      => now(),
+                        'updated_at'       => now(),
                     ]);
+                return 'failed';
+            });
 
-                WalletHelper::credit($user->id, (float) $recharge->amount, $recharge->id);
-                DB::commit();
-
+            if ($outcome === 'credited' || $outcome === 'already') {
                 $wallet = WalletHelper::getOrCreate($user->id);
                 return response()->json([
                     'status'  => true,
-                    'message' => "₹{$recharge->amount} added to your wallet",
+                    'message' => $outcome === 'credited'
+                        ? "₹{$recharge->amount} added to your wallet"
+                        : 'Payment already processed',
                     'data'    => ['available_balance' => (float) $wallet->available_balance],
                 ]);
             }
-
-            // Payment failed or pending
-            DB::table('wallet_recharges')
-                ->where('id', $recharge->id)
-                ->update([
-                    'payment_status'   => 'failed',
-                    'status'           => 'rejected',
-                    'gateway_response' => json_encode($statusData),
-                    'rejected_at'      => now(),
-                    'updated_at'       => now(),
-                ]);
-            DB::commit();
 
             return response()->json([
                 'status'  => false,
@@ -255,34 +270,41 @@ class PhonePeWalletController extends Controller
                 return response()->json(['message' => 'Not found'], 404);
             }
 
-            // Idempotency — already credited
-            if ($recharge->payment_status === 'paid') {
-                return response()->json(['message' => 'Already processed'], 200);
-            }
-
             $isSuccess        = ($payload['state'] ?? '') === 'COMPLETED';
             $gatewayPaymentId = $payload['paymentDetails'][0]['transactionId'] ?? null;
 
-            DB::beginTransaction();
-
-            if ($isSuccess) {
-                DB::table('wallet_recharges')
+            // Credit atomically under a row lock so concurrent / duplicate / replayed
+            // webhooks can never double-credit: the lock serializes them and the
+            // re-checked payment_status='paid' guard makes repeats a no-op.
+            $credited = DB::transaction(function () use ($recharge, $isSuccess, $gatewayPaymentId, $body) {
+                $fresh = DB::table('wallet_recharges')
                     ->where('id', $recharge->id)
-                    ->update([
-                        'gateway_payment_id' => $gatewayPaymentId,
-                        'payment_status'     => 'paid',
-                        'status'             => 'approved',
-                        'gateway_response'   => json_encode($body),
-                        'approved_at'        => now(),
-                        'updated_at'         => now(),
-                    ]);
+                    ->lockForUpdate()
+                    ->first();
 
-                WalletHelper::credit($recharge->user_id, (float) $recharge->amount, $recharge->id);
-                DB::commit();
-                Log::info("PhonePe webhook: wallet credited for txn {$merchantTxnId}, user {$recharge->user_id}");
-            } else {
+                // Idempotency — already credited by an earlier webhook or by verify().
+                if ($fresh->payment_status === 'paid') {
+                    return false;
+                }
+
+                if ($isSuccess) {
+                    DB::table('wallet_recharges')
+                        ->where('id', $fresh->id)
+                        ->update([
+                            'gateway_payment_id' => $gatewayPaymentId,
+                            'payment_status'     => 'paid',
+                            'status'             => 'approved',
+                            'gateway_response'   => json_encode($body),
+                            'approved_at'        => now(),
+                            'updated_at'         => now(),
+                        ]);
+
+                    WalletHelper::credit($fresh->user_id, (float) $fresh->amount, $fresh->id);
+                    return true;
+                }
+
                 DB::table('wallet_recharges')
-                    ->where('id', $recharge->id)
+                    ->where('id', $fresh->id)
                     ->update([
                         'payment_status'   => 'failed',
                         'status'           => 'rejected',
@@ -290,8 +312,13 @@ class PhonePeWalletController extends Controller
                         'rejected_at'      => now(),
                         'updated_at'       => now(),
                     ]);
-                DB::commit();
-                Log::info("PhonePe webhook: payment state={$payload['state']} for txn {$merchantTxnId}, event={$event}");
+                return false;
+            });
+
+            if ($credited) {
+                Log::info("PhonePe webhook: wallet credited for txn {$merchantTxnId}, user {$recharge->user_id}");
+            } else {
+                Log::info("PhonePe webhook: no credit applied for txn {$merchantTxnId} (state=" . ($payload['state'] ?? 'UNKNOWN') . ", event={$event})");
             }
 
             return response()->json(['message' => 'OK'], 200);

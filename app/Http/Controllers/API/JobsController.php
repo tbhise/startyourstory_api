@@ -11,6 +11,8 @@ use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
 use App\Helpers\SysCoinHelper;
+use App\Exceptions\InsufficientFundsException;
+use Illuminate\Database\QueryException;
 
 
 class JobsController extends Controller
@@ -143,6 +145,31 @@ class JobsController extends Controller
                 'status' => true,
                 'message' => 'Job applied successfully'
             ]);
+        } catch (InsufficientFundsException $e) {
+            // Lost the race for the last bit of balance/coins — fail cleanly, no charge.
+            DB::rollBack();
+            return response()->json([
+                'status'               => false,
+                'message'              => 'Insufficient balance. Please recharge your wallet to continue applying.',
+                'insufficient_balance' => true,
+                'application_fee'      => WalletHelper::APPLICATION_FEE,
+            ]);
+        } catch (QueryException $e) {
+            DB::rollBack();
+            // 1062 = duplicate key on uq_application_job_student — a concurrent /
+            // double-submitted request already created the application. Treat as the
+            // existing "already applied" case (no second application, no second hold).
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'You already applied for this job'
+                ], 409);
+            }
+            Log::error("Apply Job API Error (query) : " . $e->getMessage());
+            return response()->json([
+                'status'  => false,
+                'message' => 'Something went wrong',
+            ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error("Apply Job API Error : " . $e->getMessage());

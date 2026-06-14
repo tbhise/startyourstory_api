@@ -32,8 +32,13 @@ class AdminWalletController extends Controller
             $status = $request->input('status', 'all');
             $search = trim($request->input('search', ''));
 
+            // This is the MANUAL payment-proof approval queue only. Gateway
+            // recharges (phonepe/razorpay) are auto-verified + auto-credited and
+            // must never appear here — including their transient 'pending' state
+            // between initiate and verify/webhook.
             $query = DB::table('wallet_recharges as wr')
                 ->join('users as u', 'u.id', '=', 'wr.user_id')
+                ->where('wr.payment_method', 'manual')
                 ->select(
                     'wr.*',
                     'u.name as student_name',
@@ -65,6 +70,7 @@ class AdminWalletController extends Controller
             });
 
             $counts = DB::table('wallet_recharges')
+                ->where('payment_method', 'manual')
                 ->selectRaw("status, COUNT(*) as count")
                 ->groupBy('status')
                 ->get()
@@ -100,6 +106,10 @@ class AdminWalletController extends Controller
 
             $recharge = DB::table('wallet_recharges')->where('id', $id)->first();
             if (!$recharge) return response()->json(['status' => false, 'message' => 'Not found'], 404);
+            // Gateway recharges are auto-credited — never manually approvable here.
+            if ($recharge->payment_method !== 'manual') {
+                return response()->json(['status' => false, 'message' => 'Only manual payments can be approved. Gateway payments are auto-verified.'], 422);
+            }
             if ($recharge->status === 'approved') {
                 return response()->json(['status' => false, 'message' => 'Already approved']);
             }
@@ -156,6 +166,10 @@ class AdminWalletController extends Controller
 
             $recharge = DB::table('wallet_recharges')->where('id', $id)->first();
             if (!$recharge) return response()->json(['status' => false, 'message' => 'Not found'], 404);
+            // Gateway recharges are auto-verified — never manually rejectable here.
+            if ($recharge->payment_method !== 'manual') {
+                return response()->json(['status' => false, 'message' => 'Only manual payments can be rejected. Gateway payments are auto-verified.'], 422);
+            }
             if (in_array($recharge->status, ['approved', 'rejected'])) {
                 return response()->json(['status' => false, 'message' => 'Already processed']);
             }

@@ -4,6 +4,7 @@ namespace App\Helpers;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Services\SystemSettingService;
 
 /**
  * Referral rewards built on the existing referral linkage
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\Log;
  */
 class ReferralHelper
 {
-    /** Real-money reward (₹) to the referrer when a referred firm buys premium. */
+    /** Fallback only — canonical value lives in system_settings (firm_premium_purchase_reward). */
     const FIRM_REFERRAL_REWARD = 2000.00;
 
     /*
@@ -118,12 +119,14 @@ class ReferralHelper
                 ->orderByDesc('id')
                 ->first();
 
+            // Reward amount from dynamic Platform Settings (falls back to FIRM_REFERRAL_REWARD).
+            // Trigger is unchanged — this runs only on premium ACTIVATION, never on registration.
             DB::table('referral_payouts')->insert([
                 'referrer_user_id'     => (int) $referrer->id,
                 'referred_user_id'     => $firmUserId,
                 'firm_subscription_id' => $sub->id ?? null,
                 'plan'                 => $sub->plan ?? null,
-                'reward_amount'        => self::FIRM_REFERRAL_REWARD,
+                'reward_amount'        => SystemSettingService::getFirmPremiumPurchaseReward(),
                 'status'               => 'pending',
                 'created_at'           => now(),
                 'updated_at'           => now(),

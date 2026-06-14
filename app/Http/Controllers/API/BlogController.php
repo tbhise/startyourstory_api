@@ -39,7 +39,8 @@ class BlogController extends Controller
             $query->where('blog_categories.slug', $request->category);
         }
 
-        $perPage = min((int) ($request->per_page ?? 10), 30);
+        // $perPage = min((int) ($request->per_page ?? 10), 30);
+        $perPage = 7;
         $blogs = $query->orderByDesc('blogs.published_at')->paginate($perPage);
 
         return response()->json(['status' => true, 'data' => $blogs]);
@@ -60,6 +61,7 @@ class BlogController extends Controller
                 'blog_categories.name as category_name',
                 'blog_categories.slug as category_slug',
                 'blogs.published_at',
+                'blogs.updated_at',
                 DB::raw("CASE WHEN blogs.featured_image IS NOT NULL THEN CONCAT('" . url('/') . "/storage/', blogs.featured_image) ELSE NULL END as featured_image_url")
             )
             ->where('blogs.slug', $slug)

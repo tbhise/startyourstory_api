@@ -1940,6 +1940,13 @@ class CreatorMarketplaceController extends Controller
                     'created_at'        => now(),
                     'updated_at'        => now(),
                 ]);
+
+                // Admin notification feed — new creator payout pending (non-throwing, once per engagement)
+                \App\Services\Notifications\AdminNotificationService::creatorPayout(
+                    (int) $id,
+                    (float) $net,
+                    (int) $engagement->creator_id
+                );
             }
 
             DB::table('creator_engagements')->where('id', $id)->update([

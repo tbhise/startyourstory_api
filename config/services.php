@@ -46,4 +46,14 @@ return [
         'webhook_password' => env('PHONEPE_WEBHOOK_PASSWORD'),
     ],
 
+    // Firebase Cloud Messaging (admin push). Values come from the Firebase
+    // service-account JSON. When any are absent, FcmService is a safe no-op.
+    'fcm' => [
+        'project_id'   => env('FCM_PROJECT_ID'),
+        'client_email' => env('FCM_CLIENT_EMAIL'),
+        'private_key'  => env('FCM_PRIVATE_KEY'),
+        // Used to build absolute click-through links for push notifications.
+        'frontend_url' => env('FRONTEND_URL', env('APP_URL')),
+    ],
+
 ];

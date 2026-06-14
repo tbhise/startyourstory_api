@@ -37,6 +37,13 @@ class PublicController extends Controller
             'updated_at' => now(),
         ]);
 
+        // Admin notification feed (non-throwing)
+        \App\Services\Notifications\AdminNotificationService::contactSubmission(
+            $request->name,
+            $request->email,
+            $request->subject
+        );
+
         // Notify admin
         try {
             $adminEmail = config('mail.admin_address', env('ADMIN_EMAIL', 'admin@startyourstory.in'));

@@ -72,6 +72,13 @@ class AdminBlogController extends Controller
             return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
         }
 
+        $duplicate = DB::table('blog_categories')
+            ->whereRaw('LOWER(name) = ?', [strtolower(trim($request->name))])
+            ->exists();
+        if ($duplicate) {
+            return response()->json(['status' => false, 'message' => 'Category already exists.']);
+        }
+
         $slug = $this->generateSlug($request->name, 'blog_categories');
 
         $id = DB::table('blog_categories')->insertGetId([
@@ -107,6 +114,14 @@ class AdminBlogController extends Controller
         ]);
         if ($validator->fails()) {
             return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+        }
+
+        $duplicate = DB::table('blog_categories')
+            ->whereRaw('LOWER(name) = ?', [strtolower(trim($request->name))])
+            ->where('id', '!=', $id)
+            ->exists();
+        if ($duplicate) {
+            return response()->json(['status' => false, 'message' => 'Category already exists.']);
         }
 
         $slug = $this->generateSlug($request->name, 'blog_categories', (int) $id);

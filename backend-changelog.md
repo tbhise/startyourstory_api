@@ -4,6 +4,325 @@
 
 ---
 
+## 2026-06-14 — Platform Settings (dynamic business configuration)
+
+Centralized, cached, admin-editable business values replacing hardcoded constants. **Generic** — future settings drop in with no code. Existing key/value `platform_settings` table + `AdminSettingsController` left **untouched** (this is a separate `system_settings` table).
+
+### Files Added
+- `database/migrations/2026_06_14_000003_create_system_settings_table.php` — `system_settings` (`setting_key` unique, `setting_value`, `setting_type`, `title`, `description`, `category`, `is_editable`, timestamps) + `system_setting_audits` (audit log; no prior activity-log infra existed).
+- `database/seeders/SystemSettingsSeeder.php` — idempotent; seeds the 6 settings (never clobbers an admin-edited value on re-seed).
+- `app/Models/SystemSetting.php`.
+- `app/Services/SystemSettingService.php` — **cache layer + typed getters**. `get($key,$default)` uses `Cache::rememberForever` and casts by `setting_type`; `set($key,$value,$admin)` updates, writes an **audit row**, and **busts the cache**. Getters: `getStudentReferralReward()`, `getFirmPremiumPurchaseReward()`, `getWelcomeBonusCoins()`, `getApplicationFeeAmount()`, `getFreeApplicationsCount()`, `getMinimumWalletRecharge()` — each falls back to a safe default if the row is missing.
+- `app/Http/Controllers/API/AdminSystemSettingController.php` — `index` (grouped by category), `update` (type-aware validation: numeric `min:0`, no negatives, zero allowed; blocks `is_editable=0`), `audit`. Admin-token guarded.
+
+### Files Modified (refactor — behaviour preserved, amounts now dynamic)
+- `app/Helpers/SysCoinHelper.php` — student referral bonus now grants `getStudentReferralReward()` (10 → **50** via seed); welcome bonus grants `getWelcomeBonusCoins()`. Constants kept as fallbacks (corrected to 50/100).
+- `app/Helpers/ReferralHelper.php` — firm premium payout `reward_amount` now `getFirmPremiumPurchaseReward()`. **Trigger unchanged** — granted only on premium *activation* (admin approve / PhonePe verify+webhook), **never on registration**; idempotency/unique-payout preserved.
+- `app/Http/Controllers/API/ReferralController.php` — referral dashboard `reward_label` built from the service (no more hardcoded `'₹2,000'` / `'+10 SYS Coins'`).
+- `routes/api.php` — `GET /admin/system-settings`, `GET /admin/system-settings/audit`, `POST /admin/system-settings/{key}`.
+
+### Scope note
+`application_fee_amount`, `free_applications_count`, `minimum_wallet_recharge` are seeded + exposed via getters but left **seed-only** (their existing code paths — the recently-hardened wallet/apply flow and the existing `platform_settings.free_applications_limit` — are intentionally untouched). Future wiring is a drop-in.
+
+### Database Changes
+New `system_settings` + `system_setting_audits` tables (see `db_changes.txt`). Apply: migrate `--path` then `db:seed --class=SystemSettingsSeeder`.
+
+### Rollback
+Drop both tables; revert the helper/controller getters to the prior constants/literals. No impact on existing flows (getters fall back to the same defaults).
+
+---
+
+## 2026-06-14 — Admin Notifications Phase 2–4: Bell APIs + FCM Push (backend)
+
+Builds on Phase 1. **No existing notification-creation logic or approval workflow was changed** — the only edit to existing logic is an additive, non-throwing push fan-out inside the Phase-1 service.
+
+### Files Added
+- `database/migrations/2026_06_14_000002_create_admin_fcm_tokens_table.php` — `admin_fcm_tokens` (`admin_user_id`, unique `token`, `device_info`, `last_active_at`, timestamps). One row per device → multiple devices per admin.
+- `app/Models/AdminFcmToken.php` — Eloquent model.
+- `app/Services/Notifications/FcmService.php` — FCM **HTTP v1** sender. Mints an OAuth2 access token from the service-account key using native `openssl` (RS256 JWT → token endpoint, cached) — **no extra Composer dependency**. `sendToAllAdmins()` loops admin tokens, sends `notification` + `data` + `webpush.fcm_options.link` (absolute admin URL), prunes dead tokens (404/403/UNREGISTERED), and is a **safe no-op when `services.fcm` is unconfigured**. Fully non-throwing.
+
+### Files Modified
+- `app/Services/Notifications/AdminNotificationService.php` — after the Phase-1 DB insert, additionally calls `FcmService::sendToAllAdmins(title, message, action_url, {type, notification_id})`. Additive + non-throwing; the stored notification is unchanged. **All future notification types automatically get push.**
+- `app/Http/Controllers/API/AdminNotificationController.php` — added `registerFcmToken` (POST), `deleteFcmToken` (DELETE), and a `search` filter (title/message LIKE) on `index`. All admin-token guarded.
+- `config/services.php` — added `fcm` block (`project_id`, `client_email`, `private_key`, `frontend_url`).
+- `routes/api.php` — added `POST /admin/fcm/token`, `DELETE /admin/fcm/token`.
+- `.env` — added blank `FCM_*` placeholders (push disabled until filled).
+
+### Endpoints (admin_token cookie auth)
+- `POST /admin/fcm/token` — register/refresh this device's token (bound to the authed admin).
+- `DELETE /admin/fcm/token` — unregister (on logout).
+- (Phase 1, still active) `GET /admin/notifications` (now also `?search=`), `GET /admin/notifications/unread-count`, `POST /admin/notifications/{id}/read`, `POST /admin/notifications/read-all`.
+
+### Security
+Only authenticated admins register tokens, and pushes target `admin_fcm_tokens` exclusively → students/firms can never receive admin notifications.
+
+### Database Changes
+- New `admin_fcm_tokens` table (see `db_changes.txt`; applied via the migration above with `--path`).
+
+### Rollback
+Drop `admin_fcm_tokens`; remove the `fcm` config, the 2 routes, the 2 controller methods, and the one additive `FcmService::sendToAllAdmins` call. Phase-1 behaviour is untouched.
+
+---
+
+## 2026-06-14 — Admin Notification System (Phase 1: infrastructure only)
+
+Backend storage + service + API + generation points for admin notifications. **No UI**, no notification bell, no browser notifications, no FCM (later phases).
+
+### Files Added
+- `database/migrations/2026_06_14_000001_create_admin_notifications_table.php` — `admin_notifications` (`id, type, title, message, action_url, metadata json, is_read, read_at, timestamps`; indexes on `type` and `(is_read, created_at)`). Designed for expansion: `type` is a free string driven by service constants; `metadata` JSON carries arbitrary context.
+- `app/Models/AdminNotification.php` — Eloquent model (`metadata`→array, `is_read`→bool, `read_at`→datetime casts).
+- `app/Services/Notifications/AdminNotificationService.php` — centralized `create(type, title, message, action_url, metadata)` (non-throwing — logs and returns null on failure so it never breaks the host flow). Type constants (`TYPE_FIRM_VERIFICATION`, `TYPE_PAYMENT_VERIFICATION`, `TYPE_CREATOR_PAYOUT`, `TYPE_CONTACT`, `TYPE_SYSTEM_ALERT`) + typed helpers for the 4 Phase-1 sources. **All future admin notifications should go through this service.**
+- `app/Http/Controllers/API/AdminNotificationController.php` — admin-token-guarded (existing pattern): `index` (paginated, `?type` / `?is_read` filters, includes `unread_count`), `unreadCount`, `markRead`, `markAllRead`.
+
+### Endpoints (admin_token cookie auth, in controller)
+- `GET  /admin/notifications`
+- `GET  /admin/notifications/unread-count`
+- `POST /admin/notifications/{id}/read`
+- `POST /admin/notifications/read-all`
+
+### Generation points wired (each one-line, non-throwing)
+- **Firm verification** — `FirmController@registerFirm` (after commit, once per firm).
+- **Payment verification** — `WalletController@submitManualRecharge` (after the recharge row is created).
+- **Creator payout** — `CreatorMarketplaceController@approveDeliverable` (inside the once-per-engagement payout-creation block).
+- **Contact form** — `PublicController@submitContact` (after the submission is stored).
+
+### Database Changes
+- New `admin_notifications` table (see `db_changes.txt`; applied via the migration above with `--path`, since this project's schema baseline is tracked in `db_changes.txt`).
+
+### Rollback Plan
+- Drop `admin_notifications`; remove the controller/model/service, the 4 routes, and the 4 one-line generation calls. No existing behaviour depends on these calls (service is non-throwing).
+
+---
+
+## 2026-06-14 — Rate Limiting for Critical Endpoints (audit remediation)
+
+Additive security hardening only — no business/wallet/payment/application/auth logic changed. Limits are generous (5–10/min) so genuine users are unaffected; only excessive bursts get a clean HTTP 429.
+
+### Files Modified
+- `app/Providers/AppServiceProvider.php` — `boot()` now registers 8 **named** `RateLimiter::for()` limiters. Each returns a shared 429 body `{"success":false,"status":false,"message":"Too many requests. Please try again in a few minutes."}` (both `success` per spec and `status` for the app's frontend convention).
+- `routes/api.php` — appended `->middleware('throttle:<name>')` to 14 routes (no other change).
+
+### Named limiters & scope
+| Limiter | Limit | Scope |
+|---|---|---|
+| `auth-login` | 5/min | per IP **and** per email |
+| `auth-register` | 5/min | per IP |
+| `auth-forgot` | 3/min | per IP **and** per email |
+| `email-verify` | 3/min | per user (`auth_token` cookie) |
+| `apply` | 10/min | per user |
+| `payment-initiate` | 5/min | per user |
+| `payment-proof` | 5/min | per user |
+| `contact` | 5/min | per IP |
+
+Per-user scope keys off the `auth_token` cookie (stable per session, available before any middleware → independent of middleware order; falls back to IP).
+
+### Routes protected
+- Auth: `POST /login`, `/registerStudent`, `/registerFirm`, `/auth/forgot-password`, `/email/send-verification-link`.
+- Applications: `POST /jobs/{id}/apply` (covers job **and** articleship — same endpoint).
+- Payments (initiate): `POST /wallet/recharge/phonepe/initiate`, `/payments/phonepe/initiate` (firm), `/creator-marketplace/engagements/{id}/payment/phonepe/initiate`.
+- Payments (proof): `POST /wallet/recharge/manual`, `/student/premium-request`, `/creator-marketplace/engagements/{id}/payment/manual`.
+- Public forms: `POST /contact-submission`, `/newsletter/subscribe`.
+
+### Explicitly NOT throttled
+All `/admin/*`, all PhonePe **webhooks**, PhonePe **verify** endpoints (auto-called on redirect return), queues/jobs, and all read/GET endpoints.
+
+### DB Changes
+None.
+
+### Rollback Plan
+- Remove the `->middleware('throttle:*')` calls in `routes/api.php` and the `configureRateLimiters()` method in `AppServiceProvider`. No data/schema impact.
+
+---
+
+## 2026-06-14 — Financial Integrity & Webhook Security Hardening (audit remediation)
+
+Scope: wallet/SYS-coin race conditions, duplicate-application protection, PhonePe webhook security. No unrelated modules touched.
+
+### Task 1 — Wallet & SYS Coin race conditions
+- **NEW** `app/Exceptions/InsufficientFundsException.php` — thrown when a locked, re-validated balance is below the required amount.
+- `app/Helpers/WalletHelper.php`
+  - `hold()` — now selects the `student_wallets` row with **`lockForUpdate()`** and **re-validates `available_balance >= APPLICATION_FEE` inside the transaction**; throws `InsufficientFundsException` instead of writing a negative balance.
+  - `consume()` / `release()` — lock the `application_holds` row (`lockForUpdate()` + `status='held'` re-check) and the wallet row, so two concurrent settlements (e.g. a manual reject racing the auto-expiry job) cannot double-process one hold.
+- `app/Helpers/SysCoinHelper.php` — identical hardening on `hold()` / `consume()` / `release()` against `sys_coin_accounts` / `sys_coin_holds` (integer coins; throws `InsufficientFundsException` on shortfall).
+- `app/Http/Controllers/API/JobsController.php` (`applyJob`) — catches `InsufficientFundsException` → clean "Insufficient balance" response (rolls back, no charge); the pre-checks and wallet-confirmation flow are unchanged.
+
+### Task 2 — Duplicate application protection
+- DB-level `UNIQUE(job_id, student_id)` constraint `uq_application_job_student` added to `applications` (see `db_changes.txt`). Zero pre-existing duplicates confirmed before applying.
+- `applyJob` now catches the duplicate-key `QueryException` (errno **1062**) and returns the existing **409 "You already applied for this job"** message — the app-level `exists()` check and its message are retained for the common case.
+
+### Task 3 — PhonePe webhook security
+- `app/Services/Payment/PhonePeGateway.php` `verifySignature()` — **fail CLOSED**: missing webhook credentials now return `false` (was `true`). Empty `Authorization` header rejected. Constant-time, case-insensitive hex compare retained.
+- `app/Http/Controllers/API/PhonePeWalletController.php`
+  - `webhook()` — crediting moved into a single transaction that **locks the `wallet_recharges` row and re-checks `payment_status='paid'`** before crediting; concurrent / duplicate / replayed webhooks are now no-ops (idempotent). Amount still comes from the DB row, never the payload.
+  - `verify()` — same locked re-check, so a user-triggered verify racing the S2S webhook can never double-credit.
+
+### Database Changes
+- `applications`: `ADD CONSTRAINT uq_application_job_student UNIQUE (job_id, student_id)`. Documented in `db_changes.txt` with rollback.
+
+### Behaviour preserved
+- Existing successful PhonePe payments, recharge workflow, ledger entries, balances, idempotent credits, and the duplicate-application message all continue to work.
+
+---
+
+## 2026-06-14 — Admin: System Health endpoint (application-level)
+
+### Goal
+Give admins quick operational visibility via a lightweight, application-level health check. **No** infra metrics (CPU/RAM/Docker/Redis/Nginx/process/load) — application health only.
+
+### Files Added / Modified
+- **NEW** `app/Http/Controllers/API/AdminSystemHealthController.php` — `GET /admin/system-health` (admin-token guarded, same `admin_users` cookie pattern as other admin controllers). Runs 7 checks and computes an overall status:
+  1. **Database** — `SELECT 1` with response-time (ms). Connected=green / Disconnected=red.
+  2. **Queue Workers** — `queue.default` driver aware. `sync` → operational. `database` → verifies the `queue_jobs` table is reachable and not backed up; a backlog of unreserved jobs older than 120s ⇒ "Not Running" (red), else "Running" (green). Table unreachable ⇒ red.
+  3. **Failed Jobs** — `failed_jobs` count. 0=green, ≥1=yellow.
+  4. **Storage Usage** — `disk_total_space`/`disk_free_space` on `storage_path()`. <80%=green, 80–90%=yellow, >90%=red. Returns used/total GB + percent. (Disk capacity only — not a server/process metric.)
+  5. **PhonePe** — validates `config('services.phonepe')` required keys (merchant_id, client_id, client_secret, webhook_username, webhook_password) are present. **No API call.** Configured=green / Missing=red.
+  6. **Email Service** — validates `config('mail')` default mailer creds (smtp: host+username+password). **No test email.** Configured=green / Missing=red.
+  7. **Sitemap** — static URL count (reused from `SitemapController::staticUrlCount()`), published-blogs count, and route reachability (confirms `sitemap.xml`, `sitemaps/static.xml`, `sitemaps/blogs.xml` are registered — no HTTP self-call). Healthy=green / Issues=yellow.
+  - **Overall**: any red ⇒ Critical; else any yellow ⇒ Warning; else Healthy. Includes `checked_at` ISO timestamp.
+- `app/Http/Controllers/API/SitemapController.php` — added `public static staticUrlCount()` so the health check reuses the single source of truth for the static page list.
+- `routes/api.php` — registered `GET /admin/system-health`.
+
+### DB Changes
+None. Reads existing `queue_jobs`, `failed_jobs`, `blogs`; checks config + disk only.
+
+### Rollback Plan
+- Remove the route, `AdminSystemHealthController`, and the `staticUrlCount()` accessor. No data/schema impact.
+
+---
+
+## 2026-06-14 — Wallet: Gateway recharges excluded from manual approval queue + manual-proof validation
+
+### Problem (root cause)
+Successful PhonePe (and any future Razorpay) wallet recharges were appearing in **Admin → Pending Payment Approvals**. Gateway rows are never actually stored as `manual` (initiate sets `payment_method='phonepe'`), but:
+1. `AdminWalletController@getRecharges` returned **every** `wallet_recharges` row for the selected status regardless of `payment_method`. A gateway order sits at `status='pending'` from *initiate* until *verify*/*webhook* credits it, so that transient row surfaced in the admin queue. The `counts` query was likewise unscoped.
+2. (Frontend) the admin table labelled any non-`razorpay` method as "Manual", so `phonepe` rows were mislabelled.
+
+The gateway success path itself was already correct: `verify()` / `webhook()` set `payment_status='paid'`, `status='approved'` and call `WalletHelper::credit` — no admin action needed.
+
+### Files Modified
+- `app/Http/Controllers/API/AdminWalletController.php`
+  - `getRecharges()` — main query and the `counts` query now constrained to `payment_method = 'manual'`. The approval page is now strictly the manual payment-proof queue; gateway recharges (pending/approved/rejected) never appear.
+  - `approveRecharge()` / `rejectRecharge()` — added a guard returning HTTP 422 if `payment_method !== 'manual'` ("Gateway payments are auto-verified"), preventing an admin from manually crediting/rejecting an auto-handled (or unpaid) gateway order.
+- `app/Http/Controllers/API/WalletController.php`
+  - `submitManualRecharge()` validation tightened: `reference_number` (Transaction ID) and `screenshot` (payment proof) are now **required**; `utr_number` remains **optional**; `amount` stays required. Added explicit validation messages and a 422 status on failure. Attachment rules unchanged (`mimes:jpg,jpeg,png,pdf`, `max:5120` = 5 MB).
+
+### Behaviour after change
+- PhonePe success → auto-verified, wallet auto-credited, `status='approved'`, NOT in pending approvals. ✓
+- Razorpay (when wired) success → same path / same exclusion. ✓
+- Manual upload → `payment_method='manual'`, `status='pending'` → appears in approval queue → admin approve/reject as before. ✓
+
+### DB Changes
+None. (`wallet_recharges.payment_method` ENUM already includes `razorpay`,`phonepe`,`manual`.)
+
+### Rollback Plan
+- Remove the `where('payment_method','manual')` constraints in `getRecharges()`/counts and the approve/reject guards; relax the two `required` rules in `submitManualRecharge()`.
+
+---
+
+## 2026-06-14 — Sitemap: Refactor to Sitemap-Index Architecture
+
+### Goal
+Restructure the single dynamic `sitemap.xml` into a scalable **sitemap index** so future sections (jobs, companies, resources) can be added as their own child sitemaps without bloating one file. No URL structures changed.
+
+### New structure
+- `/sitemap.xml` → now a **sitemap index** (`<sitemapindex>`) referencing the child sitemaps.
+- `/sitemaps/static.xml` → static marketing / legal pages.
+- `/sitemaps/blogs.xml` → one `<url>` per published blog.
+- Future placeholders (not yet implemented): `jobs.xml`, `companies.xml`, `resources.xml` — added by appending to `CHILD_SITEMAPS` + a route + a method.
+
+### Files Modified
+- `app/Http/Controllers/API/SitemapController.php` — refactored from a single `index()` urlset into three actions:
+  - `index()` — emits `<sitemapindex>` listing `static.xml` + `blogs.xml` (driven by `CHILD_SITEMAPS` const).
+  - `static()` — emits the static `<urlset>`. Priorities: home `1.0`, blogs `0.9`, resources `0.8`, about `0.6`, contact `0.5`, policies `0.3`.
+  - `blogs()` — emits the blogs `<urlset>`: `WHERE status='published'`, ordered by `updated_at` desc; `<lastmod>` = **`updated_at`** (ISO-8601/Atom), `changefreq=monthly`, `priority=0.8`. Drafts/unpublished (`status='draft'`) and deleted (hard-deleted) rows are excluded automatically.
+  - Shared helpers: `frontendBase()` (uses `config('services.frontend_url')`, fallback `https://startyourstory.in`, points at the React frontend not the API domain), `xml()`, `urlNode()`, `esc()` (XML-escapes `<loc>`), `formatDate()`.
+- `routes/web.php` — added `GET /sitemaps/static.xml` and `GET /sitemaps/blogs.xml` alongside the existing `GET /sitemap.xml`.
+
+### Automatic updates (no files, no cron)
+All three responses are generated per-request from the `blogs` table: publish → appears in `blogs.xml`; update → `<lastmod>` refreshes; unpublish (`status`→`draft`) → removed; delete → removed. No physical XML files are written anywhere (backend or frontend).
+
+### Verified (local `php artisan serve`)
+- `GET /sitemap.xml` → 200, `application/xml`, valid `<sitemapindex>` with both children.
+- `GET /sitemaps/static.xml` → 200, 8 static URLs with the spec'd priorities.
+- `GET /sitemaps/blogs.xml` → 200, one `<url>` per published blog with `updated_at` lastmod.
+
+### Deployment note
+Nginx must route both `startyourstory.in/sitemap.xml` and `startyourstory.in/sitemaps/*.xml` to the Laravel app.
+
+### DB Changes
+None.
+
+### Rollback Plan
+- Revert `SitemapController` to the single-`index()` urlset version and remove the two `/sitemaps/*.xml` routes. No data/schema impact.
+
+---
+
+## 2026-06-14 — Blog SEO: Dynamic Sitemap + Article dateModified
+
+### Goal
+Server-side SEO support for blog indexing: a dynamic, always-current XML sitemap generated from the DB, plus expose `updated_at` so the frontend Article schema can emit `dateModified`.
+
+### Files Modified / Added
+- **NEW** `app/Http/Controllers/API/SitemapController.php` — generates `sitemap.xml` dynamically.
+  - Static pages: `/`, `/about-us`, `/resources`, `/blogs`, `/contact`, `/privacy-policy`, `/terms-and-conditions`, `/cookie-policy` (each with `changefreq` + `priority`).
+  - Published blogs: `SELECT slug, published_at, updated_at FROM blogs WHERE status = 'published'`, newest first. Drafts (`status='draft'`) and deleted rows (hard-deleted — no soft deletes on this table) are excluded automatically.
+  - `<lastmod>` uses `published_at` (falls back to `updated_at`) in W3C/Atom ISO-8601 format. The `/blogs` listing node's `<lastmod>` tracks the newest published blog.
+  - Every `<loc>` is built from `config('services.frontend_url')` (fallback `https://startyourstory.in`) so URLs point at the React frontend, **not** the API domain. `<loc>` values are XML-escaped.
+  - Returns `Content-Type: application/xml; charset=UTF-8`, `Cache-Control: public, max-age=3600`, HTTP 200.
+- `routes/web.php` — registered `GET /sitemap.xml` → `SitemapController@index` (web, not `/api`, so it serves at the domain root for Nginx to expose as `https://startyourstory.in/sitemap.xml`).
+- `app/Http/Controllers/API/BlogController.php` — `getPublishedBlogBySlug()` now also selects `blogs.updated_at` (consumed by the frontend Article `dateModified`).
+
+### Automatic updates (no cron, no manual editing)
+The sitemap is generated on each request straight from the `blogs` table, so publish → appears, unpublish (`status` back to `draft`) → removed, delete → removed, all automatically.
+
+### Deployment note
+Nginx must route `startyourstory.in/sitemap.xml` to the Laravel app (the static `start-your-story-ui/public/sitemap.xml` is now superseded by this dynamic route and should not be served in preference to it). In production set `FRONTEND_URL=https://startyourstory.in` and re-run `php artisan config:cache`.
+
+### DB Changes
+None. Reads existing `blogs` columns only.
+
+### Rollback Plan
+- Remove the `GET /sitemap.xml` route and `SitemapController.php`; revert the `updated_at` column add in `getPublishedBlogBySlug()`. No data/schema impact.
+
+---
+
+## 2026-06-14 — Blog Categories: Case-Insensitive Duplicate Prevention
+
+### Change
+Added case-insensitive duplicate name validation to `createCategory` and `updateCategory` in `AdminBlogController`.
+
+### Files Modified
+- `app/Http/Controllers/API/AdminBlogController.php`
+  - `createCategory`: Before inserting, checks `LOWER(name) = LOWER(trim(request->name))` across all existing categories. Returns `{ status: false, message: "Category already exists." }` (HTTP 200) if a match is found. Treats "Articleship Guidance", "articleship guidance", and "ARTICLESHIP GUIDANCE" as duplicates.
+  - `updateCategory`: Same check, but excludes the category being edited (`WHERE id != $id`) so renaming a category to the same name (or changing only case) is allowed.
+
+### DB Changes
+None.
+
+---
+
+## 2026-06-13 — Referral Dashboard: API enrichment (read-only)
+
+### Goal
+Power the redesigned `/referrals` dashboard with **real** data — no mock/dummy values, no new tables.
+
+### Files Modified
+- `app/Http/Controllers/API/ReferralController.php` — `index()` now also returns (all derived from existing tables):
+  - `stats.students_this_month` / `stats.firms_this_month` — current-month referral counts (`users.created_at`).
+  - `coins` `{ earned, this_month }` — from `sys_coin_accounts.lifetime_earned` and a sum of this-month earn-type rows in `sys_coin_transactions`.
+  - `pending_rewards` `{ amount, firm_count }` — sum/count of the referrer's `referral_payouts` in `pending`+`approved`.
+  - `lifetime` `{ coins, pending_amount }`.
+  - Each `referrals[]` row gains `status` (student: Completed if a `REFERRAL_BONUS` ledger row exists for them, else Pending; firm: maps `referral_payouts.status` → Pending / Under Review / Completed) + `reward_type` + `reward_label`.
+  - Existing fields (`referral_code`, `referral_count`, `stats.{total,firms,students}`, base `referrals` columns) are preserved.
+
+### DB Changes
+None. Reads existing `users`, `sys_coin_accounts`, `sys_coin_transactions`, `referral_payouts`.
+
+### Rollback Plan
+- Revert `index()` to the prior version (return only `referral_code`, `referral_count`, `stats{total,firms,students}`, and the base `referrals` list). No data/schema impact.
+
+---
+
 ## 2026-06-13 — Referral Rewards + SYS Coins
 
 ### Goal
@@ -27,6 +346,7 @@ Coins and wallet money are never mixed.
 - `routes/console.php` — added a parallel `sys_coin_holds` 10-day auto-expiry loop → `SysCoinHelper::release(...,'auto_expired')`.
 - `app/Http/Controllers/API/AdminController.php` (×2: manual subscription add + premium-request approval) & `app/Http/Controllers/API/PhonePeFirmController.php` (×2: verify + webhook) — call `ReferralHelper::onFirmPremiumActivated($firmProfileId)` after each `is_premium=1`.
 - `routes/api.php` — `GET /referral/validate` (public); `GET /sys-coins`, `POST /sys-coins/ledger` (auth); admin `/admin/referral-payouts`(+`/{id}/approve`,`/{id}/mark-paid`), `/admin/sys-coins/transactions`, `/admin/referral-transactions`.
+- `app/Http/Controllers/API/WalletController.php` — `getApplyStatus` now also returns `available_coins`, `coin_cost`, `wallet_balance`, and `can_apply` (true if free quota OR ≥50 coins OR ≥₹49 wallet). This powers the frontend apply-gate so students with SYS Coins/wallet balance aren't wrongly shown "Upgrade To Apply" once free applications run out.
 
 ### DB Changes
 See `db_changes.txt` (2026-06-13 section). New tables `sys_coin_accounts`, `sys_coin_transactions`, `sys_coin_holds`, `referral_payouts`; `applications` gains `payment_source` + `coin_hold_id`. Apply that SQL before deploying. No Eloquent migration (project convention).

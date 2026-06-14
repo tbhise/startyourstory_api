@@ -117,15 +117,23 @@ class PhonePeGateway implements PaymentGateway
      */
     public function verifySignature(array $attributes): bool
     {
+        // FAIL CLOSED: if webhook credentials are not configured we cannot prove the
+        // request came from PhonePe, so reject it. (Previously this returned true,
+        // which let unauthenticated/forged webhooks through.)
         if (empty($this->webhookUsername) || empty($this->webhookPassword)) {
-            // Webhook credentials not configured — skip verification (log a warning in controller)
-            return true;
+            return false;
         }
 
-        $received = $attributes['authorization'] ?? '';
+        $received = trim((string) ($attributes['authorization'] ?? ''));
+        if ($received === '') {
+            return false;
+        }
+
+        // PhonePe v2: Authorization = SHA256(username:password). Compare in
+        // constant time and case-insensitively (hashes are hex).
         $expected = hash('sha256', $this->webhookUsername . ':' . $this->webhookPassword);
 
-        return hash_equals($expected, $received);
+        return hash_equals(strtolower($expected), strtolower($received));
     }
 
     /**

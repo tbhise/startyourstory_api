@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-06-15 — Fix: AdminAnalytics@dashboard crash on non-existent `applications.created_at`
+
+Bugfix. The new admin dashboard-stats endpoint threw `SQLSTATE[42S22] Unknown column 'created_at'` because the `applications` table has no `created_at` column — it tracks creation via `applied_at`.
+
+### Files Modified
+- `app/Http/Controllers/API/AdminAnalyticsController.php` — in `dashboard()`:
+  - "Applications this month" count now filters on `applied_at` (was `created_at`).
+  - Recent-applications query now orders by `a.applied_at` and selects `a.applied_at as created_at` (output shape/JSON key unchanged).
+
+### Notes
+- Only the `applications` table was affected; `firm_subscriptions`, `wallet_recharges`, `creator_payouts`, `firm_profiles`, `referral_payouts` all have real `created_at` columns and were left as-is.
+- No schema/DB changes. Verified live against the dev DB (count + recent list both return rows).
+
+---
+
 ## 2026-06-15 — Moderation: "Incorrect Information" report workflow (admin-reviewed)
 
 Controlled, abuse-resistant workflow for firms to flag incorrect student-profile info. **No automatic penalties/suspensions/hiding/ranking** — every action is admin-driven.

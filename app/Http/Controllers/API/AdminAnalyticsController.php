@@ -103,8 +103,8 @@ class AdminAnalyticsController extends Controller
                     'label' => $point['label'],
                     'value' => round(
                         $point['value']
-                        + ($walletTrend[$i]['value'] ?? 0)
-                        + ($commissionTrend[$i]['value'] ?? 0),
+                            + ($walletTrend[$i]['value'] ?? 0)
+                            + ($commissionTrend[$i]['value'] ?? 0),
                         2
                     ),
                 ];
@@ -158,7 +158,7 @@ class AdminAnalyticsController extends Controller
             $totalFirms = (int) DB::table('users')
                 ->where('role', 'firm')->where('is_deleted', false)->count();
             $applicationsThisMonth = (int) DB::table('applications')
-                ->whereBetween('created_at', [$monthStart, $now])->count();
+                ->whereBetween('applied_at', [$monthStart, $now])->count();
 
             $premiumRevMonth = (float) DB::table('firm_subscriptions')
                 ->where('status', 'active')
@@ -213,9 +213,9 @@ class AdminAnalyticsController extends Controller
             $recentApplications = DB::table('applications as a')
                 ->leftJoin('users as u', 'u.id', '=', 'a.student_id')
                 ->leftJoin('jobs as j', 'j.id', '=', 'a.job_id')
-                ->orderByDesc('a.created_at')
+                ->orderByDesc('a.applied_at')
                 ->limit(5)
-                ->get(['a.id', 'u.name as student_name', 'j.title as job_title', 'a.created_at'])
+                ->get(['a.id', 'u.name as student_name', 'j.title as job_title', 'a.applied_at as created_at'])
                 ->map(fn($r) => [
                     'id'           => (int) $r->id,
                     'student_name' => $r->student_name,

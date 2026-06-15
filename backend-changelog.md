@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-06-15 — Moderation: "Incorrect Information" report workflow (admin-reviewed)
+
+Controlled, abuse-resistant workflow for firms to flag incorrect student-profile info. **No automatic penalties/suspensions/hiding/ranking** — every action is admin-driven.
+
+### Database (see db_changes.txt — RUN before deploy)
+- `reported_profiles`: `status` ENUM extended with `awaiting_student`, `warning_issued`; new columns `reported_field`, `description`, `evidence_path`, `admin_remarks`.
+
+### Files Modified
+- `app/Http/Controllers/API/UserController.php` — `reportStudentProfile` now accepts `reported_field`, `description` (required when reason=`incorrect_information`), and optional `evidence` (base64 image/PDF → `storage/reported-evidence`). Duplicate guard relaxed to *open report, same firm+student+reason+field* (different firms/fields tracked independently). **Now creates an admin notification** ("Incorrect Information Reported") via `AdminNotificationService`.
+- `app/Services/Notifications/AdminNotificationService.php` — added `TYPE_PROFILE_REPORT`.
+- `app/Http/Controllers/API/AdminController.php`
+  - `getReportedProfiles` — returns `reporting_firm`, `reported_field`, `description`, `current_value` (live profile value for the flagged field), `evidence_url`, `admin_remarks`; status counts include the new states.
+  - `updateReportStatus` — accepts `dismissed | awaiting_student | warning_issued` (+ legacy `reviewed`/`pending`); writes admin reason to `admin_remarks` (not the reporter's `remarks`); **fires student notifications**: `awaiting_student` → "Profile Review Requested", `warning_issued` → "Warning Issued". Profile stays active in all cases.
+
+### Status flow
+`pending` → `dismissed` | `awaiting_student` | `warning_issued` (any non-pending → reopen to `pending`).
+
+---
+
+## 2026-06-15 — Admin: revenue analytics, dashboard stats, moderation, blog WebP
+
+Additive admin features. **No existing business logic, payment calculations, or blog content structure changed.** No new tables/columns (all referenced tables already exist).
+
+### Files Added
+- `app/Http/Controllers/API/AdminAnalyticsController.php` — read-only, admin-token guarded.
+  - `revenue` (`GET /admin/revenue-analytics?period=&from=&to=`) — metrics (total / premium / wallet / creator commissions / referral payouts / net) + trend series (revenue, premium, wallet). Period keywords `today|week|month|year|custom`; custom uses `from`/`to`. Trend buckets auto-pick hour/day/month granularity and fill gaps with 0. Sources: `firm_subscriptions.amount` (status=active), `wallet_recharges.amount` (status=approved), `creator_payouts.commission_amount`, `referral_payouts.reward_amount` (status approved/paid). Net = (premium+wallet+commission) − referral payouts.
+  - `dashboard` (`GET /admin/dashboard-stats`) — KPI rows (total students, total firms, applications this month, revenue this month, premium firms, wallet recharges this month, pending verifications, unread notifications) + recent activity (firm registrations, premium purchases, applications, wallet recharges).
+- `app/Helpers/ImageHelper.php` — `optimizeToWebp(UploadedFile, $dir, $disk, $quality)`. Pure PHP **GD** (no new composer deps). Reads jpg/jpeg/png/webp, preserves PNG/WebP alpha, re-encodes to WebP at quality **82**. **Graceful fallback**: if GD/WebP is unavailable or the source is unreadable, it stores the original file untouched.
+
+### Files Modified
+- `app/Http/Controllers/API/AdminController.php` — added moderation endpoints `getReportedProfiles` (list + status counts; joins reporter/student users) and `updateReportStatus` (validated `pending|reviewed|dismissed`; stamps `reviewed_by`/`reviewed_at`). Uses existing `reported_profiles` table.
+- `app/Http/Controllers/API/AdminBlogController.php` — `createBlog`/`updateBlog` now route `featured_image` through `ImageHelper::optimizeToWebp(...)` (stored as `.webp`). Upload cap raised 4 MB → **5 MB**; mime allow-list unchanged (jpg/jpeg/png/webp — svg/gif/bmp/tiff/heic still rejected). **Existing blog images are untouched** (conversion applies to new uploads only).
+- `routes/api.php` — added `POST /admin/reported-profiles`, `POST /admin/reported-profiles/{id}/status`, `GET /admin/revenue-analytics`, `GET /admin/dashboard-stats`.
+
+### Database Changes
+None. `reported_profiles` already exists (status ENUM pending/reviewed/dismissed, reviewed_by, reviewed_at). All revenue columns (`firm_subscriptions.amount`, `wallet_recharges.amount`, `creator_payouts.commission_amount`, `referral_payouts.reward_amount`) already present.
+
+### Notes
+- Server must have the PHP **GD** extension with WebP support for conversion; without it uploads still succeed (original stored).
+
+---
+
 ## 2026-06-14 — Platform Settings (dynamic business configuration)
 
 Centralized, cached, admin-editable business values replacing hardcoded constants. **Generic** — future settings drop in with no code. Existing key/value `platform_settings` table + `AdminSettingsController` left **untouched** (this is a separate `system_settings` table).
@@ -1124,3 +1166,90 @@ None — no schema changes, nothing added to db_changes.txt.
 ### Rollback Plan
 - Remove the two routes from `routes/api.php`
 - Remove `getFirms()` and `getStudents()` from `AdminController.php`
+
+## Student Profile — Resume Upload Made Optional (2026-06-15)
+
+### Feature
+Resume upload is now **optional** for students. They can complete their profile, reach `profile_completed = 1`, and apply for jobs/articleship without uploading a resume. Upload remains fully supported — students may upload, replace, view, or remove a resume at any time, and firms continue to see/download resumes for candidates who uploaded one.
+
+#### Modified: `app/Http/Controllers/API/UserController.php` — `updateProfile()`
+- **Removed the mandatory-resume business rule** that returned `"Please upload your resume."` (status `false`) for Semi-Qualified, Qualified, and Articleship→Inter-Both flows when no resume existed/was uploaded. Replaced the block with a comment documenting that resume is optional.
+- **Removed resume from the profile-completion criteria**: dropped the `$resumeExists` variable and the two `&& $resumeExists` conditions in the Articleship (Case A) and Semi-Qualified/Qualified (Case C/D) completion calculations. Preferred-location, SRN, core domain, exposure, attempts, etc. remain required exactly as before.
+- **Kept unchanged**: the `resume_path` validation rule (`nullable|file|mimes:pdf,jpg,jpeg,png|max:5120`) — so when a file IS uploaded its type and size are still validated — and the resume storage logic (`storeAs('resumes', ...)`).
+
+### Validation Rules
+- `resume_path`: unchanged — `nullable|file|mimes:pdf,jpg,jpeg,png|max:5120`. No required rule was ever on the field itself; the requirement lived only in the business-logic block that is now removed.
+
+### Behaviour
+- Resume **not** uploaded → profile saves; completion flag is computed from the remaining (non-resume) criteria.
+- Resume uploaded → type/size validated as before; file stored; firms can view/download it (no change to `FirmDashboardController`/`AdminController` read paths).
+- No change to `registerStudent` (never required a resume) or to the job-apply flow (`JobsController` only reads `resume_path` for display).
+
+### DB Changes
+None — no schema changes, nothing added to db_changes.txt.
+
+### Rollback Plan
+- Restore the mandatory-resume block in `updateProfile()` (the `$resumeRequired` / `$hasExistingResume` check returning `"Please upload your resume."`).
+- Restore the `$resumeExists` variable and re-add `&& $resumeExists` to the Case A and Case C/D completion conditions.
+
+## Firm Verification Notification — Moved From Registration to Profile Completion (2026-06-15)
+
+### Problem
+The admin "new firm verification request" notification was created at **registration** (`registerFirm`). Because `firm_profiles.verification_status` defaults to `pending` for every signup, admins were notified about firms that often never completed their profile or pursued verification — flooding the notification feed (and FCM) with non-actionable items.
+
+### Change
+Notify admins only when a firm is **genuinely ready for review** — i.e. when it first **completes its profile**. There is no separate "submit verification request" endpoint in the system; a completed firm profile is the de-facto verification-submission event (the firm is already `pending` by DB default and appears in the admin pending list, but is only review-ready once its profile is complete).
+
+#### Modified: `app/Http/Controllers/API/FirmController.php`
+- **`registerFirm()`** — **removed** the `AdminNotificationService::firmVerification(...)` call (and the now-unused `$newFirmProfileId` lookup) that fired right after the registration `DB::commit()`. Registration, first login, and account creation now produce **no** admin notification. Email verification to the firm is unchanged.
+- **`firm_profile_update()`** — **added** the `AdminNotificationService::firmVerification($firmName, $firmId)` call after `DB::commit()`, guarded so it fires exactly once when the firm becomes review-ready:
+  - `$isProfileCompleted` is true (same flag already used to set `users.profile_completed`),
+  - `!$wasAlreadyCompleted` — only on the incomplete→complete transition (read from the pre-update `auth_user->profile_completed`), so repeated profile edits never re-notify,
+  - `verification_status === 'pending'` — never re-notify a firm already approved/rejected.
+
+#### Modified: `app/Services/Notifications/AdminNotificationService.php`
+- `firmVerification()` message body updated from "{firm} has registered and is awaiting verification." to "{firm} has completed its profile and is ready for verification review." Title (`'New firm verification request'`), type (`firm_verification`), action URL (`/admin/firms`) and metadata are unchanged.
+
+### Not Changed (verified intact)
+- `AdminNotificationService::create()` still stores the `AdminNotification` (notification center) **and** fans out via `FcmService::sendToAllAdmins()` — so Scenario 4 gets both the center entry and the FCM push, unchanged.
+- `getPendingFirms()` / `approveFirm()` / `rejectFirm()` (admin review workflow) and the firm-side pending/rejected pages — untouched.
+- `AdminNotificationController` (list / unread-count / mark-read) — untouched.
+
+### Known limitation (deliberate, out of scope)
+A firm that is **rejected** and later re-completes/fixes its profile will **not** generate a fresh notification (status is `rejected`, not `pending`). Re-review-after-rejection notifications were not requested; revisit if needed.
+
+### DB Changes
+None — no schema changes, nothing added to `db_changes.txt`.
+
+### Rollback Plan
+- Re-add the `firmVerification(...)` call + `$newFirmProfileId` lookup after the `DB::commit()` in `registerFirm()`.
+- Remove the guarded `firmVerification(...)` block added after `DB::commit()` in `firm_profile_update()`.
+- Revert the `firmVerification()` message body in `AdminNotificationService.php`.
+
+## Registration — City mandatory (student) + Branch disables referral (firm) (2026-06-15)
+
+### Task 1 — City mandatory for student registration
+Previously `registerStudent()` never collected or stored a city (city was only captured later in `updateProfile`). Firm registration already required city; this brings students in line.
+
+#### Modified: `app/Http/Controllers/API/UserController.php` — `registerStudent()`
+- Added `'city' => 'required|string|max:255'` to the validator with a custom message **`'Please select your city.'`** (`city.required`). Registration without a city now returns `{status:false, message:'Please select your city.'}`.
+- The `student_profiles` insert now stores `city` (and `address` = city, mirroring `updateProfile()`), so the student's profile is pre-filled and the existing city-dependent profile-completion logic starts consistent. No completion-logic code changed (it already gates on city).
+
+### Task 2 — Branch firm registration must not participate in referrals
+#### Modified: `app/Http/Controllers/API/FirmController.php` — `registerFirm()`
+- Referral resolution is now skipped for branch registrations: `$referrerId = $isBranch ? null : ReferralHelper::resolveReferrerId(...)`. With `$referrerId` null for branches, **no `referred_by` linkage and no `referral_count` increment** occur, so `ReferralHelper::onFirmPremiumActivated()` later finds no referrer and **never creates a referral payout**. This is the backend enforcement (independent of the frontend disabling the field).
+- Non-branch flow is unchanged — valid codes still link `referred_by` + increment `referral_count`; invalid/self codes are still dropped silently while registration proceeds.
+
+### Tests executed (against dev DB)
+- Student no city → **blocked** with "Please select your city." ✓
+- Student with city → success; `student_profiles.city` stored ✓
+- Firm (non-branch) + valid code → `referred_by` set, `referral_count` +1 ✓
+- Firm (non-branch) + invalid code → registration succeeds, `referred_by` null ✓
+- Firm (branch) + valid code → success, `referred_by` **null** (referral ignored, no count) ✓ — plus a non-branch control proving normal referral still links.
+
+### DB Changes
+None — no schema changes (`student_profiles.city`/`address` columns already exist). Nothing added to `db_changes.txt`.
+
+### Rollback Plan
+- `registerStudent()`: remove the `city` validation rule + custom message and the `city`/`address` keys from the `student_profiles` insert.
+- `registerFirm()`: restore `$referrerId = ReferralHelper::resolveReferrerId(...)` unconditionally (drop the `$isBranch ? null :` guard).

@@ -31,6 +31,7 @@ class AdminNotificationService
     public const TYPE_CREATOR_PAYOUT       = 'creator_payout';
     public const TYPE_CONTACT              = 'contact_submission';
     public const TYPE_SYSTEM_ALERT         = 'system_alert';
+    public const TYPE_PROFILE_REPORT       = 'profile_report';
 
     /**
      * Create an admin notification. Returns the model, or null on failure.
@@ -75,7 +76,7 @@ class AdminNotificationService
         return self::create(
             self::TYPE_FIRM_VERIFICATION,
             'New firm verification request',
-            "{$firmName} has registered and is awaiting verification.",
+            "{$firmName} has completed its profile and is ready for verification review.",
             '/admin/firms',
             ['firm_profile_id' => $firmProfileId, 'firm_name' => $firmName]
         );

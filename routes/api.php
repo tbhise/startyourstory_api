@@ -190,6 +190,14 @@ Route::post('/admin/firms',                [AdminController::class, 'getFirms'])
 Route::post('/admin/students',             [AdminController::class, 'getStudents']);
 Route::get('/admin/students/{id}',         [AdminController::class, 'getStudent']);
 
+// Admin — moderation: reported student profiles
+Route::post('/admin/reported-profiles',            [AdminController::class, 'getReportedProfiles']);
+Route::post('/admin/reported-profiles/{id}/status', [AdminController::class, 'updateReportStatus']);
+
+// Admin — analytics (revenue reporting + dashboard stats)
+Route::get('/admin/revenue-analytics', [\App\Http\Controllers\API\AdminAnalyticsController::class, 'revenue']);
+Route::get('/admin/dashboard-stats',   [\App\Http\Controllers\API\AdminAnalyticsController::class, 'dashboard']);
+
 // Admin — firm manual verification
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
 Route::post('/admin/firms/{id}/approve',   [AdminController::class, 'approveFirm']);

@@ -2157,3 +2157,42 @@ CREATE TABLE `system_setting_audits` (
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `system_setting_audits`;
 -- DROP TABLE IF EXISTS `system_settings`;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-06-15 — Admin: revenue analytics, dashboard, moderation, blog WebP
+-- NO SCHEMA CHANGES REQUIRED. Recorded here for traceability.
+--   • Revenue analytics + dashboard read existing columns only:
+--       firm_subscriptions.amount, wallet_recharges.amount,
+--       creator_payouts.commission_amount, referral_payouts.reward_amount.
+--   • Moderation (Reported Profiles) uses the existing `reported_profiles`
+--     table (status ENUM 'pending','reviewed','dismissed'; reviewed_by; reviewed_at).
+--   • Blog featured images are now optimised to WebP on upload (app code only;
+--     `blogs.featured_image` column reused; existing images untouched).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-06-15 — Moderation: "Incorrect Information" report workflow
+-- Extends the existing reported_profiles table. RUN THIS before deploying the
+-- incorrect-information reporting feature.
+--   • status: add 'awaiting_student' and 'warning_issued' (admin-review flow)
+--   • reported_field : which profile field a firm flagged (Name, City, CA Final…)
+--   • description    : firm's required issue description (incorrect-info reports)
+--   • evidence_path  : optional uploaded screenshot/document (storage/public)
+--   • admin_remarks  : admin's reason on dismiss / warning (kept separate from the
+--                      reporter's own `remarks`)
+-- No student is auto-penalized; every action is admin-driven.
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER TABLE `reported_profiles`
+  MODIFY COLUMN `status` ENUM('pending','reviewed','dismissed','awaiting_student','warning_issued') NOT NULL DEFAULT 'pending',
+  ADD COLUMN `reported_field` VARCHAR(100) NULL AFTER `reason`,
+  ADD COLUMN `description`    TEXT NULL         AFTER `reported_field`,
+  ADD COLUMN `evidence_path`  VARCHAR(255) NULL AFTER `remarks`,
+  ADD COLUMN `admin_remarks`  TEXT NULL         AFTER `evidence_path`;
+
+-- ROLLBACK:
+-- ALTER TABLE `reported_profiles`
+--   DROP COLUMN `admin_remarks`,
+--   DROP COLUMN `evidence_path`,
+--   DROP COLUMN `description`,
+--   DROP COLUMN `reported_field`,
+--   MODIFY COLUMN `status` ENUM('pending','reviewed','dismissed') NOT NULL DEFAULT 'pending';

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\ImageHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -324,7 +325,7 @@ class AdminBlogController extends Controller
             'category_id'      => 'nullable|integer|exists:blog_categories,id',
             'tag_ids'          => 'nullable|array',
             'tag_ids.*'        => 'integer|exists:blog_tags,id',
-            'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096',
+            'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
             'slug'             => 'nullable|string|max:350',
             'topic_id'         => 'nullable|integer|exists:blog_topics,id',
         ]);
@@ -340,8 +341,11 @@ class AdminBlogController extends Controller
 
             $featuredImage = null;
             if ($request->hasFile('featured_image')) {
-                $featuredImage = $request->file('featured_image')
-                    ->store('blog-images/featured', 'public');
+                // Optimise + convert to WebP (falls back to original if GD unavailable).
+                $featuredImage = ImageHelper::optimizeToWebp(
+                    $request->file('featured_image'),
+                    'blog-images/featured'
+                );
             }
 
             $status      = $request->status ?? 'draft';
@@ -413,7 +417,7 @@ class AdminBlogController extends Controller
             'category_id'      => 'nullable|integer|exists:blog_categories,id',
             'tag_ids'          => 'nullable|array',
             'tag_ids.*'        => 'integer|exists:blog_tags,id',
-            'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:4096',
+            'featured_image'   => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
             'slug'             => 'nullable|string|max:350',
             'topic_id'         => 'nullable|integer|exists:blog_topics,id',
         ]);
@@ -451,8 +455,11 @@ class AdminBlogController extends Controller
                 if ($blog->featured_image) {
                     Storage::disk('public')->delete($blog->featured_image);
                 }
-                $data['featured_image'] = $request->file('featured_image')
-                    ->store('blog-images/featured', 'public');
+                // Optimise + convert to WebP (falls back to original if GD unavailable).
+                $data['featured_image'] = ImageHelper::optimizeToWebp(
+                    $request->file('featured_image'),
+                    'blog-images/featured'
+                );
             }
 
             // topic_id sent as empty string means "clear"; filled means "link this topic"

@@ -7,9 +7,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
+use App\Services\Notifications\AdminNotificationService;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
 use App\Helpers\SysCoinHelper;
@@ -25,8 +27,10 @@ class UserController extends Controller
                 'email' => 'required|email|unique:users,email',
                 'mobile' => 'required|unique:users,mobile',
                 'password' => 'required|min:6|max:15',
+                'city' => 'required|string|max:255',
                 'referral_code' => 'nullable|string|max:50',
-
+            ], [
+                'city.required' => 'Please select your city.',
             ]);
             if ($validator->fails()) {
                 return response()->json([
@@ -72,6 +76,12 @@ class UserController extends Controller
                 ->insert([
                     'user_id' => $userId,
                     'looking_for' => $request->looking_for,
+                    // City is captured at registration (mandatory). Mirrors the
+                    // updateProfile() storage (address defaults to the city) so the
+                    // student's profile is pre-filled and profile-completion logic
+                    // (which gates on city) starts from a consistent state.
+                    'city' => $request->city,
+                    'address' => $request->city,
                     'created_at' => now(),
                     'updated_at' => now()
                 ]);
@@ -243,20 +253,10 @@ class UserController extends Controller
                 }
             }
 
-            // 4. Resume required only when the Upload Docs section is shown in the wizard:
-            //    Semi-Qualified, Qualified, or Articleship with Inter-Both status.
-            //    (Mirrors the frontend buildSections() visibility rule — see $needsCoreDept above.)
-            $hasExistingResume = !empty($existingProfile->resume_path ?? null);
-            $resumeRequired    = in_array($lookingForNorm, ['semi-qualified', 'qualified'])
-                || ($lookingForNorm === 'articleship'
-                    && in_array($caStatusNorm, ['inter-both', 'inter both groups passed']));
-            if ($resumeRequired && !$hasExistingResume && !$request->hasFile('resume_path')) {
-                DB::rollBack();
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Please upload your resume.',
-                ]);
-            }
+            // 4. Resume is OPTIONAL. Students may complete their profile and apply
+            //    without uploading a resume. When a file IS provided it is still
+            //    validated for type/size by the `resume_path` rule above and stored
+            //    below — upload/replace/remove remains fully supported.
             // ── End business-logic validation ──────────────────────────────────
 
             $resumePath = null;
@@ -398,9 +398,7 @@ class UserController extends Controller
             $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
 
             $isProfileComplete = false;
-            $resumeExists =
-                $resumePath ||
-                !empty($existingProfile->resume_path ?? null);
+            // Resume is optional — it is intentionally NOT part of the completion criteria.
             $preferredLocationExists =
                 !empty($preferredLocations);
             // Gender is optional in the wizard — do not gate completion on it.
@@ -443,8 +441,7 @@ class UserController extends Controller
                 if (!$skipLocationAndResume) {
                     $isProfileComplete =
                         $isProfileComplete &&
-                        $preferredLocationExists &&
-                        $resumeExists;
+                        $preferredLocationExists;
                 }
 
                 // Inter-Both (Case A) wizard requires exposure, core domain and attempts.
@@ -481,8 +478,7 @@ class UserController extends Controller
                     $basicInfoComplete &&
                     !empty($request->srn) &&
                     // !empty($request->experience_years) &&
-                    $preferredLocationExists &&
-                    $resumeExists;
+                    $preferredLocationExists;
             } elseif ($request->looking_for === 'creator') {
                 $prefCatsArr = $request->has('preferred_categories')
                     ? ($request->preferred_categories ?? [])
@@ -968,9 +964,16 @@ class UserController extends Controller
                 ], 401);
             }
             $validator = Validator::make($request->all(), [
-                'student_id' => 'required|exists:users,id',
-                'reason' => 'required|string|max:100',
-                'remarks' => 'nullable|string|max:1000',
+                'student_id'     => 'required|exists:users,id',
+                'reason'         => 'required|string|max:100',
+                'remarks'        => 'nullable|string|max:1000',
+                // "Incorrect Information" workflow: a specific field + a required
+                // description. These are optional for the other report reasons.
+                'reported_field' => 'nullable|string|max:100',
+                'description'    => 'required_if:reason,incorrect_information|nullable|string|max:2000',
+                'evidence'       => 'nullable|string', // base64 data URL (image or pdf)
+            ], [
+                'description.required_if' => 'Please describe what information is incorrect.',
             ]);
             if ($validator->fails()) {
                 return response()->json([
@@ -978,26 +981,87 @@ class UserController extends Controller
                     'message' => $validator->errors()->first(),
                 ]);
             }
+
+            $isIncorrectInfo = $request->reason === 'incorrect_information';
+            $reportedField   = $isIncorrectInfo ? $request->reported_field : null;
+
+            // Duplicate guard: block only an OPEN report from the SAME firm for the
+            // SAME student + reason + field. This lets different firms report
+            // independently (tracked separately) and lets a firm flag a different
+            // field, while still preventing spammy exact-duplicates.
             $alreadyReported = DB::table('reported_profiles')
                 ->where('student_id', $request->student_id)
                 ->where('reported_by', $user->id)
+                ->where('reason', $request->reason)
+                ->where(function ($q) use ($reportedField) {
+                    $reportedField === null
+                        ? $q->whereNull('reported_field')
+                        : $q->where('reported_field', $reportedField);
+                })
+                ->whereIn('status', ['pending', 'awaiting_student'])
                 ->exists();
             if ($alreadyReported) {
                 return response()->json([
                     'status' => false,
-                    'message' => 'You have already reported this profile.'
+                    'message' => 'You already have an open report for this profile under review.'
                 ]);
             }
-            DB::table('reported_profiles')->insert([
-                'student_id' => $request->student_id,
-                'reported_by' => $user->id,
-                'reason' => $request->reason,
-                'remarks' => $request->remarks,
-                'status' => 'pending',
-                'created_at' => now(),
-                'updated_at' => now(),
+
+            // Optional evidence (screenshot / supporting document) as a base64 data URL.
+            $evidencePath = null;
+            if ($request->filled('evidence')
+                && preg_match('/^data:(image\/(\w+)|application\/pdf);base64,/', $request->evidence, $m)) {
+                $ext     = $m[1] === 'application/pdf' ? 'pdf' : strtolower($m[2]);
+                $allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
+                if (in_array($ext, $allowed, true)) {
+                    $binary = base64_decode(substr($request->evidence, strpos($request->evidence, ',') + 1));
+                    if ($binary !== false) {
+                        $fileName     = 'report_' . time() . '_' . Str::random(6) . '.' . $ext;
+                        Storage::disk('public')->put('reported-evidence/' . $fileName, $binary);
+                        $evidencePath = 'reported-evidence/' . $fileName;
+                    }
+                }
+            }
+
+            $reportId = DB::table('reported_profiles')->insertGetId([
+                'student_id'     => $request->student_id,
+                'reported_by'    => $user->id,
+                'reason'         => $request->reason,
+                'reported_field' => $reportedField,
+                'description'    => $isIncorrectInfo ? $request->description : null,
+                'remarks'        => $request->remarks,
+                'evidence_path'  => $evidencePath,
+                'status'         => 'pending',
+                'created_at'     => now(),
+                'updated_at'     => now(),
             ]);
             DB::commit();
+
+            // Notify admins (non-throwing). Specific copy for incorrect-information.
+            $reporterName = $user->name ?? 'A firm';
+            if ($isIncorrectInfo) {
+                AdminNotificationService::create(
+                    AdminNotificationService::TYPE_PROFILE_REPORT,
+                    'Incorrect Information Reported',
+                    'A firm has reported potentially incorrect information on a student profile.',
+                    '/admin/reported-profiles',
+                    [
+                        'report_id'      => $reportId,
+                        'student_id'     => (int) $request->student_id,
+                        'reported_field' => $reportedField,
+                        'reported_by'    => $reporterName,
+                    ]
+                );
+            } else {
+                AdminNotificationService::create(
+                    AdminNotificationService::TYPE_PROFILE_REPORT,
+                    'Student profile reported',
+                    "{$reporterName} reported a student profile ({$request->reason}).",
+                    '/admin/reported-profiles',
+                    ['report_id' => $reportId, 'student_id' => (int) $request->student_id]
+                );
+            }
+
             return response()->json([
                 'status' => true,
                 'message' => 'Profile reported successfully.'

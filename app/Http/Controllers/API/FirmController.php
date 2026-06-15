@@ -92,11 +92,17 @@ class FirmController extends Controller
 
             // Referral code is optional. Unknown / self-referral codes are dropped
             // silently (the registration form already blocks submitting an invalid code).
-            $referrerId = ReferralHelper::resolveReferrerId(
-                $request->referral_code,
-                $request->email,
-                $request->mobile
-            );
+            // Branch registrations receive internal branch benefits and must NOT
+            // participate in referral rewards — any referral code is ignored for
+            // branches, so no referred_by linkage (and hence no future referral
+            // payout via ReferralHelper::onFirmPremiumActivated) is ever created.
+            $referrerId = $isBranch
+                ? null
+                : ReferralHelper::resolveReferrerId(
+                    $request->referral_code,
+                    $request->email,
+                    $request->mobile
+                );
             $firmPrefix = strtoupper(
                 substr(preg_replace('/[^A-Za-z]/', '', $firmName), 0, 4)
             );
@@ -146,12 +152,11 @@ class FirmController extends Controller
             }
             DB::commit();
 
-            // Admin notification feed — new firm awaiting verification (non-throwing)
-            $newFirmProfileId = (int) DB::table('firm_profiles')->where('user_id', $userId)->value('id');
-            \App\Services\Notifications\AdminNotificationService::firmVerification($firmName, $newFirmProfileId);
-
-
-
+            // NOTE: No admin verification notification is created here. Many firms
+            // register but never complete their profile, so notifying at registration
+            // floods the admin feed. The "new firm verification request" notification
+            // now fires in firm_profile_update() — only when the firm first completes
+            // its profile and is genuinely ready for review.
 
             $user = User::where('id', $userId)->first();
 
@@ -376,6 +381,27 @@ class FirmController extends Controller
                 }
             }
             DB::commit();
+
+            // Admin verification notification (non-throwing) — fires only when the
+            // firm FIRST completes its profile, which is the de-facto "submits
+            // verification request" event in this system (there is no separate
+            // submit-for-review action; a completed profile is what makes a firm
+            // ready for admin review). Guards prevent duplicate/stale notifications:
+            //   • $isProfileCompleted          → firm is actually ready
+            //   • !$wasAlreadyCompleted        → only on the incomplete→complete
+            //                                     transition, never on later edits
+            //   • verification_status pending  → never re-notify an already
+            //                                     approved/rejected firm
+            // create() also fans out to the admin notification center + FCM.
+            $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
+            $verificationStatus  = $firmProfile?->verification_status ?? 'pending';
+            if ($isProfileCompleted && !$wasAlreadyCompleted && $verificationStatus === 'pending') {
+                \App\Services\Notifications\AdminNotificationService::firmVerification(
+                    $request->firm_name ?: ($firmProfile?->firm_name ?? 'A firm'),
+                    (int) $firmId
+                );
+            }
+
             return response()->json([
                 'status' => true,
                 'message' => 'Firm profile updated successfully',

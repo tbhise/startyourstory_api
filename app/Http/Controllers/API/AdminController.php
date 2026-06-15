@@ -14,6 +14,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
+use App\Helpers\NotificationHelper;
 
 class AdminController extends Controller
 {
@@ -1479,6 +1480,191 @@ class AdminController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Admin@getEngagementSummary: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN — Reported Student Profiles (Moderation)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Allowed moderation states for a report.
+     * 'reviewed' is retained for backward compatibility with older records; the
+     * controlled incorrect-information workflow uses pending → dismissed /
+     * awaiting_student / warning_issued.
+     */
+    private const REPORT_STATUSES = ['pending', 'reviewed', 'dismissed', 'awaiting_student', 'warning_issued'];
+
+    /** Human label for the value currently on the student's profile for a reported field. */
+    private function currentFieldValue(object $r): ?string
+    {
+        switch ($r->reported_field) {
+            case 'Name':
+                return $r->student_name;
+            case 'City':
+                return $r->city;
+            case 'Education Details':
+                return $r->qualification;
+            case 'CA Foundation Status':
+            case 'CA Intermediate Status':
+            case 'CA Final Status':
+            case 'Articleship Status':
+                return $r->ca_status;
+            case 'Work Experience':
+                $parts = array_filter([
+                    $r->experience_years !== null && $r->experience_years !== '' ? $r->experience_years . ' yrs' : null,
+                    $r->current_firm_name ?: null,
+                ]);
+                return $parts ? implode(' @ ', $parts) : null;
+            default:
+                return null; // Skills / Other / unmapped — admin uses the profile link.
+        }
+    }
+
+    public function getReportedProfiles(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $status = $request->input('status', 'all');
+
+            $query = DB::table('reported_profiles as rp')
+                ->leftJoin('users as su', 'su.id', '=', 'rp.student_id')
+                ->leftJoin('users as ru', 'ru.id', '=', 'rp.reported_by')
+                ->leftJoin('firm_profiles as fp', 'fp.user_id', '=', 'rp.reported_by')
+                ->leftJoin('student_profiles as sp', 'sp.user_id', '=', 'rp.student_id')
+                ->select(
+                    'rp.id',
+                    'rp.student_id',
+                    'rp.reported_by',
+                    'rp.reason',
+                    'rp.reported_field',
+                    'rp.description',
+                    'rp.remarks',
+                    'rp.evidence_path',
+                    'rp.admin_remarks',
+                    'rp.status',
+                    'rp.created_at',
+                    'rp.updated_at',
+                    'su.name as student_name',
+                    'su.email as student_email',
+                    'ru.name as reporter_name',
+                    'ru.email as reporter_email',
+                    'fp.firm_name as reporting_firm',
+                    'sp.city',
+                    'sp.qualification',
+                    'sp.ca_status',
+                    'sp.experience_years',
+                    'sp.current_firm_name'
+                )
+                ->orderByDesc('rp.created_at');
+
+            if (in_array($status, self::REPORT_STATUSES, true)) {
+                $query->where('rp.status', $status);
+            }
+
+            $reports = $query->get()->map(function ($r) {
+                $r->created_at_formatted = $r->created_at ? date('d M Y h:i A', strtotime($r->created_at)) : null;
+                $r->reporting_firm       = $r->reporting_firm ?: $r->reporter_name;
+                $r->current_value        = $this->currentFieldValue($r);
+                $r->evidence_url         = $r->evidence_path ? url('/storage/' . $r->evidence_path) : null;
+                // Strip the joined helper columns from the payload.
+                unset($r->city, $r->qualification, $r->ca_status, $r->experience_years, $r->current_firm_name, $r->evidence_path);
+                return $r;
+            });
+
+            $counts = DB::table('reported_profiles')
+                ->selectRaw('status, COUNT(*) as count')
+                ->groupBy('status')
+                ->pluck('count', 'status');
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'reports' => $reports,
+                    'counts'  => [
+                        'pending'          => (int) ($counts['pending']          ?? 0),
+                        'awaiting_student' => (int) ($counts['awaiting_student'] ?? 0),
+                        'warning_issued'   => (int) ($counts['warning_issued']   ?? 0),
+                        'dismissed'        => (int) ($counts['dismissed']        ?? 0),
+                        'reviewed'         => (int) ($counts['reviewed']         ?? 0),
+                        'total'            => (int) $counts->sum(),
+                    ],
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin@getReportedProfiles: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * Apply an admin decision to a report. A single status endpoint keeps the
+     * moderation workflow scalable. Every action is admin-driven — no automatic
+     * penalties, suspensions, hiding, or ranking changes are ever applied here.
+     *
+     *   dismissed        → close the case (insufficient/invalid). No student notice.
+     *   awaiting_student → ask the student to review/update. Profile stays active.
+     *   warning_issued   → record a warning + notify the student. No restrictions.
+     */
+    public function updateReportStatus(Request $request, $id)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $validator = Validator::make($request->all(), [
+                'status'  => 'required|in:' . implode(',', self::REPORT_STATUSES),
+                'remarks' => 'nullable|string|max:1000',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+
+            $report = DB::table('reported_profiles')->where('id', $id)->first();
+            if (! $report) return response()->json(['status' => false, 'message' => 'Report not found'], 404);
+
+            $update = [
+                'status'        => $request->status,
+                'reviewed_by'   => $admin->id,
+                'reviewed_at'   => now(),
+                'updated_at'    => now(),
+            ];
+            if ($request->filled('remarks')) {
+                // Admin reasoning is kept separate from the reporter's own remarks.
+                $update['admin_remarks'] = $request->remarks;
+            }
+
+            DB::table('reported_profiles')->where('id', $id)->update($update);
+
+            // Student-facing notifications. These are informational only — the
+            // student's profile remains fully active and unrestricted.
+            $fieldNote = $report->reported_field ? " regarding your \"{$report->reported_field}\"" : '';
+            if ($request->status === 'awaiting_student') {
+                NotificationHelper::create(
+                    (int) $report->student_id,
+                    'Profile Review Requested',
+                    'A firm has reported potentially inaccurate profile information' . $fieldNote .
+                    '. Please review and update your profile if necessary.'
+                );
+            } elseif ($request->status === 'warning_issued') {
+                $reasonNote = $request->filled('remarks') ? ' Note from our team: ' . $request->remarks : '';
+                NotificationHelper::create(
+                    (int) $report->student_id,
+                    'Warning Issued',
+                    'After review, inaccurate information was found on your profile' . $fieldNote .
+                    '. Please correct it to keep your profile accurate.' . $reasonNote
+                );
+            }
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Report updated to ' . str_replace('_', ' ', $request->status) . '.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Admin@updateReportStatus: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

@@ -171,7 +171,7 @@ class FreeContentController extends Controller
                     ->map(fn($d) => [
                         'id'        => $d->id,
                         'file_name' => $d->file_name,
-                        'file_url'  => Storage::url($d->file_path),
+                        'file_url'  => $d->file_path ? asset('storage/' . ltrim($d->file_path, '/')) : null,
                     ]);
 
                 return [
@@ -179,7 +179,11 @@ class FreeContentController extends Controller
                     'brief'         => $r->brief,
                     'delivery_date' => $r->delivery_date,
                     'notes'         => $r->notes,
-                    'attachments'   => $r->attachments ? json_decode($r->attachments, true) : [],
+                    'attachments'   => collect($r->attachments ? json_decode($r->attachments, true) : [])
+                        ->map(fn($a) => [
+                            'name' => $a['name'] ?? '',
+                            'path' => isset($a['path']) && $a['path'] ? asset('storage/' . ltrim($a['path'], '/')) : null,
+                        ])->all(),
                     'status'        => $r->status,
                     'admin_notes'   => $r->admin_notes,
                     'deliverables'  => $deliverables,
@@ -231,7 +235,7 @@ class FreeContentController extends Controller
                     ->map(fn($d) => [
                         'id'        => $d->id,
                         'file_name' => $d->file_name,
-                        'file_url'  => Storage::url($d->file_path),
+                        'file_url'  => $d->file_path ? asset('storage/' . ltrim($d->file_path, '/')) : null,
                     ]);
 
                 return [
@@ -242,7 +246,11 @@ class FreeContentController extends Controller
                     'brief'         => $r->brief,
                     'delivery_date' => $r->delivery_date,
                     'notes'         => $r->notes,
-                    'attachments'   => $r->attachments ? json_decode($r->attachments, true) : [],
+                    'attachments'   => collect($r->attachments ? json_decode($r->attachments, true) : [])
+                        ->map(fn($a) => [
+                            'name' => $a['name'] ?? '',
+                            'path' => isset($a['path']) && $a['path'] ? asset('storage/' . ltrim($a['path'], '/')) : null,
+                        ])->all(),
                     'status'        => $r->status,
                     'admin_notes'   => $r->admin_notes,
                     'deliverables'  => $deliverables,
@@ -378,7 +386,7 @@ class FreeContentController extends Controller
                 'data'    => [
                     'id'        => $deliverableId,
                     'file_name' => $fileName,
-                    'file_url'  => Storage::url($path),
+                    'file_url'  => $path ? asset('storage/' . ltrim($path, '/')) : null,
                 ],
             ]);
         } catch (\Exception $e) {

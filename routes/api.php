@@ -189,6 +189,7 @@ Route::post('/master/companies',           [MasterController::class, 'getCompani
 Route::post('/admin/firms',                [AdminController::class, 'getFirms']);
 Route::post('/admin/students',             [AdminController::class, 'getStudents']);
 Route::get('/admin/students/{id}',         [AdminController::class, 'getStudent']);
+Route::get('/admin/students/{id}/file',    [AdminController::class, 'downloadStudentFile']);
 
 // Admin — moderation: reported student profiles
 Route::post('/admin/reported-profiles',            [AdminController::class, 'getReportedProfiles']);

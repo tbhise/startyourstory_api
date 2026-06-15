@@ -1933,8 +1933,8 @@ ALTER TABLE `users`
 
 -- 1) Coin balance per user (mirrors student_wallets)
 CREATE TABLE `sys_coin_accounts` (
-  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `user_id`         BIGINT UNSIGNED NOT NULL,
+  `id`              BIGINT  NOT NULL AUTO_INCREMENT,
+  `user_id`         BIGINT  NOT NULL,
   `available_coins` INT NOT NULL DEFAULT 0,
   `hold_coins`      INT NOT NULL DEFAULT 0,
   `consumed_coins`  INT NOT NULL DEFAULT 0,
@@ -1949,14 +1949,14 @@ CREATE TABLE `sys_coin_accounts` (
 --    WELCOME_BONUS, REFERRAL_BONUS, APPLICATION_HOLD, APPLICATION_RELEASE,
 --    APPLICATION_CONSUMED, ADMIN_CREDIT, BLOG_REWARD
 CREATE TABLE `sys_coin_transactions` (
-  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `user_id`        BIGINT UNSIGNED NOT NULL,
+  `id`             BIGINT  NOT NULL AUTO_INCREMENT,
+  `user_id`        BIGINT  NOT NULL,
   `amount`         INT NOT NULL,
   `type`           VARCHAR(40) NOT NULL,
   `reference_type` VARCHAR(40) NULL DEFAULT NULL,
-  `reference_id`   BIGINT UNSIGNED NULL DEFAULT NULL,
-  `application_id` BIGINT UNSIGNED NULL DEFAULT NULL,
-  `job_id`         BIGINT UNSIGNED NULL DEFAULT NULL,
+  `reference_id`   BIGINT  NULL DEFAULT NULL,
+  `application_id` BIGINT  NULL DEFAULT NULL,
+  `job_id`         BIGINT  NULL DEFAULT NULL,
   `description`    VARCHAR(255) NULL DEFAULT NULL,
   `balance_before` INT NOT NULL DEFAULT 0,
   `balance_after`  INT NOT NULL DEFAULT 0,
@@ -1969,10 +1969,10 @@ CREATE TABLE `sys_coin_transactions` (
 -- 3) Coin holds per application (mirrors application_holds). status ∈
 --    held, consumed, released, expired
 CREATE TABLE `sys_coin_holds` (
-  `id`                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `user_id`               BIGINT UNSIGNED NOT NULL,
-  `application_id`        BIGINT UNSIGNED NOT NULL,
-  `job_id`                BIGINT UNSIGNED NULL DEFAULT NULL,
+  `id`                    BIGINT  NOT NULL AUTO_INCREMENT,
+  `user_id`               BIGINT  NOT NULL,
+  `application_id`        BIGINT  NOT NULL,
+  `job_id`                BIGINT  NULL DEFAULT NULL,
   `amount`                INT NOT NULL,
   `status`                VARCHAR(20) NOT NULL DEFAULT 'held',
   `held_at`               TIMESTAMP NULL DEFAULT NULL,
@@ -1980,8 +1980,8 @@ CREATE TABLE `sys_coin_holds` (
   `consumed_at`           TIMESTAMP NULL DEFAULT NULL,
   `released_at`           TIMESTAMP NULL DEFAULT NULL,
   `release_reason`        VARCHAR(40) NULL DEFAULT NULL,
-  `hold_transaction_id`   BIGINT UNSIGNED NULL DEFAULT NULL,
-  `settle_transaction_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+  `hold_transaction_id`   BIGINT  NULL DEFAULT NULL,
+  `settle_transaction_id` BIGINT  NULL DEFAULT NULL,
   `created_at`            TIMESTAMP NULL DEFAULT NULL,
   `updated_at`            TIMESTAMP NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
@@ -1993,14 +1993,14 @@ CREATE TABLE `sys_coin_holds` (
 --    externally — no wallet credit). status ∈ pending, approved, paid.
 --    UNIQUE(referred_user_id) => one payout per referred firm (idempotency).
 CREATE TABLE `referral_payouts` (
-  `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `referrer_user_id`     BIGINT UNSIGNED NOT NULL,
-  `referred_user_id`     BIGINT UNSIGNED NOT NULL,
-  `firm_subscription_id` BIGINT UNSIGNED NULL DEFAULT NULL,
+  `id`                   BIGINT  NOT NULL AUTO_INCREMENT,
+  `referrer_user_id`     BIGINT  NOT NULL,
+  `referred_user_id`     BIGINT  NOT NULL,
+  `firm_subscription_id` BIGINT  NULL DEFAULT NULL,
   `plan`                 VARCHAR(40) NULL DEFAULT NULL,
   `reward_amount`        DECIMAL(10,2) NOT NULL DEFAULT 2000.00,
   `status`               VARCHAR(20) NOT NULL DEFAULT 'pending',
-  `approved_by`          BIGINT UNSIGNED NULL DEFAULT NULL,
+  `approved_by`          BIGINT  NULL DEFAULT NULL,
   `approved_at`          TIMESTAMP NULL DEFAULT NULL,
   `paid_at`              TIMESTAMP NULL DEFAULT NULL,
   `paid_reference`       VARCHAR(120) NULL DEFAULT NULL,
@@ -2067,7 +2067,7 @@ ALTER TABLE `applications`
 -- SQL equivalent below for manual environments.
 
 CREATE TABLE `admin_notifications` (
-  `id`         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id`         BIGINT  NOT NULL AUTO_INCREMENT,
   `type`       VARCHAR(50)  NOT NULL COMMENT 'firm_verification | payment_verification | creator_payout | contact_submission | system_alert | future',
   `title`      VARCHAR(255) NOT NULL,
   `message`    TEXT         NOT NULL,
@@ -2096,8 +2096,8 @@ CREATE TABLE `admin_notifications` (
 -- (php artisan migrate --path=database/migrations/2026_06_14_000002_create_admin_fcm_tokens_table.php).
 
 CREATE TABLE `admin_fcm_tokens` (
-  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `admin_user_id`  BIGINT UNSIGNED NOT NULL,
+  `id`             BIGINT  NOT NULL AUTO_INCREMENT,
+  `admin_user_id`  BIGINT  NOT NULL,
   `token`          VARCHAR(512) NOT NULL,
   `device_info`    VARCHAR(255) NULL COMMENT 'user-agent / platform label',
   `last_active_at` DATETIME NULL,
@@ -2125,7 +2125,7 @@ CREATE TABLE `admin_fcm_tokens` (
 --        application_fee_amount=49, minimum_wallet_recharge=150.
 
 CREATE TABLE `system_settings` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id`            BIGINT  NOT NULL AUTO_INCREMENT,
   `setting_key`   VARCHAR(100) NOT NULL,
   `setting_value` TEXT NULL,
   `setting_type`  VARCHAR(20)  NOT NULL DEFAULT 'string' COMMENT 'string|integer|decimal|boolean',
@@ -2142,11 +2142,11 @@ CREATE TABLE `system_settings` (
 
 -- Audit log for every setting change (no prior activity-log infra existed).
 CREATE TABLE `system_setting_audits` (
-  `id`            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id`            BIGINT  NOT NULL AUTO_INCREMENT,
   `setting_key`   VARCHAR(100) NOT NULL,
   `old_value`     TEXT NULL,
   `new_value`     TEXT NULL,
-  `admin_user_id` BIGINT UNSIGNED NULL,
+  `admin_user_id` BIGINT  NULL,
   `admin_name`    VARCHAR(255) NULL,
   `created_at`    TIMESTAMP NULL,
   `updated_at`    TIMESTAMP NULL,

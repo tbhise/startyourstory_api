@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-16 — Fixes: free-content file URLs, admin resume access, optional job salary
+
+Three fixes. No breaking changes; permissions/architecture preserved.
+
+### Issue 1 — Free content deliverable/attachment URLs (frontend crash root cause)
+- **Root cause:** `FreeContentController` built file links with `Storage::url($path)`, which returns a **root-relative** `/storage/...` path (confirmed via tinker: `Storage::url('free-content-deliverables/x.jpg')` → `/storage/free-content-deliverables/x.jpg`). The frontend `<a href>` then resolved it against the **frontend** origin (`https://rc.startyourstory.in/storage/...jpg`), hitting the SPA catch-all and throwing TanStack Router "Invariant failed". The working paid-engagement flow uses `asset('storage/'.$path)` (absolute, API-domain).
+- **Fix — `app/Http/Controllers/API/FreeContentController.php`:** deliverable `file_url` (3 spots: firm list, admin list, admin-upload response) and firm-request `attachments[].path` (firm + admin list) now use `asset('storage/'.ltrim($path,'/'))` — absolute API-domain URLs that serve the actual file. Null-safe (returns `null` when no path). Response shape unchanged (`attachments` stays `{name, path}`).
+
+### Issue 2 — Admin cannot view/download student resume
+- **Root cause:** the streaming `downloadFile` endpoint that reads from `storage_path('app/public/...')` is locked behind `FirmVerifiedMiddleware` (firm-only). Admin instead opened a direct public `/storage/resumes/...` link, which depends on the `public/storage` symlink and diverges from the firm path — failing when the symlink/path isn't served.
+- **Fix — new admin-token-guarded endpoint:** `AdminController@downloadStudentFile` + `GET /admin/students/{id}/file?type=resume|marksheet[&download=1]`. Validated via `adminFromRequest` (admin_token cookie), streams from `storage_path('app/public/'.$path)` (no symlink dependency, like the firm flow). Inline view by default; `?download=1` forces download. Students/firms are untouched.
+- **Security verified:** no token → 401; invalid type → 422; missing student/file → 404; valid admin → 200 (inline `application/pdf` view + `Content-Disposition: attachment` download).
+
+### Issue 3 — Job salary now optional
+- **Root cause:** `'salary' => 'required|string|max:255'` in `FirmController@createJob` and `@updateJob`.
+- **Fix — `app/Http/Controllers/API/FirmController.php`:** validation → `'salary' => 'nullable|string|max:255'` (both methods); storage → `'salary' => $request->input('salary') ?: null` (stores NULL when blank, for consistent "Not Disclosed" display).
+- **DB:** none required — `jobs.salary` is already `varchar(100) NULL` (verified). Existing salary values are preserved on edit.
+
+### Files Modified
+- `app/Http/Controllers/API/FreeContentController.php`, `app/Http/Controllers/API/AdminController.php`, `app/Http/Controllers/API/FirmController.php`, `routes/api.php`.
+
+### APIs Modified / Added
+- `GET /admin/students/{id}/file` (new, admin_token). `getMyRequests`/`getAdminRequests`/`adminUploadDeliverable` (free content) now return absolute file URLs. `createJob`/`updateJob` salary optional.
+
+---
+
 ## 2026-06-15 — Fix: AdminAnalytics@dashboard crash on non-existent `applications.created_at`
 
 Bugfix. The new admin dashboard-stats endpoint threw `SQLSTATE[42S22] Unknown column 'created_at'` because the `applications` table has no `created_at` column — it tracks creation via `applied_at`.

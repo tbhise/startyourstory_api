@@ -1246,6 +1246,50 @@ class AdminController extends Controller
     // ADMIN — Creator Marketplace Payments
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Stream a student's resume / marksheet for an authenticated admin.
+     *
+     * Reads the file directly from the public disk's filesystem path (the same
+     * mechanism the firm-side downloadFile uses), so it works regardless of the
+     * `public/storage` symlink. Admin-token guarded; students/firms are unaffected
+     * (they keep their existing flows). Supports inline view (default) or forced
+     * download via `?download=1`.
+     */
+    public function downloadStudentFile(Request $request, $id)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $type = $request->query('type', 'resume');
+            if (! in_array($type, ['resume', 'marksheet'], true)) {
+                return response()->json(['status' => false, 'message' => 'Invalid file type'], 422);
+            }
+
+            $student = DB::table('student_profiles')->where('user_id', $id)->first();
+            if (! $student) {
+                return response()->json(['status' => false, 'message' => 'Student not found'], 404);
+            }
+
+            $path = $type === 'resume' ? $student->resume_path : $student->marksheet_path;
+            if (! $path) {
+                return response()->json(['status' => false, 'message' => 'No ' . $type . ' uploaded'], 404);
+            }
+
+            $fullPath = storage_path('app/public/' . ltrim($path, '/'));
+            if (! file_exists($fullPath)) {
+                return response()->json(['status' => false, 'message' => ucfirst($type) . ' file not found'], 404);
+            }
+
+            return $request->boolean('download')
+                ? response()->download($fullPath)
+                : response()->file($fullPath);
+        } catch (\Exception $e) {
+            Log::error('Admin downloadStudentFile error', ['msg' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Something went wrong'], 500);
+        }
+    }
+
     private function adminFromRequest(Request $request): ?object
     {
         $token = $request->cookie('admin_token');

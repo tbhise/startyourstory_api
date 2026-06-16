@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\AdminActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -70,6 +71,8 @@ class AdminSettingsController extends Controller
             ['key' => $key],
             ['value' => $value, 'updated_by' => $admin->id, 'updated_at' => now()]
         );
+
+        AdminActivityLogger::log($admin, AdminActivityLogger::PLATFORM_SETTINGS_UPDATED, 'platform_setting', $key, "Updated platform setting '{$key}' to '{$value}'.", $request);
 
         return response()->json(['status' => true, 'message' => 'Setting updated.']);
     }

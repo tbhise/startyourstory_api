@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\AdminActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -188,6 +189,9 @@ class AdminPayoutsController extends Controller
             }
 
             DB::commit();
+
+            AdminActivityLogger::log($admin, AdminActivityLogger::CREATOR_PAYOUT_PAID, 'creator_payout', $id, "Marked creator payout #{$id} as paid.", $request);
+
             return response()->json(['status' => true, 'message' => 'Payout marked as paid. Project completed.']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -257,6 +261,9 @@ class AdminPayoutsController extends Controller
             ]);
 
             DB::commit();
+
+            AdminActivityLogger::log($admin, AdminActivityLogger::CREATOR_PAYOUT_FAILED, 'creator_payout', $id, "Marked creator payout #{$id} as failed.", $request);
+
             return response()->json(['status' => true, 'message' => 'Payout marked as failed.']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -422,6 +429,8 @@ class AdminPayoutsController extends Controller
                 $queued++;
             }
 
+            AdminActivityLogger::log($admin, AdminActivityLogger::CREATOR_PAYOUTS_FLUSHED, 'creator_payout', null, "Flushed/queued creator payouts for approved engagements ({$queued} queued).", $request);
+
             return response()->json([
                 'status'  => true,
                 'message' => $queued > 0
@@ -475,6 +484,9 @@ class AdminPayoutsController extends Controller
                 'updated_by' => $admin->id,
                 'updated_at' => now(),
             ]);
+
+        $rate = $request->commission_percentage;
+        AdminActivityLogger::log($admin, AdminActivityLogger::PLATFORM_SETTINGS_UPDATED, 'platform_setting', 'commission_rate', "Updated platform commission rate to {$rate}%.", $request);
 
         return response()->json(['status' => true, 'message' => 'Commission rate updated.']);
     }

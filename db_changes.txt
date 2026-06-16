@@ -2196,3 +2196,64 @@ ALTER TABLE `reported_profiles`
 --   DROP COLUMN `description`,
 --   DROP COLUMN `reported_field`,
 --   MODIFY COLUMN `status` ENUM('pending','reviewed','dismissed') NOT NULL DEFAULT 'pending';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-06-16 — Feature: Admin-managed manual payment destination details
+-- Replaces the previously-hardcoded Premium Subscription manual-payment
+-- destination (bank/UPI/QR) with admin-editable settings. Reuses the existing
+-- `system_settings` framework — NO new table. Seeds the 5 text fields with the
+-- current hardcoded values so behaviour is preserved on day one. The QR image is
+-- stored as a path (public disk) and managed via the upload endpoint, so its row
+-- is is_editable = 0. Idempotent: only inserts rows that do not already exist.
+-- Does NOT touch PhonePe, plans, pricing, branch discount, or subscription logic.
+-- ─────────────────────────────────────────────────────────────────────────────
+INSERT INTO `system_settings`
+  (`setting_key`, `setting_value`, `setting_type`, `title`, `description`, `category`, `is_editable`, `created_at`, `updated_at`)
+SELECT * FROM (
+  SELECT 'payment_account_holder' AS `setting_key`, 'MR. RITESH CHANDAK' AS `setting_value`, 'string' AS `setting_type`, 'Account Holder Name' AS `title`, 'Name on the bank account that receives manual payments.' AS `description`, 'payment' AS `category`, 1 AS `is_editable`, NOW() AS `created_at`, NOW() AS `updated_at`
+  UNION ALL SELECT 'payment_bank_name', 'Bank of Baroda', 'string', 'Bank Name', 'Bank where the receiving account is held.', 'payment', 1, NOW(), NOW()
+  UNION ALL SELECT 'payment_account_number', '97980100019171', 'string', 'Account Number', 'Receiving bank account number.', 'payment', 1, NOW(), NOW()
+  UNION ALL SELECT 'payment_ifsc', 'BARBODBMURU', 'string', 'IFSC Code', 'IFSC code of the receiving bank branch.', 'payment', 1, NOW(), NOW()
+  UNION ALL SELECT 'payment_upi_id', '9156235503@ybl', 'string', 'UPI ID', 'UPI ID shown to firms for manual UPI payments.', 'payment', 1, NOW(), NOW()
+  UNION ALL SELECT 'payment_qr_code', '', 'string', 'Payment QR Code', 'QR code image for manual UPI payments (optional).', 'payment', 0, NOW(), NOW()
+) AS `seed`
+WHERE NOT EXISTS (
+  SELECT 1 FROM `system_settings` s WHERE s.`setting_key` = `seed`.`setting_key`
+);
+
+-- ROLLBACK:
+-- DELETE FROM `system_settings` WHERE `setting_key` IN
+--   ('payment_account_holder','payment_bank_name','payment_account_number',
+--    'payment_ifsc','payment_upi_id','payment_qr_code');
+-- DELETE FROM `system_setting_audits` WHERE `setting_key` IN
+--   ('payment_account_holder','payment_bank_name','payment_account_number',
+--    'payment_ifsc','payment_upi_id','payment_qr_code');
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-06-16 — Feature: Admin Activity Logging (audit trail)
+-- Records only IMPORTANT admin WRITE actions (approvals, rejections, status /
+-- permission / money changes, blog publish, settings changes, admin-user mgmt).
+-- NEVER logs page views, list/read, search, filter, pagination or navigation.
+-- Append-only: there is NO update/delete API for these rows (read + filter only).
+-- The table grows indefinitely — indexed for the admin filter UI.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `admin_activity_logs` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `admin_id`    BIGINT UNSIGNED NULL COMMENT 'admin_users.id — no FK by design',
+  `admin_name`  VARCHAR(255) NULL,
+  `action_type` VARCHAR(64)  NOT NULL COMMENT 'e.g. firm_approved, payment_approved',
+  `entity_type` VARCHAR(64)  NOT NULL COMMENT 'e.g. firm, premium_request, blog',
+  `entity_id`   VARCHAR(64)  NULL,
+  `description` TEXT NULL,
+  `ip_address`  VARCHAR(45)  NULL,
+  `user_agent`  VARCHAR(512) NULL,
+  `created_at`  TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_aal_admin`       (`admin_id`),
+  KEY `idx_aal_action`      (`action_type`),
+  KEY `idx_aal_entity_type` (`entity_type`),
+  KEY `idx_aal_created`     (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `admin_activity_logs`;

@@ -28,6 +28,7 @@ use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
 use App\Http\Controllers\API\PublicController;
 use App\Http\Controllers\API\AdminSettingsController;
+use App\Http\Controllers\API\PaymentSettingsController;
 use App\Http\Controllers\API\AdminUserController;
 use App\Http\Controllers\API\SessionController;
 use App\Http\Controllers\API\FreeContentController;
@@ -41,6 +42,8 @@ use App\Http\Controllers\API\AdminReferralController;
 Route::post('/contact-submission',    [PublicController::class, 'submitContact'])->middleware('throttle:contact');
 Route::post('/newsletter/subscribe',  [PublicController::class, 'subscribeNewsletter'])->middleware('throttle:contact');
 Route::get('/platform-settings',      [AdminSettingsController::class, 'getPublicSettings']);
+// Public — admin-managed manual payment destination details (bank/UPI/QR).
+Route::get('/payments/instructions',  [PaymentSettingsController::class, 'instructions']);
 
 // Public blog listing (published blogs only)
 Route::get('/blogs/public',            [BlogController::class, 'getPublishedBlogs']);
@@ -174,6 +177,14 @@ Route::delete('/admin/fcm/token', [\App\Http\Controllers\API\AdminNotificationCo
 Route::get('/admin/system-settings',         [\App\Http\Controllers\API\AdminSystemSettingController::class, 'index']);
 Route::get('/admin/system-settings/audit',   [\App\Http\Controllers\API\AdminSystemSettingController::class, 'audit']);
 Route::post('/admin/system-settings/{key}',  [\App\Http\Controllers\API\AdminSystemSettingController::class, 'update']);
+
+// Admin — Payment Settings QR image (text fields use the system-settings update route above)
+Route::post('/admin/payment-settings/qr',    [PaymentSettingsController::class, 'uploadQr']);
+Route::delete('/admin/payment-settings/qr',  [PaymentSettingsController::class, 'deleteQr']);
+
+// Admin — Activity Logs (audit trail). READ-ONLY: no store/update/delete by design.
+Route::get('/admin/activity-logs',          [\App\Http\Controllers\API\AdminActivityLogController::class, 'index']);
+Route::get('/admin/activity-logs/filters',  [\App\Http\Controllers\API\AdminActivityLogController::class, 'filters']);
 
 // Admin — admin user management (CRUD)
 Route::get('/admin/users',                        [AdminUserController::class, 'index']);

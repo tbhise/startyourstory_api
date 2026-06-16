@@ -22,7 +22,21 @@ class SystemSettingsSeeder extends Seeder
             ['free_applications_count', '3', 'integer', 'Free Applications Count', 'Number of free job applications a student gets before fees apply.', 'application'],
             ['application_fee_amount', '49', 'integer', 'Application Fee Amount', 'Wallet fee (₹) charged per job application beyond the free quota.', 'application'],
             ['minimum_wallet_recharge', '150', 'integer', 'Minimum Wallet Recharge Amount', 'Smallest allowed wallet recharge amount (₹).', 'wallet'],
+
+            // Manual payment destination details (Premium Subscription page). Seeded
+            // with the previously-hardcoded values so existing behaviour is preserved.
+            ['payment_account_holder', 'MR. RITESH CHANDAK', 'string', 'Account Holder Name', 'Name on the bank account that receives manual payments.', 'payment'],
+            ['payment_bank_name', 'Bank of Baroda', 'string', 'Bank Name', 'Bank where the receiving account is held.', 'payment'],
+            ['payment_account_number', '97980100019171', 'string', 'Account Number', 'Receiving bank account number.', 'payment'],
+            ['payment_ifsc', 'BARBODBMURU', 'string', 'IFSC Code', 'IFSC code of the receiving bank branch.', 'payment'],
+            ['payment_upi_id', '9156235503@ybl', 'string', 'UPI ID', 'UPI ID shown to firms for manual UPI payments.', 'payment'],
+            // QR image path (relative, on the public disk). Managed via the upload
+            // endpoint, NOT the generic text editor — hence is_editable = false.
+            ['payment_qr_code', '', 'string', 'Payment QR Code', 'QR code image for manual UPI payments (optional).', 'payment'],
         ];
+
+        // Settings managed by a dedicated uploader rather than the generic text editor.
+        $nonEditable = ['payment_qr_code'];
 
         foreach ($settings as [$key, $value, $type, $title, $desc, $category]) {
             $exists = DB::table('system_settings')->where('setting_key', $key)->exists();
@@ -35,7 +49,7 @@ class SystemSettingsSeeder extends Seeder
                         'title'        => $title,
                         'description'  => $desc,
                         'category'     => $category,
-                        'is_editable'  => true,
+                        'is_editable'  => !in_array($key, $nonEditable, true),
                         'updated_at'   => now(),
                     ],
                     // Only set the value (and created_at) on first insert — never

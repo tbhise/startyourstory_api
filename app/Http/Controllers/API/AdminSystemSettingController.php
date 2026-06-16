@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\SystemSetting;
+use App\Services\AdminActivityLogger;
 use App\Services\SystemSettingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -98,6 +99,9 @@ class AdminSystemSettingController extends Controller
             }
 
             $newValue = SystemSettingService::set($key, $request->input('value'), $admin);
+
+            $isPayment = str_starts_with($key, 'payment_');
+            AdminActivityLogger::log($admin, $isPayment ? AdminActivityLogger::PAYMENT_SETTINGS_UPDATED : AdminActivityLogger::PLATFORM_SETTINGS_UPDATED, 'system_setting', $key, "Updated system setting '{$key}'.", $request);
 
             return response()->json([
                 'status'  => true,

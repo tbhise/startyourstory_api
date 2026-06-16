@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Storage;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
 use App\Helpers\NotificationHelper;
+use App\Services\AdminActivityLogger;
 
 class AdminController extends Controller
 {
@@ -315,6 +316,16 @@ class AdminController extends Controller
                 DB::table('firm_subscriptions')
                 ->where('id', $subscriptionId)
                 ->first();
+
+            AdminActivityLogger::log(
+                $this->adminFromRequest($request),
+                $isPremiumPlan ? AdminActivityLogger::FIRM_PREMIUM_CHANGED : AdminActivityLogger::SUBSCRIPTION_CREATED,
+                'firm',
+                $request->firm_id,
+                'Set subscription for ' . ($firm->firm_name ?? ('firm #' . $request->firm_id)) . " to plan '{$request->plan}' (status {$request->status}).",
+                $request
+            );
+
             return response()->json([
                 'status' => true,
                 'message' => 'Subscription added successfully',
@@ -723,6 +734,16 @@ class AdminController extends Controller
                 ->where('id', $premiumRequest->id)
                 ->first();
             DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::SUBSCRIPTION_APPROVED,
+                'premium_request',
+                $premiumRequest->id,
+                'Approved premium subscription payment for ' . ($premiumRequest->firm_name ?? ('firm #' . $premiumRequest->firm_id)) . ' (' . $premiumRequest->plan . ').',
+                $request
+            );
+
             return response()->json([
                 'status' => true,
                 'message' => 'Premium request approved successfully',
@@ -823,6 +844,16 @@ class AdminController extends Controller
             }
 
             DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::FIRM_APPROVED,
+                'firm',
+                $firmId,
+                'Approved firm registration for ' . ($firm->firm_name ?? ('firm #' . $firmId)) . '.',
+                $request
+            );
+
             return response()->json(['status' => true, 'message' => 'Firm approved successfully']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -868,6 +899,16 @@ class AdminController extends Controller
             }
 
             DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::FIRM_REJECTED,
+                'firm',
+                $firmId,
+                'Rejected firm registration for ' . ($firm->firm_name ?? ('firm #' . $firmId)) . '. Reason: ' . $request->reason,
+                $request
+            );
+
             return response()->json(['status' => true, 'message' => 'Firm rejected successfully']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1212,6 +1253,15 @@ class AdminController extends Controller
         | Response
         |--------------------------------------------------------------------------
         */
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::SUBSCRIPTION_REJECTED,
+                'premium_request',
+                $premiumRequest->id,
+                'Rejected premium subscription payment for ' . ($premiumRequest->firm_name ?? ('firm #' . $premiumRequest->firm_id)) . '.',
+                $request
+            );
+
             return response()->json([
                 'status' => true,
                 'message' =>
@@ -1400,6 +1450,16 @@ class AdminController extends Controller
             }
 
             DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::CREATOR_PAYMENT_APPROVED,
+                'creator_payment',
+                $paymentId,
+                'Approved creator marketplace payment #' . $paymentId . ' (₹' . $payment->amount . ') — engagement #' . $payment->engagement_id . ' is now active.',
+                $request
+            );
+
             return response()->json(['status' => true, 'message' => 'Payment approved. Project is now active.']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1465,6 +1525,16 @@ class AdminController extends Controller
             }
 
             DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::CREATOR_PAYMENT_REJECTED,
+                'creator_payment',
+                $paymentId,
+                'Rejected creator marketplace payment #' . $paymentId . ' — engagement #' . $payment->engagement_id . '. Reason: ' . $request->remarks,
+                $request
+            );
+
             return response()->json(['status' => true, 'message' => 'Payment rejected. Firm can resubmit proof.']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -1702,6 +1772,21 @@ class AdminController extends Controller
                     '. Please correct it to keep your profile accurate.' . $reasonNote
                 );
             }
+
+            $reportAction = match ($request->status) {
+                'dismissed'      => AdminActivityLogger::REPORT_DISMISSED,
+                'warning_issued' => AdminActivityLogger::WARNING_ISSUED,
+                default          => AdminActivityLogger::REPORT_REVIEWED,
+            };
+            AdminActivityLogger::log(
+                $admin,
+                $reportAction,
+                'reported_profile',
+                $id,
+                'Moderation: report #' . $id . ' (student #' . $report->student_id . ') set to ' . str_replace('_', ' ', $request->status) . '.' .
+                    ($request->filled('remarks') ? ' Remarks: ' . $request->remarks : ''),
+                $request
+            );
 
             return response()->json([
                 'status'  => true,

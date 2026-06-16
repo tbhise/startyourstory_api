@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use App\Services\AdminActivityLogger;
 
 class AdminUserController extends Controller
 {
@@ -126,6 +127,10 @@ class AdminUserController extends Controller
 
             DB::commit();
 
+            $name  = trim($request->name);
+            $email = strtolower(trim($request->email));
+            AdminActivityLogger::log($admin, AdminActivityLogger::ADMIN_CREATED, 'admin_user', $id, "Created admin user '{$name}' ({$email}).", $request);
+
             return response()->json([
                 'status'  => true,
                 'message' => 'Admin user created successfully.',
@@ -212,6 +217,8 @@ class AdminUserController extends Controller
 
             DB::commit();
 
+            AdminActivityLogger::log($admin, AdminActivityLogger::ADMIN_UPDATED, 'admin_user', $id, "Updated admin user #{$id}.", $request);
+
             return response()->json([
                 'status'  => true,
                 'message' => 'Admin user updated successfully.',
@@ -256,6 +263,8 @@ class AdminUserController extends Controller
             DB::table('admin_users')->where('id', $id)->delete();
 
             DB::commit();
+
+            AdminActivityLogger::log($admin, AdminActivityLogger::ADMIN_DELETED, 'admin_user', $id, "Deleted admin user #{$id}.", $request);
 
             return response()->json([
                 'status'  => true,
@@ -307,6 +316,8 @@ class AdminUserController extends Controller
             ]);
 
             $updated = DB::table('admin_users')->where('id', $id)->first();
+
+            AdminActivityLogger::log($admin, $newActive ? AdminActivityLogger::ADMIN_ENABLED : AdminActivityLogger::ADMIN_DISABLED, 'admin_user', $id, ($newActive ? "Enabled" : "Disabled")." admin user #{$id}.", $request);
 
             return response()->json([
                 'status'  => true,

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\NotificationHelper;
+use App\Services\AdminActivityLogger;
 
 class AdminReferralController extends Controller
 {
@@ -112,6 +113,8 @@ class AdminReferralController extends Controller
                     'updated_at'  => now(),
                 ]);
 
+            AdminActivityLogger::log($admin, AdminActivityLogger::REFERRAL_PAYOUT_APPROVED, 'referral_payout', $id, "Approved referral payout #{$id} (₹{$payout->reward_amount}).", $request);
+
             return response()->json(['status' => true, 'message' => 'Payout approved']);
         } catch (\Exception $e) {
             Log::error('AdminReferralController@approvePayout: ' . $e->getMessage());
@@ -156,6 +159,8 @@ class AdminReferralController extends Controller
                 'Referral reward paid',
                 "Your ₹" . number_format((float) $payout->reward_amount) . " firm-referral reward has been paid."
             );
+
+            AdminActivityLogger::log($admin, AdminActivityLogger::REFERRAL_PAYOUT_PAID, 'referral_payout', $id, "Marked referral payout #{$id} as paid.", $request);
 
             return response()->json(['status' => true, 'message' => 'Payout marked as paid']);
         } catch (\Exception $e) {

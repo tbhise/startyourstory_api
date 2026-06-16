@@ -1294,3 +1294,66 @@ None — no schema changes (`student_profiles.city`/`address` columns already ex
 ### Rollback Plan
 - `registerStudent()`: remove the `city` validation rule + custom message and the `city`/`address` keys from the `student_profiles` insert.
 - `registerFirm()`: restore `$referrerId = ReferralHelper::resolveReferrerId(...)` unconditionally (drop the `$isBranch ? null :` guard).
+
+---
+
+## 2026-06-16 — Feature: Admin-managed manual payment destination (bank/UPI/QR)
+
+Made the Premium Subscription page's **manual payment destination** (account holder, bank, account number, IFSC, UPI ID, QR code) admin-manageable instead of hardcoded in the frontend. Reuses the existing `system_settings` framework + `ImageHelper` (no new table, no new upload system). **PhonePe credentials/gateway/verification, plans, pricing, branch discount and subscription activation are entirely unchanged** — this is destination data only.
+
+### New
+- `app/Http/Controllers/API/PaymentSettingsController.php`
+  - `instructions()` — **public** `GET /payments/instructions`. Returns the 6 destination fields (`qr_image` as an absolute `/storage` URL, or `''`). Reads via `SystemSettingService::get(...)` with `''` fallbacks; on any error returns empty strings (status `true`) so the payment page never crashes — it shows its own "details unavailable" fallback.
+  - `uploadQr()` — **admin** `POST /admin/payment-settings/qr` (multipart `qr_code`). Validates `image|mimes:jpg,jpeg,png,webp|max:5120`, optimises to WebP via `ImageHelper::optimizeToWebp(..., 'payment-settings', 'public')`, stores the path in `payment_qr_code` (`SystemSettingService::set` → audited + cache-busted), then deletes the previous image.
+  - `deleteQr()` — **admin** `DELETE /admin/payment-settings/qr`. Clears `payment_qr_code` and deletes the file.
+  - Admin auth follows the existing `admin_token` → `admin_users` (active) pattern.
+
+### Modified
+- `routes/api.php` — registered the public `GET /payments/instructions` (public block) and the two admin QR routes (next to `/admin/system-settings`). The 5 text fields reuse the existing `POST /admin/system-settings/{key}` update route.
+- `database/seeders/SystemSettingsSeeder.php` — added the 6 `payment` rows, seeded with the previously-hardcoded values so behaviour is preserved. `payment_qr_code` is `is_editable = false` (managed only by the upload endpoint; the generic text editor rejects it with 422).
+
+### DB Changes
+`db_changes.txt` (2026-06-16) — idempotent `INSERT … SELECT … WHERE NOT EXISTS` adding the 6 `system_settings` rows under category `payment` (no schema change; existing `system_settings` table reused). Run before deploy (or run `php artisan db:seed --class=SystemSettingsSeeder`). Rollback = `DELETE` those `setting_key`s from `system_settings` + `system_setting_audits`.
+
+### Testing
+- Seeder applied; `GET /payments/instructions` returns the 6 migrated values with `qr_image=''` (no QR uploaded yet). `php -l` clean; `route:list` shows all 3 routes.
+- Verification: PhonePe initiate/verify/webhook untouched; plans/pricing untouched; branch discount math (frontend `floor(price/2)`) untouched; subscription activation untouched.
+
+### Rollback Plan
+- Remove the 3 routes + `PaymentSettingsController.php`; drop the 6 `payment` rows from `SystemSettingsSeeder`; run the `db_changes.txt` rollback `DELETE`. Frontend keeps working off the original mock instructions.
+
+---
+
+## 2026-06-16 — Feature: Admin Activity Logging (audit trail)
+
+Added a meaningful admin audit trail that records ONLY important administrative WRITE actions (approvals, rejections, status / permission / money changes, content publish, settings changes, admin-user management). Read-only browsing — dashboard/list/search/filter/pagination/navigation — is deliberately NOT logged (no noise). Logs are append-only and retained indefinitely: there is no write/update/delete API for them.
+
+### New
+- `app/Services/AdminActivityLogger.php` — central, NON-THROWING recorder (`log($admin, $actionType, $entityType, $entityId, $description, $request)`). A logging failure is logged but never breaks the host action. Action-type constants for every event (firm_*, subscription_*, wallet_recharge_*, creator_payment_*, creator_payout_*, referral_payout_*, blog_*, report_*/warning_issued, *_settings_updated, admin_*). Captures admin id+name, IP and user agent. Modelled on the existing `AdminNotificationService` philosophy.
+- `app/Http/Controllers/API/AdminActivityLogController.php` — READ-ONLY. `index()` (GET `/admin/activity-logs`) with filters admin_id, action_type, entity_type, date_from, date_to, search; paginated (50/page, newest first). `filters()` (GET `/admin/activity-logs/filters`) returns distinct admins/actions/entities for the UI dropdowns. No store/update/delete by design.
+- Table `admin_activity_logs` — migration `2026_06_16_000001_create_admin_activity_logs_table.php` + idempotent SQL in `db_changes.txt`. Columns: admin_id, admin_name, action_type, entity_type, entity_id (string-safe for hashids), description, ip_address, user_agent, created_at. Indexed on admin_id, action_type, entity_type, created_at (the filter dimensions). No FK on admin_id (admins live in admin_users — project convention).
+
+### Modified (instrumentation — additive log call on the SUCCESS path only)
+- `routes/api.php` — registered the two read-only routes.
+- `AdminController.php` — approveFirm, rejectFirm, approvePremiumRequest (subscription approved), rejectPremiumRequest, addSubscriptions (premium/subscription change), approveCreatorPayment, rejectCreatorPayment, updateReportStatus (moderation → report_reviewed / report_dismissed / warning_issued by status).
+- `AdminWalletController.php` — approveRecharge (wallet credit), rejectRecharge.
+- `AdminPayoutsController.php` — markPaid, markFailed, flushApproved, updateCommissionRate.
+- `AdminReferralController.php` — approvePayout, markPayoutPaid.
+- `AdminBlogController.php` — createBlog, updateBlog, publishBlog, unpublishBlog, deleteBlog (category/tag/topic intentionally NOT logged).
+- `AdminSettingsController.php` — updateSetting (platform_settings_updated).
+- `AdminSystemSettingController.php` — update (payment_settings_updated when key starts `payment_`, else platform_settings_updated).
+- `PaymentSettingsController.php` — uploadQr / deleteQr (payment_settings_updated).
+- `AdminUserController.php` — store (admin_created), update (admin_updated), destroy (admin_deleted), toggleActive (admin_enabled / admin_disabled).
+- 29 log calls total. Each placed AFTER the mutation succeeds (after DB::commit where present) and only on the success branch — never on auth/validation/not-found/already-in-state early returns. No existing logic, responses, or validation changed.
+
+Note: there are no admin Student approve/suspend/delete endpoints in the codebase (students are read-only in admin apart from moderation), so the spec's student events are covered via the moderation report workflow. Profile restricted/restored constants exist for forward use but no endpoint applies restrictions today.
+
+### DB Changes
+`db_changes.txt` (2026-06-16) — `CREATE TABLE IF NOT EXISTS admin_activity_logs` (+ indexes). Applied to the working DB. Rollback = `DROP TABLE IF EXISTS admin_activity_logs;`.
+
+### Testing
+- Table created; `AdminActivityLogger::log()` inserts the correct row shape (verified via tinker, then cleaned up). `php -l` clean on all 11 touched/new PHP files. `route:list` shows both read-only routes.
+- Logged actions confirmed via code review of each instrumented success path; read endpoint paginates + filters by admin/action/entity/date/search.
+
+### Rollback Plan
+- Remove the two routes + `AdminActivityLogController.php` + `AdminActivityLogger.php`; delete the `AdminActivityLogger::log(...)` calls + `use App\Services\AdminActivityLogger;` imports from the 9 instrumented controllers; run the `db_changes.txt` rollback `DROP TABLE`.

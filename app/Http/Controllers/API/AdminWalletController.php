@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\WalletHelper;
 use App\Helpers\NotificationHelper;
+use App\Services\AdminActivityLogger;
 
 class AdminWalletController extends Controller
 {
@@ -141,6 +142,15 @@ class AdminWalletController extends Controller
             DB::commit();
             $wallet = WalletHelper::getOrCreate($recharge->user_id);
 
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::WALLET_RECHARGE_APPROVED,
+                'wallet_recharge',
+                $recharge->id,
+                "Approved manual wallet recharge of ₹{$recharge->amount} for user #{$recharge->user_id}.",
+                $request
+            );
+
             return response()->json([
                 'status'  => true,
                 'message' => "Approved — ₹{$recharge->amount} credited to student wallet",
@@ -190,6 +200,15 @@ class AdminWalletController extends Controller
                 $recharge->user_id,
                 'Wallet Recharge Rejected',
                 "Your recharge of ₹{$recharge->amount} was not approved. Reason: {$reason}"
+            );
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::WALLET_RECHARGE_REJECTED,
+                'wallet_recharge',
+                $recharge->id,
+                "Rejected manual wallet recharge of ₹{$recharge->amount} for user #{$recharge->user_id}. Reason: {$reason}",
+                $request
             );
 
             return response()->json(['status' => true, 'message' => 'Recharge rejected']);

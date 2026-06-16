@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\ImageHelper;
+use App\Services\AdminActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -386,6 +387,10 @@ class AdminBlogController extends Controller
                 return ['id' => $id, 'slug' => $slug];
             });
 
+            $blogId = $result['id'];
+            $title  = trim($request->title);
+            AdminActivityLogger::log($auth, AdminActivityLogger::BLOG_CREATED, 'blog', $blogId, "Created blog '{$title}'.", $request);
+
             return response()->json([
                 'status'  => true,
                 'message' => 'Blog created successfully.',
@@ -508,6 +513,8 @@ class AdminBlogController extends Controller
                 // same topic as before — no change needed
             });
 
+            AdminActivityLogger::log($auth, AdminActivityLogger::BLOG_UPDATED, 'blog', $id, "Updated blog #{$id}.", $request);
+
             return response()->json(['status' => true, 'message' => 'Blog updated successfully.']);
         } catch (\Throwable $e) {
             Log::error('AdminBlogController::updateBlog', ['message' => $e->getMessage()]);
@@ -532,6 +539,8 @@ class AdminBlogController extends Controller
         DB::table('blog_tag_map')->where('blog_id', $id)->delete();
         DB::table('blogs')->where('id', $id)->delete();
 
+        AdminActivityLogger::log($auth, AdminActivityLogger::BLOG_DELETED, 'blog', $id, "Deleted blog #{$id}.", $request);
+
         return response()->json(['status' => true, 'message' => 'Blog deleted successfully.']);
     }
 
@@ -555,6 +564,8 @@ class AdminBlogController extends Controller
             'updated_at'   => now(),
         ]);
 
+        AdminActivityLogger::log($auth, AdminActivityLogger::BLOG_PUBLISHED, 'blog', $id, "Published blog #{$id}.", $request);
+
         return response()->json(['status' => true, 'message' => 'Blog published successfully.']);
     }
 
@@ -576,6 +587,8 @@ class AdminBlogController extends Controller
             'status'     => 'draft',
             'updated_at' => now(),
         ]);
+
+        AdminActivityLogger::log($auth, AdminActivityLogger::BLOG_UNPUBLISHED, 'blog', $id, "Unpublished blog #{$id}.", $request);
 
         return response()->json(['status' => true, 'message' => 'Blog unpublished (reverted to draft).']);
     }

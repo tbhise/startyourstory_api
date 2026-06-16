@@ -89,6 +89,7 @@ class ErrorLogController extends Controller
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('message', 'like', "%{$search}%")
+                      ->orWhere('error_summary', 'like', "%{$search}%")
                       ->orWhere('url', 'like', "%{$search}%");
                 });
             }

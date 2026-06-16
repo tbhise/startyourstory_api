@@ -662,9 +662,32 @@ class AdminController extends Controller
             $expiresAt =
                 $premiumRequest->plan ===
                 'premium-yearly' ? now()->addYear() : now()->addMonth();
+
+            // Resolve the firm's REAL firm_profiles.id. premium_requests.firm_id
+            // has historically been stored as the USER id (the firm payment page
+            // sends user.id), whereas firm_subscriptions.firm_id and the
+            // firm_profiles.is_premium flag are keyed on firm_profiles.id. Accept
+            // either form: match by user_id first, then fall back to id. Without
+            // this, activation writes target the wrong/non-existent row and the
+            // firm never actually becomes premium.
+            $firmProfile = DB::table('firm_profiles')
+                ->where('user_id', $premiumRequest->firm_id)
+                ->first()
+                ?? DB::table('firm_profiles')
+                ->where('id', $premiumRequest->firm_id)
+                ->first();
+            if (!$firmProfile) {
+                DB::rollBack();
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Firm profile not found for this request'
+                ], 404);
+            }
+            $firmProfileId = $firmProfile->id;
+
             $existingSubscription =
                 DB::table('firm_subscriptions')
-                ->where('firm_id', $premiumRequest->firm_id)
+                ->where('firm_id', $firmProfileId)
                 ->first();
             if ($existingSubscription) {
                 DB::table('firm_subscriptions')
@@ -672,7 +695,14 @@ class AdminController extends Controller
                     ->update([
                         'contact_person' => $premiumRequest->contact_person,
                         'plan' => $premiumRequest->plan === 'premium-yearly' ? 'premium' : $premiumRequest->plan,
+                        'amount' => $premiumRequest->amount,
+                        'currency' => 'INR',
+                        'payment_gateway' => 'manual',
+                        'payment_method' => 'manual',
                         'transaction_id' => $premiumRequest->transaction_id,
+                        // A manually-approved payment IS paid — mark it so, otherwise
+                        // billing/reporting (which filter on payment_status) hide it.
+                        'payment_status' => 'paid',
                         'payment_date' => $premiumRequest->payment_date,
                         'screenshot_url' => $premiumRequest->screenshot_url,
                         'remarks' => $request->remarks,
@@ -684,10 +714,15 @@ class AdminController extends Controller
             } else {
                 DB::table('firm_subscriptions')
                     ->insert([
-                        'firm_id' => $premiumRequest->firm_id,
+                        'firm_id' => $firmProfileId,
                         'contact_person' => $premiumRequest->contact_person,
                         'plan' => $premiumRequest->plan === 'premium-yearly' ? 'premium' : $premiumRequest->plan,
+                        'amount' => $premiumRequest->amount,
+                        'currency' => 'INR',
+                        'payment_gateway' => 'manual',
+                        'payment_method' => 'manual',
                         'transaction_id' => $premiumRequest->transaction_id,
+                        'payment_status' => 'paid',
                         'payment_date' => $premiumRequest->payment_date,
                         'screenshot_url' => $premiumRequest->screenshot_url,
                         'remarks' => $request->remarks,
@@ -710,11 +745,11 @@ class AdminController extends Controller
 
             // Sync is_premium flag on firm_profiles
             DB::table('firm_profiles')
-                ->where('id', $premiumRequest->firm_id)
+                ->where('id', $firmProfileId)
                 ->update(['is_premium' => 1, 'updated_at' => now()]);
 
             // Firm referral: create a pending ₹2,000 payout if this firm was referred.
-            ReferralHelper::onFirmPremiumActivated((int) $premiumRequest->firm_id);
+            ReferralHelper::onFirmPremiumActivated((int) $firmProfileId);
             $updatedRequest =
                 DB::table('premium_requests')
                 ->select(

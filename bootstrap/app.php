@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\HandleCors;
+use App\Services\ErrorLogRecorder;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -20,5 +21,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Record a short, safe summary of each backend exception into the
+        // error_logs table for quick admin visibility. This does NOT stop the
+        // framework's default reporter, so the COMPLETE exception + stack trace
+        // is still written to storage/logs/laravel.log as before.
+        $exceptions->report(function (\Throwable $e): void {
+            ErrorLogRecorder::record($e);
+        });
     })->create();

@@ -2257,3 +2257,14 @@ CREATE TABLE IF NOT EXISTS `admin_activity_logs` (
 
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `admin_activity_logs`;
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## ERROR LOGS — error_summary column — added 2026-06-16
+## ═══════════════════════════════════════════════════════════════════════════════
+## Short, safe one-line summary of a backend exception (full detail stays in laravel.log).
+## Idempotent. Or run: php artisan migrate
+
+ALTER TABLE `error_logs` ADD COLUMN `error_summary` VARCHAR(100) NULL AFTER `message`;
+
+-- ROLLBACK: ALTER TABLE `error_logs` DROP COLUMN `error_summary`;

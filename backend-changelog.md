@@ -4,6 +4,124 @@
 
 ---
 
+## 2026-06-17 — Fix: Manually-approved premium not appearing in Billing & Payments
+
+After the firm_id fix, a manually-approved subscription still didn't show on the firm Billing page (API returned `premium: []`, `active_plan: "Free Plan"`, totals 0). Cause: `approvePremiumRequest()` set `status = 'active'` but never set `payment_status` (left at the `'pending'` default) or `amount` (`NULL`). The Billing controller filters `payment_status != 'pending'` for listing and `= 'paid'` for totals/active-plan, so manual subs were hidden. The online PhonePe flow already set `payment_status = 'paid'` + `amount`; manual approval did not.
+
+### Modified: `app/Http/Controllers/API/AdminController.php` — `approvePremiumRequest()`
+- Both the insert and update of `firm_subscriptions` now also set `payment_status = 'paid'`, `amount = $premiumRequest->amount`, `currency = 'INR'`, `payment_gateway = 'manual'`, `payment_method = 'manual'`. A manually-approved payment is genuinely paid, so it is now stored as such and becomes first-class for billing/reporting. No change to the activation/`is_premium` logic.
+
+### Modified: `app/Http/Controllers/API/FirmBillingController.php` — `planMeta()`
+- Added a mapping for the legacy plan value `'premium'` (manual approval normalises `premium-yearly` → `premium`) → "Premium Yearly Plan" / "12 Months", so the Billing row shows a proper plan name + duration instead of "Premium / —".
+
+### Data repair (dev DB)
+- `firm_subscriptions.id=5`: set `payment_status = 'paid'`, backfilled `amount = 9999.00` (from its approved `premium_requests` row), `currency = INR`, `payment_method = manual`.
+- Verified via the live endpoint: `premium` now returns the row (`payment_status: paid`, amount 9999), `active_plan: "Premium Yearly Plan"`, `total_premium: 9999` — the table renders it.
+
+### Rollback Plan
+- Remove the added `payment_status/amount/currency/payment_gateway/payment_method` keys from the two `firm_subscriptions` writes in `approvePremiumRequest()`; remove the `'premium'` case in `FirmBillingController::planMeta()`.
+
+## 2026-06-16 — Fix: Manual premium approval never activated premium (firm_id mismatch)
+
+Admins could approve a firm's manual premium-payment request and see "approved", yet the firm never became premium. Root cause: `premium_requests.firm_id` stores the **users.id** (the firm payment page sends `firm_id: user.id`), but `approvePremiumRequest()` used it directly as **firm_profiles.id** for every activation write. Those writes therefore targeted the wrong/non-existent row:
+- `firm_profiles->where('id', <user id>)->update(is_premium=1)` matched **0 rows** → the real firm kept `is_premium = 0`, so `AuthController::getUser` never reported premium.
+- `firm_subscriptions` rows were inserted with `firm_id = <user id>`, orphaned from the real firm (and invisible to the Billing page, which keys on `firm_profiles.id`).
+The online PhonePe flow was unaffected because it consistently uses `$firmProfile->id`.
+
+### Modified: `app/Http/Controllers/API/AdminController.php` — `approvePremiumRequest()`
+- Added a tolerant resolver: look up the real `firm_profiles` row by `user_id` first, then fall back to `id` (handles both legacy/user-id and correct firm-profile-id values). Returns 404 + rollback if no firm profile is found.
+- All activation writes now key on the resolved `$firmProfileId`: the existing-subscription lookup, the `firm_subscriptions` insert `firm_id`, the `firm_profiles.is_premium` update, and `ReferralHelper::onFirmPremiumActivated()`.
+- No change to `rejectPremiumRequest()` (it only sets request status) or to the online PhonePe flow.
+
+### Data repair (dev DB)
+- 3 previously-approved `premium_requests` (all for users.id 11 → firm_profiles.id 3) had left the firm non-premium with one orphaned `firm_subscriptions` row (`sub#5`, firm_id 11).
+- Repaired: `firm_subscriptions.id=5` → `firm_id = 3`; `firm_profiles.id=3` → `is_premium = 1`. Verified the firm now resolves as premium via the `getUser` gate and the active subscription is visible to Billing.
+- Referral payouts were intentionally **not** retro-triggered during repair (avoids creating unintended ₹2,000 payouts); future approvals fire it correctly via the resolved id.
+
+### Testing
+- `php -l` clean. Verified against the live DB: firm_profiles.id=3 `is_premium=1`, active `sub#5` (plan=premium, expires 2027) now keyed on firm_id=3; simulated `getUser` returns `is_premium=TRUE`.
+
+### Rollback Plan
+- Revert the resolver block + the four `$firmProfileId` references in `approvePremiumRequest()` back to `$premiumRequest->firm_id`. (Data repair is not auto-reversible; it corrects previously-broken rows.)
+
+## 2026-06-16 — Feature: Backend exception summaries in error_logs
+
+Backend exceptions now record a short, **safe** one-line summary into the `error_logs` table for quick admin visibility, while the COMPLETE exception + stack trace continues to be written to `storage/logs/laravel.log` exactly as before. The DB is the quick summary; the file log remains the source of full debugging detail.
+
+### DB
+- Added `error_summary VARCHAR(100) NULL` to `error_logs` (after `message`).
+- Migration `2026_06_16_000002_add_error_summary_to_error_logs.php` (idempotent — guarded by `Schema::hasColumn`). Also added an idempotent `ALTER TABLE` to `db_changes.txt`. Applied to the dev DB.
+
+### New: `app/Services/ErrorLogRecorder.php`
+- `record(Throwable, ?Request)` — NON-THROWING. Builds a sanitized summary and inserts one `error_logs` row (`source = 'api'`, `stack = null` always).
+- **Sanitization** (`safeMessage`): strips the `(Connection: …, SQL: …)` tail from `QueryException` (so **no SQL or bindings** are stored), redacts `password/secret/token/authorization/api_key/bearer/session/cookie/otp`-style `key=value` pairs, and collapses whitespace to a single line. `message` ≤ 1000 chars, `error_summary` ≤ 100 chars. Stack traces, bindings, passwords, tokens, secrets and session ids are never persisted.
+- Status derived from the exception (`HttpExceptionInterface::getStatusCode()`, else 500). User context resolved best-effort from the `auth_token` cookie, mirroring `ErrorLogController@store`.
+- Skips routine noise: `NotFoundHttpException`, `MethodNotAllowedHttpException`, `ValidationException`, `AuthenticationException`.
+
+### Modified: `bootstrap/app.php`
+- `withExceptions()` now registers `$exceptions->report(fn ($e) => ErrorLogRecorder::record($e))`. The callback returns void and does **not** call `stop()`, so Laravel's default reporter still logs the full exception to `laravel.log` — existing logging behavior is untouched.
+
+### Modified: `app/Http/Controllers/API/ErrorLogController.php`
+- `index()` search now also matches `error_summary` (no other changes; `get()` already returns the new column).
+
+### Scope note
+Laravel's `report()` hook fires for **unhandled** exceptions. The 29 controllers that already `try/catch` + `Log::error()` + return `'Server error'` keep their existing file-log behavior unchanged (per the "keep existing logging untouched" requirement) — they are not rewired.
+
+### Testing
+- `php -l` clean on all touched files; migration applied (`error_summary` present).
+- Unit-checked `safeMessage` against the three spec examples → exact: `Attempt to read property "id" on null`, `Call to undefined method App\Models\User::profile()`, `SQLSTATE[42S22]: Unknown column "city_name"` (SQL/bindings stripped). Secret/token strings redacted.
+- End-to-end `record()` of a `QueryException` with bindings → row stored with `source=api`, `status=500`, `stack=NULL`, correct summary, and **no** leaked SQL/email; then cleaned up.
+
+### Rollback Plan
+- Revert `bootstrap/app.php` `withExceptions` to empty + remove the import; delete `ErrorLogRecorder.php`; revert the `error_summary` clause in `ErrorLogController@index`; run the `db_changes.txt` rollback (`ALTER TABLE error_logs DROP COLUMN error_summary;`) or `php artisan migrate:rollback`.
+
+## 2026-06-16 — Feature: Firm Billing & Payments (read-only reporting)
+
+A single read-only endpoint backing the new firm Billing & Payments page. It introduces **no new tables, no wallet logic, and no writes** — it only READS a firm's own records from existing tables and never touches subscription activation, payment, payout, commission or settlement logic.
+
+### New: `app/Http/Controllers/API/FirmBillingController.php`
+- `index()` — `GET /firm/billing-payments` (auth + firm-verified). Resolves the firm from `auth_user`, then returns three datasets + summary:
+  - **premium**: this firm's `firm_subscriptions` (excluding raw `pending`/abandoned checkouts; `manual_verification` surfaces as Pending). Includes plan name/duration, amount, normalised status, active flag, expiry, invoice number (`INV-PRM-#####`), payment reference, and firm name/email for the invoice.
+  - **branch**: premium subscriptions of **branch accounts** under this firm — `firm_profiles.parent_frn = this firm's frn AND is_branch = 1` (only when the current account is a parent). Labeled by branch firm name/city. Invoice `INV-BRN-#####`.
+  - **creator**: `creator_engagement_payments` for this firm joined to `creator_engagements → creator_projects` (project title) and `users` (creator name). Reads only the amount the firm paid — **no payout/commission/settlement**. Invoice `INV-CRE-#####`.
+  - **summary**: active plan name (+ expiry) from the firm's active paid subscription, and per-category totals (sum of successful payments only).
+- Statuses are normalised to the four the UI filters on: `paid | pending | failed | refunded`. Invoice numbers are derived deterministically from the source row id (no storage).
+- Wrapped in try/catch; logs and returns a safe 500 on error so the page degrades gracefully.
+
+### Modified: `routes/api.php`
+- Registered `GET /firm/billing-payments` inside the existing `ApiAuthMiddleware + FirmVerifiedMiddleware` group (so only approved firms reach it), plus the controller import.
+
+### DB Changes
+None — no schema changes, no new tables. Reads existing `firm_subscriptions`, `firm_profiles`, `creator_engagement_payments`, `creator_engagements`, `creator_projects`, `users`.
+
+### Testing
+- `php -l` clean; `route:list` shows the route.
+- Executed the controller against the dev DB for a real firm: `status:true`, premium row returned, correct `active_plan` ("Premium Yearly Plan") and totals. Branch and creator join queries execute cleanly (0 rows — no such test data in dev yet).
+
+### Rollback Plan
+- Remove the route + import from `routes/api.php` and delete `FirmBillingController.php`. No data migration to revert.
+
+## 2026-06-16 — Fix: Creator profile never completes when experience_years = 0
+
+Creators (and student creator opt-ins) with **0 years of experience** could never reach `profile_completed = 1`, blocking SYS Coin welcome/referral bonuses and keeping their profile flagged incomplete.
+
+### Cause
+`UserController::updateProfile()` gated completion on `!empty((int)$request->experience_years)` (pure-creator branch) and `!empty($request->experience_years)` (student creator opt-in branch). For a legitimate value of `0`, `empty(0)` is `true`, so the term was `false` and collapsed the whole `&&` chain. Reproduced from `laravel.log`: all creator fields present, `experience_years = 0`, `isProfileComplete` logged empty (false).
+
+### Modified: `app/Http/Controllers/API/UserController.php` — `updateProfile()`
+- Pure-creator branch (`looking_for === 'creator'`): `!empty((int)$request->experience_years)` → `is_numeric($request->experience_years)`.
+- Student creator opt-in branch (`is_creator` true, `looking_for !== 'creator'`): `!empty($request->experience_years)` → `is_numeric($request->experience_years)`.
+- `is_numeric` treats `0`/`"0"` and any numeric value as valid, while `null`/`""`/missing remain invalid — so the field is still required, just no longer non-zero. This also realigns the backend with the frontend, which already marked the section complete via `experience_years != null` ([profile.tsx:459](../start-your-story-ui/src/routes/profile.tsx#L459)).
+
+### DB Changes
+None.
+
+### Testing
+- `php -l` clean.
+
+### Rollback Plan
+- Restore `!empty((int)$request->experience_years)` and `!empty($request->experience_years)` in the two branches.
+
 ## 2026-06-16 — Fixes: free-content file URLs, admin resume access, optional job salary
 
 Three fixes. No breaking changes; permissions/architecture preserved.

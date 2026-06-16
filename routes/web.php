@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Mail;
 use App\jobs\SendVerificationEmailJob;
 use App\Http\Controllers\API\UserController;
 use App\Http\Controllers\API\SitemapController;
+use  Illuminate\Support\Facades\Artisan;
 
 Route::get('/', function () {
     return view('welcome');
@@ -25,3 +26,9 @@ Route::get(
 )
     ->middleware('signed')
     ->name('verification.verify');
+
+
+Route::get('/admin/cls', function () {
+    Artisan::call('optimize:clear');
+    return response()->json(['success' => true]);
+});

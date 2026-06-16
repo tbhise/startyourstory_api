@@ -312,7 +312,7 @@ class UserController extends Controller
             }
 
 
-            Log::info($registrationType);
+            // Log::info($registrationType);
             $preferredLocations = [];
             if (!empty($request->preferred_locations_json)) {
                 $preferredLocations =
@@ -489,9 +489,11 @@ class UserController extends Controller
                     !empty($request->qualification) &&
                     !empty($request->availability_status) &&
                     !empty(trim($request->why_should_hire_you ?? '')) &&
-                    !empty($request->experience_years) &&
+                    is_numeric($request->experience_years) &&
                     $hasPrefCats;
+
             }
+
 
 
             // Extend completion check: students who opted into creator also need creator fields done
@@ -508,13 +510,12 @@ class UserController extends Controller
                     !empty($request->qualification) &&
                     !empty($request->availability_status) &&
                     !empty(trim($request->why_should_hire_you ?? '')) &&
-                    !empty($request->experience_years) &&
+                    is_numeric($request->experience_years) &&
                     $hasPrefCats;
                 $isProfileComplete = $isProfileComplete && $isCreatorFieldsComplete;
             }
 
-            Log::info($request->ca_status);
-            Log::info($isProfileComplete);
+
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
@@ -1009,8 +1010,10 @@ class UserController extends Controller
 
             // Optional evidence (screenshot / supporting document) as a base64 data URL.
             $evidencePath = null;
-            if ($request->filled('evidence')
-                && preg_match('/^data:(image\/(\w+)|application\/pdf);base64,/', $request->evidence, $m)) {
+            if (
+                $request->filled('evidence')
+                && preg_match('/^data:(image\/(\w+)|application\/pdf);base64,/', $request->evidence, $m)
+            ) {
                 $ext     = $m[1] === 'application/pdf' ? 'pdf' : strtolower($m[2]);
                 $allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
                 if (in_array($ext, $allowed, true)) {

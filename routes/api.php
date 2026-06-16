@@ -15,6 +15,7 @@ use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\PhonePeFirmController;
 use App\Http\Controllers\API\PhonePeEngagementController;
+use App\Http\Controllers\API\FirmBillingController;
 use App\Http\Middleware\FirmVerifiedMiddleware;
 
 use App\Http\Controllers\API\TrainingPartnerController;
@@ -354,6 +355,10 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate'])->middleware('throttle:payment-initiate');
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/verify',   [PhonePeEngagementController::class, 'verify']);
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',           [CreatorMarketplaceController::class, 'submitManualPayment'])->middleware('throttle:payment-proof');
+
+    // Billing & Payments — read-only reporting of the firm's own subscription &
+    // creator payments (no wallet, no new storage, no settlement/commission data).
+    Route::get('/firm/billing-payments', [FirmBillingController::class, 'index']);
 });
 
 // ── Free Content Credits (Firm) ───────────────────────────────────────────────

@@ -295,6 +295,14 @@ Backend storage + service + API + generation points for admin notifications. **N
 
 ---
 
+## 2026-06-17 — Standardized all rate limiters to 10/min
+
+Raised every named rate limiter in `app/Providers/AppServiceProvider.php` to **10 requests/minute** (scopes unchanged). Previously: `auth-login` 5→10, `auth-register` 5→10, `auth-forgot` 3→10, `email-verify` 3→10, `payment-initiate` 5→10, `payment-proof` 5→10, `contact` 5→10. `apply` was already 10.
+
+No route, scope, 429 body, or DB changes.
+
+---
+
 ## 2026-06-14 — Rate Limiting for Critical Endpoints (audit remediation)
 
 Additive security hardening only — no business/wallet/payment/application/auth logic changed. Limits are generous (5–10/min) so genuine users are unaffected; only excessive bursts get a clean HTTP 429.

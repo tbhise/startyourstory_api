@@ -503,6 +503,16 @@ class AdminController extends Controller
         |--------------------------------------------------------------------------
         */
             DB::commit();
+
+            // Admin notification feed — premium purchase awaiting verification (non-throwing)
+            \App\Services\Notifications\AdminNotificationService::premiumRequest(
+                $request->firm_name ?? 'A firm',
+                (string) $request->plan,
+                (float) $request->amount,
+                $id,
+                $request->firm_id !== null ? (int) $request->firm_id : null
+            );
+
             return response()->json([
                 'status' => true,
                 'message' =>
@@ -612,6 +622,221 @@ class AdminController extends Controller
             ], 500);
         }
     }
+    /**
+     * List student premium purchase requests (admin review).
+     * Mirrors getPremiumRequests but reads student_premium_requests + users.
+     */
+    public function getStudentPremiumRequests(Request $request)
+    {
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+            $admin = DB::table('admin_users')
+                ->where('api_token', $token)
+                ->where('is_active', true)
+                ->first();
+            if (!$admin) {
+                return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
+            }
+
+            $requests = DB::table('student_premium_requests as spr')
+                ->leftJoin('users as u', 'u.id', '=', 'spr.user_id')
+                ->select(
+                    'spr.id',
+                    'spr.user_id',
+                    'u.name as student_name',
+                    'u.email',
+                    'spr.plan',
+                    'spr.amount',
+                    'spr.utr_number',
+                    'spr.reference_number',
+                    'spr.payment_date',
+                    DB::raw("CONCAT('" . url('/storage') . "/', spr.screenshot_url) as screenshot_url"),
+                    'spr.status',
+                    'spr.admin_remarks',
+                    'spr.created_at',
+                )
+                ->orderByDesc('spr.created_at')
+                ->get()
+                ->map(function ($item) {
+                    $item->id = Hashids::encode($item->id);
+                    return $item;
+                });
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Student premium requests fetched successfully',
+                'data'    => ['requests' => $requests],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get Student Premium Requests Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Unexpected server error'], 500);
+        }
+    }
+
+    /**
+     * Approve a student premium request → activate (upsert) the student's
+     * subscription so AuthController reports them as premium.
+     */
+    public function approveStudentPremiumRequest(Request $request, $encryptedId = null)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+            $admin = DB::table('admin_users')->where('api_token', $token)->first();
+            if (!$admin) {
+                return response()->json(['status' => false, 'message' => 'Invalid admin token'], 401);
+            }
+            try {
+                $id = Hashids::decode($encryptedId)[0] ?? null;
+            } catch (\Exception $e) {
+                return response()->json(['status' => false, 'message' => 'Invalid request id'], 422);
+            }
+
+            $premiumRequest = DB::table('student_premium_requests')->where('id', $id)->first();
+            if (!$premiumRequest) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Premium request not found'], 404);
+            }
+            if ($premiumRequest->status === 'approved') {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Request already approved'], 422);
+            }
+
+            $startsAt  = now();
+            $expiresAt = match ($premiumRequest->plan) {
+                'premium-yearly'    => now()->addYear(),
+                'premium-quarterly' => now()->addMonths(3),
+                default             => now()->addMonth(),
+            };
+
+            // One subscription row per student — update the existing row if present,
+            // otherwise insert. Mirrors the firm activation upsert.
+            $existing = DB::table('student_subscriptions')->where('user_id', $premiumRequest->user_id)->first();
+            if ($existing) {
+                DB::table('student_subscriptions')->where('id', $existing->id)->update([
+                    'plan'       => $premiumRequest->plan,
+                    'status'     => 'active',
+                    'starts_at'  => $startsAt,
+                    'expires_at' => $expiresAt,
+                    'updated_at' => now(),
+                ]);
+            } else {
+                DB::table('student_subscriptions')->insert([
+                    'user_id'    => $premiumRequest->user_id,
+                    'plan'       => $premiumRequest->plan,
+                    'status'     => 'active',
+                    'starts_at'  => $startsAt,
+                    'expires_at' => $expiresAt,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            DB::table('student_premium_requests')->where('id', $premiumRequest->id)->update([
+                'status'        => 'approved',
+                'admin_remarks' => $request->remarks,
+                'reviewed_by'   => $admin->id,
+                'reviewed_at'   => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $updatedRequest = DB::table('student_premium_requests')->where('id', $premiumRequest->id)->first();
+            $updatedRequest->id = Hashids::encode($updatedRequest->id);
+
+            DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::SUBSCRIPTION_APPROVED,
+                'student_premium_request',
+                $premiumRequest->id,
+                'Approved student premium subscription (' . $premiumRequest->plan . ') for user #' . $premiumRequest->user_id . '.',
+                $request
+            );
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Student premium request approved',
+                'data'    => ['request' => $updatedRequest],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Approve Student Premium Request Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Unexpected server error'], 500);
+        }
+    }
+
+    /**
+     * Reject a student premium request (no subscription change).
+     */
+    public function rejectStudentPremiumRequest(Request $request, $encryptedId = null)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('admin_token');
+            if (!$token) {
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+            $admin = DB::table('admin_users')->where('api_token', $token)->first();
+            if (!$admin) {
+                return response()->json(['status' => false, 'message' => 'Invalid admin token'], 401);
+            }
+            try {
+                $id = Hashids::decode($encryptedId)[0] ?? null;
+            } catch (\Exception $e) {
+                return response()->json(['status' => false, 'message' => 'Invalid request id'], 422);
+            }
+
+            $premiumRequest = DB::table('student_premium_requests')->where('id', $id)->first();
+            if (!$premiumRequest) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Premium request not found'], 404);
+            }
+            if ($premiumRequest->status === 'rejected') {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Request already rejected'], 422);
+            }
+
+            DB::table('student_premium_requests')->where('id', $premiumRequest->id)->update([
+                'status'        => 'rejected',
+                'admin_remarks' => $request->remarks,
+                'reviewed_by'   => $admin->id,
+                'reviewed_at'   => now(),
+                'updated_at'    => now(),
+            ]);
+
+            $updatedRequest = DB::table('student_premium_requests')->where('id', $premiumRequest->id)->first();
+            $updatedRequest->id = Hashids::encode($updatedRequest->id);
+
+            DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::SUBSCRIPTION_REJECTED,
+                'student_premium_request',
+                $premiumRequest->id,
+                'Rejected student premium subscription request for user #' . $premiumRequest->user_id . '.',
+                $request
+            );
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Student premium request rejected',
+                'data'    => ['request' => $updatedRequest],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Reject Student Premium Request Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Unexpected server error'], 500);
+        }
+    }
+
     public function approvePremiumRequest(
         Request $request,
         $encryptedId = null
@@ -1643,6 +1868,42 @@ class AdminController extends Controller
         $token = $request->cookie('admin_token');
         if (! $token) return null;
         return DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+    }
+
+    /**
+     * List contact-form submissions (admin "Feedback" screen).
+     */
+    public function getContactSubmissions(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (! $admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $query = DB::table('contact_submissions');
+            if ($request->filled('search')) {
+                $s = '%' . trim($request->input('search')) . '%';
+                $query->where(function ($q) use ($s) {
+                    $q->where('name', 'like', $s)
+                        ->orWhere('email', 'like', $s)
+                        ->orWhere('subject', 'like', $s)
+                        ->orWhere('message', 'like', $s);
+                });
+            }
+            $items = $query->orderByDesc('created_at')->paginate(20);
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'submissions' => $items->items(),
+                    'total'       => $items->total(),
+                    'page'        => $items->currentPage(),
+                    'has_more'    => $items->hasMorePages(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getContactSubmissions Error: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
     }
 
     public function getCreatorPayments(Request $request)

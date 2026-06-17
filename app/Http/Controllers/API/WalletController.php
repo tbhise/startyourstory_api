@@ -319,6 +319,15 @@ class WalletController extends Controller
                 'updated_at'       => now(),
             ]);
 
+            // Admin notification feed — student premium awaiting verification (non-throwing)
+            \App\Services\Notifications\AdminNotificationService::studentPremiumRequest(
+                $user->name ?? 'A student',
+                (string) $request->plan,
+                (float) $request->amount,
+                $id,
+                (int) $user->id
+            );
+
             return response()->json([
                 'status'  => true,
                 'message' => 'Premium request submitted. Admin will review within 24 hours.',

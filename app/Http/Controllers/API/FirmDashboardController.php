@@ -320,13 +320,21 @@ class FirmDashboardController extends Controller
         |--------------------------------------------------------------------------
         */
             $data = (array) $users;
+            // C2: never expose raw storage paths to the client. Surface only
+            // existence + extension metadata; downloads go through /downloadFile
+            // (student_id + type), which resolves the path server-side.
+            $resumePath    = $data['resume_path'] ?? null;
+            $marksheetPath = $data['marksheet_path'] ?? null;
+            $ext = static fn($p) => $p ? strtolower(pathinfo((string) $p, PATHINFO_EXTENSION)) : null;
             unset(
                 $data['password'],
                 $data['api_token'],
                 $data['token_expires_at'],
                 $data['is_deleted'],
                 $data['referred_by'],
-                $data['user_id']
+                $data['user_id'],
+                $data['resume_path'],
+                $data['marksheet_path']
             );
             if (isset($data['preferred_categories']) && is_string($data['preferred_categories'])) {
                 $data['preferred_categories'] = json_decode($data['preferred_categories']) ?? [];
@@ -336,6 +344,10 @@ class FirmDashboardController extends Controller
                 'status' => true,
                 'data' => [
                     ...$data,
+                    'has_resume'    => !empty($resumePath),
+                    'has_marksheet' => !empty($marksheetPath),
+                    'resume_ext'    => $ext($resumePath),
+                    'marksheet_ext' => $ext($marksheetPath),
                     'profile_image' => $users->profile_image
                         ? asset('storage/' . $users->profile_image)
                         : null,
@@ -359,51 +371,88 @@ class FirmDashboardController extends Controller
     }
     public function downloadFile(Request $request)
     {
+        // C2: the file location is NEVER taken from the client. The caller sends
+        // student_id + type; the path is resolved from the DB. This closes the
+        // previous arbitrary-file-read / path-traversal hole while preserving the
+        // existing business rule (firms may download even without an application).
+        $authUser  = $request->attributes->get('auth_user');
+        $type      = $request->input('type');
+        // Accept both snake_case (new) and camelCase (legacy frontend) keys.
+        $studentId = $request->input('student_id', $request->input('studentId'));
+
+        // Concise security audit log for every sensitive download attempt.
+        $audit = function (string $result, string $reason = '') use ($authUser, $studentId, $type) {
+            Log::info('[ResumeDownload] ' . $result, [
+                'user_id'    => $authUser->id ?? null,
+                'role'       => $authUser->role ?? null,
+                'student_id' => $studentId,
+                'type'       => $type,
+                'reason'     => $reason,
+                'at'         => now()->toDateTimeString(),
+            ]);
+        };
+
         try {
-            $path = $request->path;
-            $type = $request->type;
-            $studentId = $request->student_id;
+            // Allowed roles: Admin + Firm. This endpoint is firm-scoped (route is
+            // behind FirmVerifiedMiddleware); resolving a firm profile also denies
+            // students/guests as defense-in-depth.
+            $firm = DB::table('firm_profiles')->where('user_id', $authUser->id ?? 0)->first();
+            if (!$firm) {
+                $audit('FAILURE', 'Blocked non-firm download attempt');
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
+            }
+
+            if (!in_array($type, ['resume', 'marksheet'], true)) {
+                $audit('FAILURE', 'Invalid file type');
+                return response()->json(['status' => false, 'message' => 'Invalid file type'], 422);
+            }
+            if (!$studentId || !ctype_digit((string) $studentId)) {
+                $audit('FAILURE', 'Invalid student id');
+                return response()->json(['status' => false, 'message' => 'Invalid student'], 422);
+            }
+
+            // Resolve the file path from the student record (never from input).
+            $student = DB::table('student_profiles')->where('user_id', (int) $studentId)->first();
+            if (!$student) {
+                $audit('FAILURE', 'Student not found');
+                return response()->json(['status' => false, 'message' => 'Student not found'], 404);
+            }
+            $path = $type === 'resume' ? $student->resume_path : $student->marksheet_path;
             if (!$path) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'File path required'
-                ]);
+                $audit('FAILURE', 'No ' . $type . ' uploaded');
+                return response()->json(['status' => false, 'message' => 'No ' . $type . ' uploaded'], 404);
             }
-            $fullPath = storage_path('app/public/' . $path);
+
+            // Defense-in-depth: refuse any stored path that tries to escape the
+            // public root (protects against tampered/legacy DB values too).
+            if (str_contains($path, '..') || str_starts_with($path, '/') || str_contains($path, "\0")) {
+                $audit('BLOCKED', 'Blocked path traversal attempt');
+                return response()->json(['status' => false, 'message' => 'Invalid file'], 422);
+            }
+
+            // Use the EXISTING storage location (no migration / relocation).
+            $fullPath = storage_path('app/public/' . ltrim($path, '/'));
             if (!file_exists($fullPath)) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'File not found'
-                ], 404);
+                $audit('FAILURE', 'File missing on disk');
+                return response()->json(['status' => false, 'message' => 'File not found'], 404);
             }
-            $authUser = $request->attributes->get('auth_user');
-            $firm = DB::table('firm_profiles')
-                ->where('user_id', $authUser->id)->first();
-            if ($firm && $studentId) {
-                $message = '';
-                if ($type === 'resume') {
-                    $message =
-                        $firm->firm_name
-                        . ' downloaded your resume.';
-                }
-                if ($type === 'marksheet') {
-                    $message =
-                        $firm->firm_name
-                        . ' downloaded your marksheet.';
-                }
-                DB::table('recruiter_actions')
-                    ->insert([
-                        'student_id' => $studentId,
-                        'firm_id' => $firm->id,
-                        'job_id' => null,
-                        'application_id' => null,
-                        'visible_to' => 'student',
-                        'action_type' => $type . '_downloaded',
-                        'message' => $message,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-            }
+
+            // Preserve existing behavior: log the download to the student's feed.
+            $message = $type === 'resume'
+                ? $firm->firm_name . ' downloaded your resume.'
+                : $firm->firm_name . ' downloaded your marksheet.';
+            DB::table('recruiter_actions')->insert([
+                'student_id'     => (int) $studentId,
+                'firm_id'        => $firm->id,
+                'job_id'         => null,
+                'application_id' => null,
+                'visible_to'     => 'student',
+                'action_type'    => $type . '_downloaded',
+                'message'        => $message,
+                'created_at'     => now(),
+            ]);
+
+            $audit('SUCCESS');
             return response()->download($fullPath);
         } catch (\Exception $e) {
             Log::error("Download Error: " . $e->getMessage());

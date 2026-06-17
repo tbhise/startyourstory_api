@@ -1576,3 +1576,114 @@ Retrofitted the mandatory deletion reason onto `deleteStudent`, reusing the `use
 
 ### Rollback Plan
 - Remove the `reason` validation + `deletion_reason` write from `deleteStudent`, and the `deletion_reason` select from `getStudent`. (Column rollback is covered by the Delete-Firm entry.)
+
+---
+
+## 2026-06-17 — Admin notifications: fire on firm premium purchase requests (FCM gap fix)
+
+Firm premium purchase submissions created a `premium_requests` row but never created an admin notification, so admins got neither an in-app bell entry nor an FCM push (the dispatch only ever runs from `AdminNotificationService`). This wires that flow into the existing notification system.
+
+### Modified: `app/Services/Notifications/AdminNotificationService`
+- Added `TYPE_PREMIUM_REQUEST = 'premium_request'` (no schema change — `type` is a free-form column).
+- Added typed helper `premiumRequest($firmName, $plan, $amount, $requestId, $firmId = null)` → title "Premium purchase request", action_url `/admin/premium-requests`, metadata `{premium_request_id, firm_id, firm_name, plan, amount}`. Same non-throwing path as the other helpers (stores notification + fans out via `FcmService::sendToAllAdmins`).
+
+### Modified: `app/Http/Controllers/API/AdminController`
+- `submitPremiumRequest` — after `DB::commit()`, calls `AdminNotificationService::premiumRequest(...)` with the firm name/plan/amount/new id. Non-throwing; never affects the submission response.
+
+### Not changed (flagged)
+- Student premium requests (`WalletController@submitPremiumRequest`, table `student_premium_requests`) still have no trigger, because there is **no admin review screen/endpoint** for that table yet — a notification would link to a screen that can't display it. Deferred pending an admin destination.
+- Delivery still requires a registered admin device token (`admin_fcm_tokens`); the in-app bell works regardless.
+
+### DB Changes
+- None.
+
+### Testing
+- `php -l` clean on `AdminNotificationService.php` and `AdminController.php`.
+
+### Rollback Plan
+- Remove the `premiumRequest(...)` call from `submitPremiumRequest`, and the `TYPE_PREMIUM_REQUEST` const + `premiumRequest()` helper from `AdminNotificationService`.
+
+---
+
+## 2026-06-17 — Student premium requests: admin review screen + endpoints + notification trigger
+
+Built the missing admin path for `student_premium_requests` (previously write-only), then wired the premium-request notification trigger to it. Closes the gap flagged in the prior entry. No schema change — `student_premium_requests` and `student_subscriptions` already exist.
+
+### Modified: `app/Http/Controllers/API/AdminController`
+- `getStudentPremiumRequests` — admin-auth (admin_token); lists `student_premium_requests` joined to `users` (name/email), Hashids-encoded ids, absolute screenshot URLs, newest first.
+- `approveStudentPremiumRequest($id)` — decodes id, guards already-approved, computes expiry by plan (monthly→+1mo, quarterly→+3mo, yearly→+1yr), **upserts `student_subscriptions`** to `active` (one row per user — mirrors firm activation so `AuthController` reports the student as premium), marks the request approved (`admin_remarks`/`reviewed_by`/`reviewed_at`), logs `SUBSCRIPTION_APPROVED`.
+- `rejectStudentPremiumRequest($id)` — marks rejected + remarks/reviewer, logs `SUBSCRIPTION_REJECTED`. No subscription change.
+
+### Modified: `routes/api.php`
+- `POST /admin/student-premium-requests` (+ `/{id}/approve`, `/{id}/reject`).
+
+### Modified: `app/Services/Notifications/AdminNotificationService`
+- Added `studentPremiumRequest(...)` helper (reuses `TYPE_PREMIUM_REQUEST`) → action_url `/admin/student-premium-requests`.
+
+### Modified: `app/Http/Controllers/API/WalletController`
+- `submitPremiumRequest` (student) — now fires `AdminNotificationService::studentPremiumRequest(...)` after insert (non-throwing), so admins get a bell entry + FCM push.
+
+### Frontend
+- New route `src/routes/admin.student-premium-requests.tsx` (mirrors the firm Premium Requests screen; Student/Plan/UTR columns).
+- `src/services/api.ts` — `StudentPremiumRequest` type + `getStudentPremiumRequests` / `approveStudentPremiumRequest` / `rejectStudentPremiumRequest`.
+- `src/components/admin-shell.tsx` — "Student Premium" nav link (Finance group, GraduationCap icon).
+
+### DB Changes
+- None.
+
+### Testing
+- `php -l` clean on all changed PHP files. `vite build` exits 0; the new route is registered in `routeTree.gen.ts`. (Pre-existing repo-wide `tsc` errors on `/firm/payments`/`/messages/` are unrelated and unchanged.)
+
+### Rollback Plan
+- Remove the 3 controller methods + 3 routes, the `studentPremiumRequest` helper + its call in `WalletController`, the new route file, the 3 api.ts functions + type, and the admin-shell nav link.
+
+---
+
+## 2026-06-17 — Security C1 + C2: centralized admin auth & hardened document download
+
+Fixes two verified audit findings only (C1, C2). No payments/wallet/premium/creator/profile/registration logic touched.
+
+### C1 — Centralized admin authentication
+- **New:** `app/Http/Middleware/AdminAuthMiddleware.php` — validates `admin_token` → `admin_users` (must be `is_active`). Registered on the `api` group in `bootstrap/app.php`; it **enforces only on `admin/*` paths** (after stripping the `api/` prefix), exempts `admin/login`/`admin/me`/`admin/logout` and CORS `OPTIONS`, and is a no-op for all other routes. Guarantees every current + future `/admin/*` route is protected centrally, regardless of per-controller checks.
+- Existing per-controller `admin_token` checks left intact as defense-in-depth.
+- Closes unauthenticated access to `AdminMessagingController`, `ErrorLogController` (incl. destructive `DELETE /admin/error-logs`), `FreeContentController` admin methods, and `TrainingPartnerController@index`.
+- Returns 401 (missing/invalid token), 403 (inactive admin).
+
+### C2 — Document download (FirmDashboardController)
+- `downloadFile` no longer accepts a client-supplied `path`. It now takes `student_id` + `type` (resume|marksheet), resolves the path from `student_profiles` (existing column values, existing `storage/app/public` location — **no file move/rename/migration**), blocks `..`/absolute/null-byte paths defensively, and writes a concise security audit log (`[ResumeDownload]` — user/role/student/type/result/reason) for success and every failure/blocked attempt.
+- Business rule preserved: firms may download **without an application** (no application check added). `recruiter_actions` download log preserved.
+- `candidateDetail` no longer returns `resume_path`/`marksheet_path`; instead returns `has_resume`, `has_marksheet`, `resume_ext`, `marksheet_ext`.
+- Admin `downloadStudentFile` was already DB-resolved/safe — left unchanged.
+
+### DB Changes
+- None.
+
+### Testing
+- `php -l` clean on all changed files; `php artisan route:list` boots. Live: unauth `/admin/messaging/stats` & `/admin/error-logs` → 401; bad token → 401; `/admin/login` → 422 (reachable); public `/platform-settings` → 200. Inactive-admin → 403 (verified by code path).
+
+### Rollback Plan
+- Remove the `appendToGroup('api', AdminAuthMiddleware::class)` line in `bootstrap/app.php` and delete the middleware to revert C1. Revert `downloadFile`/`candidateDetail` in `FirmDashboardController` to restore prior C2 behavior.
+
+---
+
+## 2026-06-17 — Contact form fixed end-to-end + admin Feedback screen
+
+The public contact form was broken three ways: the `contact_submissions` table didn't exist (insert 500'd), the contact notification linked to a non-existent `/admin/contact` route, and there was no admin screen to read submissions. Fixed all three.
+
+### DB Changes
+- Created table `contact_submissions` (schema was already authored in `db_changes.txt` lines 1247-1259 but had never been applied to the DB). **Production must run the same `CREATE TABLE`** — it is missing there too.
+
+### Modified: `app/Http/Controllers/API/AdminController`
+- Added `getContactSubmissions(Request)` — admin-auth'd, paginated list of `contact_submissions` with optional `search` (name/email/subject/message). Returns `{ submissions, total, page, has_more }`.
+
+### Modified: `routes/api.php`
+- `GET /admin/contact-submissions` (auto-protected by `AdminAuthMiddleware`).
+
+### Modified: `app/Services/Notifications/AdminNotificationService`
+- `contactSubmission(...)` action_url changed from the dead `/admin/contact` to `/admin/feedback` (the new admin screen). Docblock example updated to match.
+
+### Testing
+- `php -l` clean; `route:list` shows the new route. Live: contact submit → `status:true`, row stored in `contact_submissions`, `admin_notifications` row created with `action_url:/admin/feedback`; unauth `GET /admin/contact-submissions` → 401.
+
+### Rollback Plan
+- Remove `getContactSubmissions` + its route; revert the action_url to `/admin/contact`. (Leave the table — it's required by `submitContact` regardless.)

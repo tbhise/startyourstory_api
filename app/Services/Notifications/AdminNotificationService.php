@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Log;
  *       AdminNotificationService::TYPE_CONTACT,
  *       'New contact form submission',
  *       'Jane Doe sent a message.',
- *       '/admin/contact',
+ *       '/admin/feedback',
  *       ['email' => 'jane@x.com']
  *   );
  */
@@ -28,6 +28,7 @@ class AdminNotificationService
     // ── Notification types (extend freely; no schema change required) ──────────
     public const TYPE_FIRM_VERIFICATION    = 'firm_verification';
     public const TYPE_PAYMENT_VERIFICATION = 'payment_verification';
+    public const TYPE_PREMIUM_REQUEST      = 'premium_request';
     public const TYPE_CREATOR_PAYOUT       = 'creator_payout';
     public const TYPE_CONTACT              = 'contact_submission';
     public const TYPE_SYSTEM_ALERT         = 'system_alert';
@@ -104,13 +105,35 @@ class AdminNotificationService
         );
     }
 
+    public static function premiumRequest(string $firmName, string $plan, float $amount, int $requestId, ?int $firmId = null): ?AdminNotification
+    {
+        return self::create(
+            self::TYPE_PREMIUM_REQUEST,
+            'Premium purchase request',
+            "{$firmName} submitted a {$plan} premium payment of ₹" . number_format($amount, 2) . ' for verification.',
+            '/admin/premium-requests',
+            ['premium_request_id' => $requestId, 'firm_id' => $firmId, 'firm_name' => $firmName, 'plan' => $plan, 'amount' => $amount]
+        );
+    }
+
+    public static function studentPremiumRequest(string $studentName, string $plan, float $amount, int $requestId, ?int $userId = null): ?AdminNotification
+    {
+        return self::create(
+            self::TYPE_PREMIUM_REQUEST,
+            'Student premium request',
+            "{$studentName} submitted a {$plan} premium payment of ₹" . number_format($amount, 2) . ' for verification.',
+            '/admin/student-premium-requests',
+            ['student_premium_request_id' => $requestId, 'user_id' => $userId, 'student_name' => $studentName, 'plan' => $plan, 'amount' => $amount]
+        );
+    }
+
     public static function contactSubmission(string $name, string $email, string $subject): ?AdminNotification
     {
         return self::create(
             self::TYPE_CONTACT,
             'New contact form submission',
             "{$name} sent a message: {$subject}",
-            '/admin/contact',
+            '/admin/feedback',
             ['name' => $name, 'email' => $email, 'subject' => $subject]
         );
     }

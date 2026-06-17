@@ -16,6 +16,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);
         $middleware->appendToGroup('api', \App\Http\Middleware\XRobotsTagMiddleware::class);
+        // Centralized admin auth (C1): enforces on /admin/* only, no-op elsewhere.
+        $middleware->appendToGroup('api', \App\Http\Middleware\AdminAuthMiddleware::class);
         $middleware->alias([
             'firm.verified' => \App\Http\Middleware\FirmVerifiedMiddleware::class,
         ]);

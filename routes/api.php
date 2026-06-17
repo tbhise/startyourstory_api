@@ -208,6 +208,9 @@ Route::delete('/admin/students/{id}',      [AdminController::class, 'deleteStude
 Route::post('/admin/reported-profiles',            [AdminController::class, 'getReportedProfiles']);
 Route::post('/admin/reported-profiles/{id}/status', [AdminController::class, 'updateReportStatus']);
 
+// Admin — contact form submissions (Feedback screen)
+Route::get('/admin/contact-submissions',           [AdminController::class, 'getContactSubmissions']);
+
 // Admin — analytics (revenue reporting + dashboard stats)
 Route::get('/admin/revenue-analytics', [\App\Http\Controllers\API\AdminAnalyticsController::class, 'revenue']);
 Route::get('/admin/dashboard-stats',   [\App\Http\Controllers\API\AdminAnalyticsController::class, 'dashboard']);
@@ -243,6 +246,11 @@ Route::post(
     '/admin/premium-requests/{id}/reject',
     [AdminController::class, 'rejectPremiumRequest']
 );
+
+// Student premium purchase requests (admin review)
+Route::post('/admin/student-premium-requests',              [AdminController::class, 'getStudentPremiumRequests']);
+Route::post('/admin/student-premium-requests/{id}/approve', [AdminController::class, 'approveStudentPremiumRequest']);
+Route::post('/admin/student-premium-requests/{id}/reject',  [AdminController::class, 'rejectStudentPremiumRequest']);
 
 
 

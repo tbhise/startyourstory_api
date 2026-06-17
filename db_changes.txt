@@ -2268,3 +2268,17 @@ CREATE TABLE IF NOT EXISTS `admin_activity_logs` (
 ALTER TABLE `error_logs` ADD COLUMN `error_summary` VARCHAR(100) NULL AFTER `message`;
 
 -- ROLLBACK: ALTER TABLE `error_logs` DROP COLUMN `error_summary`;
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## USERS — deletion_reason column — added 2026-06-17
+## ═══════════════════════════════════════════════════════════════════════════════
+## Admin-recorded reason for an account deletion (firm or student). Captured by the
+## admin "Delete Firm" action (mandatory) and stored on the users row alongside the
+## existing soft-delete columns (is_deleted / deletion_requested_at / scheduled_deletion_at).
+## Idempotent on MySQL 8.0.29+. Or run: php artisan migrate
+##   (migration: database/migrations/2026_06_17_000001_add_deletion_reason_to_users_table.php)
+
+ALTER TABLE `users` ADD COLUMN `deletion_reason` VARCHAR(500) NULL AFTER `scheduled_deletion_at`;
+
+-- ROLLBACK: ALTER TABLE `users` DROP COLUMN `deletion_reason`;

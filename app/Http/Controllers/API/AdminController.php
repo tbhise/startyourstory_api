@@ -831,6 +831,9 @@ class AdminController extends Controller
                     'fp.created_at',
                     'u.email',
                     'u.mobile',
+                    'u.email_verified_at',
+                    'u.profile_completed',
+                    DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified'),
                     DB::raw("CASE WHEN fp.logo_path IS NOT NULL THEN CONCAT('" . url('/storage') . "/', fp.logo_path) ELSE NULL END as logo_url")
                 )
                 ->orderByDesc('fp.created_at')
@@ -842,6 +845,169 @@ class AdminController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('getPendingFirms Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * GET /admin/firms/{id}
+     * Full firm detail for the admin "View" modal — joins the users row with the
+     * firm_profiles row. Read-only; mirrors getStudent's shape.
+     */
+    public function getFirm(Request $request, $id)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $firm = DB::table('users as u')
+                ->leftJoin('firm_profiles as fp', 'fp.user_id', '=', 'u.id')
+                ->where('u.id', $id)
+                ->where('u.role', 'firm')
+                ->select(
+                    'u.id',
+                    'u.name',
+                    'u.email',
+                    'u.mobile',
+                    'u.profile_completed',
+                    'u.email_verified_at',
+                    'u.created_at',
+                    'u.is_deleted',
+                    'u.deletion_requested_at',
+                    'u.deletion_reason',
+                    'fp.firm_name',
+                    'fp.frn',
+                    'fp.hr_name',
+                    'fp.firm_type',
+                    'fp.city',
+                    'fp.address',
+                    'fp.about',
+                    'fp.establishment_year',
+                    'fp.employees_count',
+                    'fp.partners_count',
+                    'fp.articles_count',
+                    'fp.exposure_type',
+                    'fp.services_offered',
+                    'fp.industries_served',
+                    'fp.work_modes',
+                    'fp.training_details',
+                    'fp.stipend_details',
+                    'fp.linkedin_url',
+                    'fp.website_url',
+                    'fp.instagram_url',
+                    'fp.facebook_url',
+                    'fp.other_links',
+                    'fp.is_premium',
+                    'fp.is_branch',
+                    'fp.parent_frn',
+                    'fp.verification_status',
+                    'fp.rejection_reason',
+                    'fp.logo_path'
+                )
+                ->first();
+
+            if (!$firm) {
+                return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
+            }
+
+            $data = (array) $firm;
+            $data['logo_url']     = $firm->logo_path ? url('/storage/' . ltrim($firm->logo_path, '/')) : null;
+            $data['is_verified']  = !empty($firm->email_verified_at);
+            $data['plan']         = !empty($firm->is_premium) ? 'premium' : 'free';
+
+            return response()->json(['status' => true, 'data' => $data]);
+        } catch (\Exception $e) {
+            Log::error('getFirm Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * DELETE /admin/firms/{id}
+     *
+     * Admin-initiated deletion of a firm. Like deleteStudent this is a SOFT delete
+     * by design — a firm touches many tables (firm_profiles, jobs, applications,
+     * subscriptions, conversations, branch links …), several of them firm-facing
+     * audit / financial records, so a hard delete would orphan or destroy history.
+     * Instead we flag the account deleted and hide it everywhere `is_deleted = false`
+     * is already filtered (admin listing, auth resolution).
+     *
+     * A mandatory `reason` is required and stored on `users.deletion_reason`.
+     *
+     * Effects (one transaction):
+     *  - users.is_deleted = 1, deletion timestamps stamped, deletion_reason saved,
+     *    api_token cleared.
+     *  - active login sessions invalidated (force logout).
+     * No related rows are deleted, so no orphans are created.
+     */
+    public function deleteFirm(Request $request, $id)
+    {
+        DB::beginTransaction();
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'reason' => 'required|string|max:500',
+            ], [
+                'reason.required' => 'A reason is required to delete this firm.',
+            ]);
+            if ($validator->fails()) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+            $reason = trim($request->input('reason'));
+
+            $firm = DB::table('users')
+                ->where('id', $id)
+                ->where('role', 'firm')
+                ->first();
+
+            if (!$firm) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
+            }
+
+            if (!empty($firm->is_deleted)) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Firm is already deleted'], 422);
+            }
+
+            $now = now();
+
+            DB::table('users')->where('id', $id)->update([
+                'is_deleted'            => 1,
+                'deletion_requested_at' => $now,
+                'scheduled_deletion_at' => $now,
+                'deletion_reason'       => $reason,
+                'api_token'             => null,
+                'updated_at'            => $now,
+            ]);
+
+            // Force logout — drop any active sessions for this user.
+            DB::table('user_sessions')->where('user_id', $id)->delete();
+
+            DB::commit();
+
+            $firmName = DB::table('firm_profiles')->where('user_id', $id)->value('firm_name');
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::FIRM_DELETED,
+                'firm',
+                $id,
+                'Deleted firm account for ' . ($firmName ?: ($firm->name ?? ('firm #' . $id)))
+                    . ' (' . ($firm->email ?? '') . '). Reason: ' . $reason,
+                $request
+            );
+
+            return response()->json(['status' => true, 'message' => 'Firm deleted successfully']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('deleteFirm Error', ['message' => $e->getMessage()]);
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }
@@ -860,6 +1026,16 @@ class AdminController extends Controller
 
             if ($firm->verification_status === 'approved') {
                 return response()->json(['status' => false, 'message' => 'Firm already approved'], 422);
+            }
+
+            // Guard: a firm cannot be approved until it has completed its profile.
+            // profile_completed is maintained on the users row (see FirmController).
+            $firmUser = DB::table('users')->where('id', $firmId)->first();
+            if (!$firmUser || empty($firmUser->profile_completed)) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Firm profile must be completed before approval.',
+                ], 422);
             }
 
             DB::table('firm_profiles')
@@ -1114,6 +1290,7 @@ class AdminController extends Controller
                     'u.is_deleted',
                     'u.deletion_requested_at',
                     'u.scheduled_deletion_at',
+                    'u.deletion_reason',
                     'sp.looking_for',
                     'sp.ca_status',
                     'sp.address',
@@ -1156,6 +1333,92 @@ class AdminController extends Controller
             return response()->json(['status' => true, 'data' => $data]);
         } catch (\Exception $e) {
             Log::error('getStudent Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * DELETE /admin/students/{id}
+     *
+     * Admin-initiated deletion of a student. This is a SOFT delete by design: a
+     * student touches many tables (student_profiles, applications, wallet/coin
+     * ledgers, referrals, creator engagements, messaging …) and several of those
+     * are financial / firm-facing audit records. Hard-deleting would either
+     * orphan or destroy that history, so instead we flag the account deleted and
+     * hide it everywhere it is already filtered by `is_deleted = false`
+     * (admin listing default, auth resolution, etc.).
+     *
+     * Effects (all inside one transaction):
+     *  - users.is_deleted = 1, deletion timestamps stamped, api_token cleared.
+     *  - active login sessions invalidated (so the student is logged out).
+     * No related rows are deleted, so no orphans are created.
+     */
+    public function deleteStudent(Request $request, $id)
+    {
+        DB::beginTransaction();
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'reason' => 'required|string|max:500',
+            ], [
+                'reason.required' => 'A reason is required to delete this student.',
+            ]);
+            if ($validator->fails()) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
+            }
+            $reason = trim($request->input('reason'));
+
+            $student = DB::table('users')
+                ->where('id', $id)
+                ->where('role', 'student')
+                ->first();
+
+            if (!$student) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Student not found'], 404);
+            }
+
+            if (!empty($student->is_deleted)) {
+                DB::rollBack();
+                return response()->json(['status' => false, 'message' => 'Student is already deleted'], 422);
+            }
+
+            $now = now();
+
+            DB::table('users')->where('id', $id)->update([
+                'is_deleted'            => 1,
+                'deletion_requested_at' => $now,
+                'scheduled_deletion_at' => $now,
+                'deletion_reason'       => $reason,
+                'api_token'             => null,
+                'updated_at'            => $now,
+            ]);
+
+            // Force logout — drop any active sessions for this user.
+            DB::table('user_sessions')->where('user_id', $id)->delete();
+
+            DB::commit();
+
+            AdminActivityLogger::log(
+                $admin,
+                AdminActivityLogger::STUDENT_DELETED,
+                'student',
+                $id,
+                'Deleted student account for ' . ($student->name ?? ('student #' . $id))
+                    . ' (' . ($student->email ?? '') . '). Reason: ' . $reason,
+                $request
+            );
+
+            return response()->json(['status' => true, 'message' => 'Student deleted successfully']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('deleteStudent Error', ['message' => $e->getMessage()]);
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

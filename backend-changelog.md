@@ -1483,3 +1483,96 @@ Note: there are no admin Student approve/suspend/delete endpoints in the codebas
 
 ### Rollback Plan
 - Remove the two routes + `AdminActivityLogController.php` + `AdminActivityLogger.php`; delete the `AdminActivityLogger::log(...)` calls + `use App\Services\AdminActivityLogger;` imports from the 9 instrumented controllers; run the `db_changes.txt` rollback `DROP TABLE`.
+
+---
+
+## 2026-06-17 — Admin: View Firm endpoint, Delete Student, firm approval gating + Redis cache
+
+Backend support for the admin-panel enhancements, plus switching the cache store to Redis. **No schema changes** (the student soft-delete columns already exist). PhonePe/plans/pricing/wallet/subscription logic is entirely untouched.
+
+### New: `app/Http/Controllers/API/AdminController@getFirm`
+- `GET /admin/firms/{id}` (admin auth via `adminFromRequest`). Joins `users` + `firm_profiles` and returns the full firm profile for the admin "View" modal — firm_name, frn, hr_name (contact person), firm_type, city, address, about, establishment_year, employees/partners/articles counts, exposure_type, services/industries, work_modes, training/stipend, all link fields, is_premium→`plan`, is_branch/parent_frn, verification_status, rejection_reason, logo→`logo_url`, plus `email_verified_at`→`is_verified` and `profile_completed`. Mirrors `getStudent`'s shape. 404 when not a firm.
+
+### New: `app/Http/Controllers/API/AdminController@deleteStudent`
+- `DELETE /admin/students/{id}` (admin auth). **Soft delete by design** — a student touches ~29 tables (student_profiles, applications, wallet/SYS-coin ledgers, referrals, creator engagements, messaging, …), several of them financial or firm-facing audit records, so a hard delete would orphan or destroy history. Instead, inside one transaction it sets `users.is_deleted = 1`, stamps `deletion_requested_at`/`scheduled_deletion_at = now`, clears `api_token`, and deletes the user's `user_sessions` rows (force logout). No related rows are deleted → no orphans. The account immediately disappears from the admin listing (which already defaults to `is_deleted = false`) and can no longer authenticate (auth resolution already filters `is_deleted = false`). Guards: 404 if not a student, 422 if already deleted. Logs `AdminActivityLogger::STUDENT_DELETED`.
+- Reuses the existing account-deletion infrastructure (`is_deleted` + scheduled-deletion columns from migration `2026_06_12_000001`); a future finalizer can hard-purge rows past `scheduled_deletion_at`.
+
+### Modified: `app/Http/Controllers/API/AdminController@getPendingFirms`
+- The verification listing now also selects `u.email_verified_at`, `u.profile_completed` and a derived `is_verified` flag, so the admin Firms verification tabs can render the Email-Verified / Profile-Completed badge columns.
+
+### Modified: `app/Http/Controllers/API/AdminController@approveFirm`
+- **Approval gate**: a firm cannot be approved until its profile is complete. After loading the firm it now loads the firm's `users` row and returns `422 "Firm profile must be completed before approval."` when `profile_completed` is falsy. (`profile_completed` is maintained on the users row by `FirmController`.) All existing approve behaviour — email, activity log, transaction — is unchanged.
+
+### Modified: `app/Services/AdminActivityLogger.php`
+- Added the `STUDENT_DELETED = 'student_deleted'` action-type constant (no schema change — the table stores free-form `action_type`).
+
+### Modified: `routes/api.php`
+- Registered `GET /admin/firms/{id}` (after the existing `GET /admin/firms`) and `DELETE /admin/students/{id}` (next to the other student routes).
+
+### Redis cache (cache store only — sessions deliberately left on file)
+- `.env`: `CACHE_STORE=file` → `CACHE_STORE=redis`; `REDIS_CLIENT=phpredis` → `REDIS_CLIENT=predis` (the phpredis C-extension is not installed on this host, so the pure-PHP client is required). `SESSION_DRIVER=file` is **unchanged** — sessions, auth flow and login persistence are untouched, so logged-in users are unaffected.
+- Installed `predis/predis ^3.5` via Composer (added to `composer.json`/`composer.lock`).
+- This fixes the recurring `storage/framework/cache/data/… Failed to open stream` file-cache errors. The `RateLimiter` uses the default cache store, so the 10/min limiters now run on Redis automatically.
+
+### DB Changes
+- **None.** No new tables or columns; the soft-delete columns used by `deleteStudent` already exist. `db_changes.txt` unchanged.
+
+### Testing
+- `php -l` clean on `AdminController.php`, `AdminActivityLogger.php`, `routes/api.php`.
+- `route:list` shows `GET api/admin/firms/{id}`, `DELETE api/admin/students/{id}` (and the existing firm/student routes intact).
+- Redis: `php artisan tinker` → `config('cache.default') = redis`, `Cache::put/get` round-trips, store class `Illuminate\Cache\RedisStore`, `Redis::ping() = PONG`, `RateLimiter::hit/attempts` works on the redis store. `optimize:clear` then `config:cache` run clean; cached config still resolves `cache.default=redis`, `database.redis.client=predis`.
+- Frontend `tsc --noEmit` reports no errors in the changed files; eslint shows only the project-wide `any` style + pre-existing line-ending issues (no new unused/undefined/unresolved errors).
+
+### Rollback Plan
+- Remove `getFirm`/`deleteStudent` from `AdminController.php`; revert the `getPendingFirms` select additions and the `approveFirm` profile-completion guard; remove the `STUDENT_DELETED` constant; drop the two routes from `routes/api.php`.
+- Redis: set `CACHE_STORE=file` and `REDIS_CLIENT=phpredis` in `.env`, run `php artisan config:clear` (or `config:cache`); optionally `composer remove predis/predis`.
+- No DB rollback required (no schema changes). To "un-delete" a soft-deleted student: `UPDATE users SET is_deleted=0, deletion_requested_at=NULL, scheduled_deletion_at=NULL WHERE id=?`.
+
+> Note: the entries in this file are no longer in strict chronological order (a few 2026-06-16 entries sit below earlier ones). New entries should continue to be appended at the very bottom.
+
+---
+
+## 2026-06-17 — Admin: Delete Firm (soft delete with mandatory reason)
+
+Mirrors `deleteStudent` for firms, and adds a **mandatory deletion reason** stored on a new `users.deletion_reason` column.
+
+### DB
+- Added `users.deletion_reason VARCHAR(500) NULL` (after `scheduled_deletion_at`). Migration `2026_06_17_000001_add_deletion_reason_to_users_table.php` (guarded by `Schema::hasColumn`) + idempotent `ALTER` appended to `db_changes.txt`. Applied to the working DB directly (the project's schema is hand-applied via `db_changes.txt`; `php artisan migrate` is not used because it would try to recreate the existing base tables).
+
+### New: `app/Http/Controllers/API/AdminController@deleteFirm`
+- `DELETE /admin/firms/{id}` (admin auth). **Soft delete by design** (same rationale as `deleteStudent` — a firm references firm_profiles, jobs, applications, subscriptions, conversations, branch links, several of them firm-facing/financial audit records). Requires a `reason` (`required|string|max:500`, 422 otherwise). Inside one transaction: sets `users.is_deleted = 1`, stamps `deletion_requested_at`/`scheduled_deletion_at = now`, saves `deletion_reason`, clears `api_token`, and deletes the firm's `user_sessions` (force logout). No related rows are deleted → no orphans. Guards: 404 if not a firm, 422 if already deleted. Logs `AdminActivityLogger::FIRM_DELETED` with the reason in the description.
+
+### Modified
+- `app/Services/AdminActivityLogger.php` — added `FIRM_DELETED = 'firm_deleted'`.
+- `app/Http/Controllers/API/AdminController@getFirm` — now also returns `deletion_requested_at` and `deletion_reason` so the admin View modal can show them.
+- `routes/api.php` — registered `DELETE /admin/firms/{id}` (between `GET /admin/firms/{id}` and the approve route).
+
+### Testing
+- `php -l` clean on `AdminController.php`, `AdminActivityLogger.php`, `routes/api.php`. `route:list` shows `DELETE api/admin/firms/{id}`.
+- Column verified present via `Schema::hasColumn('users','deletion_reason')`.
+- Frontend `tsc --noEmit` + eslint clean on the changed files (only the project-wide `any` style remains).
+
+### Rollback Plan
+- Remove `deleteFirm` from `AdminController.php`; revert the `getFirm` select additions; remove the `FIRM_DELETED` constant; drop the `DELETE /admin/firms/{id}` route.
+- DB: `ALTER TABLE users DROP COLUMN deletion_reason;` (or `php artisan migrate:rollback` for that migration). To un-delete a firm: `UPDATE users SET is_deleted=0, deletion_requested_at=NULL, scheduled_deletion_at=NULL, deletion_reason=NULL WHERE id=?`.
+
+> Scope note: `deleteFirm` deliberately does NOT deactivate the firm's existing job postings (kept consistent with `deleteStudent`, which doesn't auto-withdraw applications). The firm can no longer log in, but any active jobs remain until separately handled — flag if auto-deactivation is wanted.
+
+---
+
+## 2026-06-17 — Admin: Delete Student now requires a reason (parity with Delete Firm)
+
+Retrofitted the mandatory deletion reason onto `deleteStudent`, reusing the `users.deletion_reason` column added earlier today (no new schema).
+
+### Modified: `app/Http/Controllers/API/AdminController`
+- `deleteStudent` — now validates `reason` (`required|string|max:500`, 422 otherwise) and stores it in `users.deletion_reason`; the reason is appended to the `STUDENT_DELETED` activity-log description. All other behaviour (soft delete, session invalidation, transaction) is unchanged.
+- `getStudent` — now also returns `deletion_reason` so the admin View modal can display it.
+
+### DB Changes
+- None — reuses the `users.deletion_reason` column from the earlier "Delete Firm" change.
+
+### Testing
+- `php -l` clean on `AdminController.php`. Frontend `tsc`/eslint clean on the changed files.
+
+### Rollback Plan
+- Remove the `reason` validation + `deletion_reason` write from `deleteStudent`, and the `deletion_reason` select from `getStudent`. (Column rollback is covered by the Delete-Firm entry.)

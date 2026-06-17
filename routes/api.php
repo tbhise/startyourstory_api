@@ -202,6 +202,7 @@ Route::post('/admin/firms',                [AdminController::class, 'getFirms'])
 Route::post('/admin/students',             [AdminController::class, 'getStudents']);
 Route::get('/admin/students/{id}',         [AdminController::class, 'getStudent']);
 Route::get('/admin/students/{id}/file',    [AdminController::class, 'downloadStudentFile']);
+Route::delete('/admin/students/{id}',      [AdminController::class, 'deleteStudent']);
 
 // Admin — moderation: reported student profiles
 Route::post('/admin/reported-profiles',            [AdminController::class, 'getReportedProfiles']);
@@ -213,6 +214,8 @@ Route::get('/admin/dashboard-stats',   [\App\Http\Controllers\API\AdminAnalytics
 
 // Admin — firm manual verification
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
+Route::get('/admin/firms/{id}',            [AdminController::class, 'getFirm']);
+Route::delete('/admin/firms/{id}',         [AdminController::class, 'deleteFirm']);
 Route::post('/admin/firms/{id}/approve',   [AdminController::class, 'approveFirm']);
 Route::post('/admin/firms/{id}/reject',    [AdminController::class, 'rejectFirm']);
 

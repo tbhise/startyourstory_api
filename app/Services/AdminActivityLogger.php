@@ -30,6 +30,7 @@ class AdminActivityLogger
     public const FIRM_APPROVED            = 'firm_approved';
     public const FIRM_REJECTED            = 'firm_rejected';
     public const FIRM_PREMIUM_CHANGED     = 'firm_premium_changed';
+    public const FIRM_DELETED             = 'firm_deleted';
     // Premium / subscription payments
     public const SUBSCRIPTION_APPROVED    = 'subscription_approved';
     public const SUBSCRIPTION_REJECTED    = 'subscription_rejected';
@@ -52,6 +53,8 @@ class AdminActivityLogger
     public const BLOG_PUBLISHED           = 'blog_published';
     public const BLOG_UNPUBLISHED         = 'blog_unpublished';
     public const BLOG_DELETED             = 'blog_deleted';
+    // Students
+    public const STUDENT_DELETED          = 'student_deleted';
     // Moderation (reported student profiles)
     public const REPORT_REVIEWED          = 'report_reviewed';
     public const REPORT_DISMISSED         = 'report_dismissed';

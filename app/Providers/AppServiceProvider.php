@@ -4,8 +4,11 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Http\Request;
+use App\Services\ErrorLogRecorder;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -23,6 +26,27 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureRateLimiters();
+        $this->configureErrorLogCapture();
+    }
+
+    /**
+     * Mirror every error-level (and above) application log into the `error_logs`
+     * table so the admin Error Logs page shows the full picture.
+     *
+     * The report() hook in bootstrap/app.php already records UNCAUGHT exceptions.
+     * This listener additionally captures the many controller catch-blocks that
+     * Log::error() the failure and return 'Server error' WITHOUT re-throwing —
+     * those never reach the report() hook, so they were previously invisible in
+     * the DB (full detail still lives in storage/logs/laravel.log). Additive
+     * only: ErrorLogRecorder::recordLog() skips entries already carrying an
+     * exception in context, so nothing is double-recorded, and it is fully
+     * non-throwing + re-entrant-safe.
+     */
+    private function configureErrorLogCapture(): void
+    {
+        Event::listen(MessageLogged::class, static function (MessageLogged $event): void {
+            ErrorLogRecorder::recordLog($event->level, (string) $event->message, $event->context ?? []);
+        });
     }
 
     /**

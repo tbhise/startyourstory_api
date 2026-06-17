@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -30,20 +29,64 @@ class ErrorLogRecorder
         \Illuminate\Auth\AuthenticationException::class,
     ];
 
+    /** Log levels that represent a genuine error worth surfacing to admins. */
+    private const LOG_ERROR_LEVELS = ['error', 'critical', 'alert', 'emergency'];
+
+    /** Re-entrancy guard: never record a row while we are already recording one. */
+    private static bool $writing = false;
+
     public static function record(Throwable $e, ?Request $request = null): void
     {
-        try {
-            foreach (self::SKIP as $skip) {
-                if ($e instanceof $skip) {
-                    return;
-                }
+        foreach (self::SKIP as $skip) {
+            if ($e instanceof $skip) {
+                return;
             }
+        }
 
+        self::writeRow(self::safeMessage($e), self::statusFor($e), $request);
+    }
+
+    /**
+     * Record an error-level (or above) application log line into `error_logs`.
+     *
+     * Captures the many controller catch-blocks that Log::error() a failure and
+     * return 'Server error' WITHOUT re-throwing — those never reach the
+     * report() hook in bootstrap/app.php. Entries that already carry the
+     * exception in their context are intentionally skipped here so an UNCAUGHT
+     * exception (which the framework logs with `['exception' => $e]`, in
+     * addition to the report() hook recording it) is never stored twice.
+     */
+    public static function recordLog(string $level, string $message, array $context = []): void
+    {
+        if (! in_array(strtolower($level), self::LOG_ERROR_LEVELS, true)) {
+            return;
+        }
+        // Uncaught exceptions are handled by the report() hook — don't duplicate.
+        if (isset($context['exception']) && $context['exception'] instanceof Throwable) {
+            return;
+        }
+
+        $safe = self::sanitize($message);
+        if ($safe === '') {
+            return;
+        }
+
+        self::writeRow($safe, 500);
+    }
+
+    /**
+     * Insert one sanitized row into `error_logs`. NON-THROWING and re-entrant-safe.
+     */
+    private static function writeRow(string $safe, int $status, ?Request $request = null): void
+    {
+        if (self::$writing) {
+            return;
+        }
+        self::$writing = true;
+
+        try {
             $request ??= request();
-
-            $safe    = self::safeMessage($e);
-            $status  = self::statusFor($e);
-            $url     = $request ? mb_substr($request->path(), 0, 500) : null;
+            $url = $request ? mb_substr($request->path(), 0, 500) : null;
 
             [$userId, $userRole] = self::resolveUser($request);
 
@@ -64,6 +107,8 @@ class ErrorLogRecorder
         } catch (Throwable $inner) {
             // Recording must never break the host request. Fall back to the file log.
             Log::warning('ErrorLogRecorder failed: ' . $inner->getMessage());
+        } finally {
+            self::$writing = false;
         }
     }
 
@@ -72,13 +117,19 @@ class ErrorLogRecorder
      */
     private static function safeMessage(Throwable $e): string
     {
-        $msg = $e->getMessage();
+        $msg = self::sanitize($e->getMessage());
 
-        // For DB errors, keep only the SQLSTATE/driver portion and drop the
-        // " (Connection: ..., SQL: ...)" tail — that is where bindings/PII live.
-        if ($e instanceof QueryException) {
-            $msg = preg_replace('/\s*\(Connection:.*$/is', '', $msg) ?? $msg;
-        }
+        return $msg !== '' ? $msg : class_basename($e);
+    }
+
+    /**
+     * Strip SQL/bindings and redact secrets from an arbitrary message string,
+     * collapsing it to a single safe line.
+     */
+    private static function sanitize(string $msg): string
+    {
+        // Drop the " (Connection: ..., SQL: ...)" tail of DB errors — that is
+        // where bindings/PII live. Applied unconditionally (no-op when absent).
         $msg = preg_replace('/\s*\(SQL:.*$/is', '', $msg) ?? $msg;
         $msg = preg_replace('/\s*\(Connection:.*$/is', '', $msg) ?? $msg;
 
@@ -90,13 +141,7 @@ class ErrorLogRecorder
         ) ?? $msg;
 
         // Collapse all whitespace/newlines into single spaces.
-        $msg = trim((string) preg_replace('/\s+/', ' ', $msg));
-
-        if ($msg === '') {
-            $msg = class_basename($e);
-        }
-
-        return $msg;
+        return trim((string) preg_replace('/\s+/', ' ', $msg));
     }
 
     /**

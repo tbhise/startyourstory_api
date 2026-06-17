@@ -17,6 +17,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Base URL of the React SPA frontend. Used to build absolute links in
+    | redirects, emails and notifications. Read via config() so it survives
+    | `php artisan config:cache` (env() returns null once config is cached).
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'https://startyourstory.in'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------
     |

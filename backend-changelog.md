@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-06-17 — Fix: email-verification redirect 404 (env() null under config:cache)
+
+The email-verification link redirected to `https://<api-host>/email-verification-result?status=success` and returned **404**. `email-verification-result` is a **React SPA route**, not an API route. Root cause: `UserController::verify()` built the redirect with `env('FRONTEND_URL')`, which returns **null** once `php artisan config:cache` has run (env is not loaded at runtime after caching). With a null host, `redirect()->away('/email-verification-result?...')` resolved relative to the **API** host → 404.
+
+### Modified: `config/app.php`
+- Added `'frontend_url' => env('FRONTEND_URL', 'https://startyourstory.in')`. This key was already read via `config('app.frontend_url', ...)` in ~10 places (emails, digests, reminders, messages) but was **never defined**, so all of them silently fell back to the hardcoded production default. Now `FRONTEND_URL` is honoured everywhere and survives config caching.
+
+### Modified: `app/Http/Controllers/API/UserController.php`
+- `verify()` now reads `$frontendUrl = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/')` once and uses it for all four redirects (3× failed, 1× success), replacing the four `env('FRONTEND_URL')` calls. `rtrim` also prevents the `//email-verification-result` double-slash when `FRONTEND_URL` has a trailing slash.
+
+**Deploy note:** set `FRONTEND_URL` correctly per environment (RC = the RC frontend host) and run `php artisan config:clear && php artisan config:cache`.
+
+---
+
+## 2026-06-17 — Error Logs: capture EVERY backend error (caught controller exceptions)
+
+Closed the gap where the admin **Error Logs** page (`/admin/errors`) only showed *uncaught* backend exceptions. The `report()` hook in `bootstrap/app.php` records exceptions that bubble up, but the **143 `Log::error()` calls across 24 controllers** that catch their own exception and return `'Server error'` never reach that hook — so those failures were invisible in `error_logs` (only in `storage/logs/laravel.log`). Now **every** error-level (and above) application log is mirrored into `error_logs`. **Purely additive — no controller, route, schema, or existing logging behaviour was changed**; the full file log is untouched.
+
+### Modified: `app/Providers/AppServiceProvider.php`
+- `boot()` now also calls a new `configureErrorLogCapture()` which registers an `Illuminate\Log\Events\MessageLogged` listener. For each logged message it calls `ErrorLogRecorder::recordLog($event->level, $event->message, $event->context)`. This automatically captures all existing **and future** `Log::error/critical/alert/emergency` calls with **zero** edits to any controller.
+
+### Modified: `app/Services/ErrorLogRecorder.php`
+- Added `recordLog(string $level, string $message, array $context)`:
+  - Only acts on `error|critical|alert|emergency` levels (ignores debug/info/notice/warning noise).
+  - **Skips entries that carry `['exception' => $e]` in context** — those are uncaught exceptions already recorded by the `report()` hook, so nothing is **double-recorded**. (Verified no controller passes exception context; they all string-concat `$e->getMessage()`.)
+  - Sanitizes the message (same SQL/binding stripping + secret redaction as exceptions) and stores `source = 'api'`, `status = 500`, `stack = null`.
+- Refactored the row insert into a shared private `writeRow()` with a **re-entrancy guard** (`self::$writing`) so a logging failure can never recurse, and a reusable `sanitize()` (extracted from `safeMessage`, behaviour-preserving). `record(Throwable)` output is unchanged.
+- Removed the now-unused `QueryException` import.
+
+### Untouched (already complete)
+- **Frontend** already logs every API error (axios interceptor in `services/api.ts`), unhandled JS errors and promise rejections (`__root.tsx`) → `POST /error-logs`, with a localStorage fallback. No frontend change was needed.
+- `bootstrap/app.php` `report()` hook, `ErrorLogController` (store/index/stats/destroy), the `error_logs` schema, and the admin page all unchanged.
+
+### DB Changes
+None. Uses the existing `error_logs` table (incl. `error_summary`).
+
+### Testing
+- `php -l` clean on both files.
+- `Log::error("…password=secret … (SQL: …)")` → row stored with `source=api`, `status=500`, password **redacted**, SQL tail **stripped**, `error_summary` ≤100 chars. Test row cleaned up.
+- `Log::error("…", ['exception' => $e])` → **0 rows** (correctly left to the report() hook — no duplicate). Cleaned up.
+
+### Rollback Plan
+- Remove `configureErrorLogCapture()` + the `MessageLogged`/`Event`/`ErrorLogRecorder` imports from `AppServiceProvider`; delete `recordLog()` and revert `record()`/`safeMessage()` to inline the insert/sanitize (restore the `QueryException` import). No data/schema impact.
+
+---
+
 ## 2026-06-17 — Fix: Manually-approved premium not appearing in Billing & Payments
 
 After the firm_id fix, a manually-approved subscription still didn't show on the firm Billing page (API returned `premium: []`, `active_plan: "Free Plan"`, totals 0). Cause: `approvePremiumRequest()` set `status = 'active'` but never set `payment_status` (left at the `'pending'` default) or `amount` (`NULL`). The Billing controller filters `payment_status != 'pending'` for listing and `= 'paid'` for totals/active-plan, so manual subs were hidden. The online PhonePe flow already set `payment_status = 'paid'` + `amount`; manual approval did not.

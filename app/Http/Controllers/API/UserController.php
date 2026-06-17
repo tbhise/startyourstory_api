@@ -1183,10 +1183,12 @@ class UserController extends Controller
     public function verify(Request $request, $id, $hash)
     {
 
+        $frontendUrl = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
+
         if (! $request->hasValidSignature()) {
 
             return redirect()->away(
-                env('FRONTEND_URL')
+                $frontendUrl
                     . '/email-verification-result?status=failed'
             );
         }
@@ -1196,7 +1198,7 @@ class UserController extends Controller
         if (! $user) {
 
             return redirect()->away(
-                env('FRONTEND_URL')
+                $frontendUrl
                     . '/email-verification-result?status=failed'
             );
         }
@@ -1207,7 +1209,7 @@ class UserController extends Controller
         )) {
 
             return redirect()->away(
-                env('FRONTEND_URL')
+                $frontendUrl
                     . '/email-verification-result?status=failed'
             );
         }
@@ -1251,7 +1253,7 @@ class UserController extends Controller
         }
 
         return redirect()->away(
-            env('FRONTEND_URL')
+            $frontendUrl
                 . '/email-verification-result?status=success'
         );
     }

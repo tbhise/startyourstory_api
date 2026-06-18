@@ -291,7 +291,6 @@ class PhonePeEngagementController extends Controller
                 ]);
 
                 DB::commit();
-                Log::info("PhonePeEngagementController webhook: engagement {$payment->engagement_id} activated via txn {$merchantTxnId}");
             } else {
                 DB::commit();
             }

@@ -14,10 +14,19 @@ use Throwable;
  *
  * This is intentionally a thin companion to Laravel's standard logging — the
  * COMPLETE exception (message + stack trace) is still written to
- * storage/logs/laravel.log by the framework's default reporter. This recorder
- * NEVER stores stack traces, SQL bindings, passwords, tokens, secrets or
- * session identifiers, and never throws (a logging failure must not break the
- * request it is reporting on).
+ * storage/logs/laravel.log by the framework's default reporter.
+ *
+ * Two columns are stored per row:
+ *   - `error_summary`: the RAW exception message (e.g. "Base table or view not
+ *     found ... Table 'x' doesn't exist"), so an admin can see what ACTUALLY
+ *     happened from the dashboard without opening laravel.log. Capped at 1000
+ *     chars. Passwords/tokens/secrets are still redacted; SQL is kept.
+ *   - `message`: a SHORT, sanitized one-liner (SQL tail stripped, secrets
+ *     redacted) — safe to surface anywhere.
+ *
+ * This recorder NEVER stores stack traces, SQL bindings, passwords, tokens,
+ * secrets or session identifiers, and never throws (a logging failure must not
+ * break the request it is reporting on).
  */
 class ErrorLogRecorder
 {
@@ -43,7 +52,7 @@ class ErrorLogRecorder
             }
         }
 
-        self::writeRow(self::safeMessage($e), self::statusFor($e), $request);
+        self::writeRow(self::safeMessage($e), self::rawMessage($e), self::statusFor($e), $request);
     }
 
     /**
@@ -71,13 +80,19 @@ class ErrorLogRecorder
             return;
         }
 
-        self::writeRow($safe, 500);
+        // Raw = original log line with secrets redacted but SQL kept.
+        $raw = self::redactSecrets($message);
+
+        self::writeRow($safe, $raw, 500);
     }
 
     /**
-     * Insert one sanitized row into `error_logs`. NON-THROWING and re-entrant-safe.
+     * Insert one row into `error_logs`. NON-THROWING and re-entrant-safe.
+     *
+     * @param string $safe Short, sanitized one-liner → `message`.
+     * @param string $raw  Raw (secret-redacted) error → `error_summary`.
      */
-    private static function writeRow(string $safe, int $status, ?Request $request = null): void
+    private static function writeRow(string $safe, string $raw, int $status, ?Request $request = null): void
     {
         if (self::$writing) {
             return;
@@ -93,7 +108,8 @@ class ErrorLogRecorder
             DB::table('error_logs')->insert([
                 'source'        => 'api',
                 'message'       => mb_substr($safe, 0, 1000),
-                'error_summary' => mb_substr($safe, 0, 100),
+                // RAW error — what actually happened (SQL kept, secrets redacted).
+                'error_summary' => mb_substr($raw !== '' ? $raw : $safe, 0, 1000),
                 'status'        => $status,
                 'url'           => $url ? '/' . ltrim($url, '/') : null,
                 // Stack traces are deliberately NEVER stored in the DB.
@@ -123,8 +139,20 @@ class ErrorLogRecorder
     }
 
     /**
-     * Strip SQL/bindings and redact secrets from an arbitrary message string,
-     * collapsing it to a single safe line.
+     * Produce the RAW exception message for `error_summary` — SQL is KEPT (that
+     * is the point: admins need to see "Table 'x' doesn't exist" etc.), but
+     * passwords/tokens/secrets are still redacted so credentials never land in
+     * the DB. Single-lined. Falls back to the class name when empty.
+     */
+    private static function rawMessage(Throwable $e): string
+    {
+        $msg = self::redactSecrets($e->getMessage());
+
+        return $msg !== '' ? $msg : class_basename($e);
+    }
+
+    /**
+     * Strip SQL/bindings AND redact secrets — the fully sanitized one-liner.
      */
     private static function sanitize(string $msg): string
     {
@@ -133,7 +161,16 @@ class ErrorLogRecorder
         $msg = preg_replace('/\s*\(SQL:.*$/is', '', $msg) ?? $msg;
         $msg = preg_replace('/\s*\(Connection:.*$/is', '', $msg) ?? $msg;
 
-        // Redact anything that looks like a secret (key=value or "key": "value").
+        return self::redactSecrets($msg);
+    }
+
+    /**
+     * Redact secret-looking key=value / "key": "value" pairs and collapse all
+     * whitespace into single spaces. Does NOT touch SQL — used for both the raw
+     * and the fully-sanitized message.
+     */
+    private static function redactSecrets(string $msg): string
+    {
         $msg = preg_replace(
             '/\b(password|passwd|pwd|secret|token|authorization|auth|api[_-]?key|bearer|session|cookie|otp)\b\s*["\']?\s*[:=]\s*["\']?[^\s,"\'&]+/i',
             '$1=[redacted]',

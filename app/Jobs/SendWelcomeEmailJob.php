@@ -32,11 +32,6 @@ class SendWelcomeEmailJob implements ShouldQueue
 
     public function handle(): void
     {
-        Log::info('Welcome email started', [
-            'email'    => $this->email,
-            'userType' => $this->userType,
-        ]);
-
         $mailable = new WelcomeEmail($this->name, $this->couponCode, $this->userType);
 
         $sender = EmailSenderResolver::resolve(EmailPurpose::WELCOME);
@@ -47,8 +42,6 @@ class SendWelcomeEmailJob implements ShouldQueue
         if ($this->emailLogId) {
             EmailLog::find($this->emailLogId)?->markSent();
         }
-
-        Log::info('Welcome email completed', ['email' => $this->email]);
     }
 
     public function failed(Throwable $exception): void

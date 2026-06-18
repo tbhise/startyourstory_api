@@ -44,6 +44,24 @@ class FirmDashboardController extends Controller
                 // Reversible: a login clears deletion_requested_at and they reappear.
                 ->whereNull('users.deletion_requested_at')
                 ->where('users.role', 'student');
+
+            /*
+        |--------------------------------------------------------------------------
+        | Exclude already_doing_articleship from candidate search
+        | These students are not job-seeking; they only appear in creator search
+        | (handled below via the is_creator OR clause when creator tab is active).
+        |--------------------------------------------------------------------------
+        */
+            $isCreatorTabActive = $request->filled('registered_for') &&
+                in_array('creator',
+                    is_array($request->registered_for)
+                        ? $request->registered_for
+                        : [$request->registered_for]
+                );
+            if (!$isCreatorTabActive) {
+                $query->where('student_profiles.looking_for', '!=', 'already_doing_articleship');
+            }
+
             /*
         |--------------------------------------------------------------------------
         | Search

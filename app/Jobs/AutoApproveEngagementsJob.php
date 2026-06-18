@@ -57,10 +57,6 @@ class AutoApproveEngagementsJob implements ShouldQueue
             return;
         }
 
-        Log::info('AutoApproveEngagementsJob: auto-approving stale submissions', [
-            'count' => $engagements->count(),
-        ]);
-
         foreach ($engagements as $eng) {
             try {
                 DB::table('engagement_submissions')->where('id', $eng->submission_id)->update([

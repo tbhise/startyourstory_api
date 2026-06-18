@@ -1733,3 +1733,93 @@ The public contact form was broken three ways: the `contact_submissions` table d
 
 ### Rollback Plan
 - Remove `getContactSubmissions` + its route; revert the action_url to `/admin/contact`. (Leave the table — it's required by `submitContact` regardless.)
+
+---
+
+## 2026-06-18 — New Student Type: Already Doing Articleship
+
+Introduces `looking_for = "already_doing_articleship"`. These students are enrolled in an articleship, not seeking jobs. They are excluded from firm candidate searches but appear in Creator Search if `is_creator = 1`.
+
+### DB Changes
+None — `looking_for` is a VARCHAR column; no migration required.
+
+### Modified: `app/Http/Controllers/API/FirmDashboardController.php` (`getCandidates`)
+- Before the Search block, checks whether the active query is targeting the Creator tab (`registered_for` includes `"creator"`).
+- If NOT the creator tab: adds `WHERE student_profiles.looking_for != 'already_doing_articleship'` to exclude the new type from all non-creator candidate views (general list, all filter tabs, saved-only).
+- If the creator tab IS active: no additional exclusion — the existing `whereIn('looking_for', ['creator']) OR is_creator = 1` filter already handles visibility correctly; `already_doing_articleship + is_creator = 1` students appear via the `is_creator` branch, while those without creator opt-in are still excluded.
+
+### Modified: `app/Http/Controllers/API/UserController.php` (`updateProfile`) — completion logic
+- **Bug fix:** the profile-completion branches had no case for `already_doing_articleship`, so `$isProfileComplete` stayed `false` and these students could never finish onboarding (permanently stuck on `/profile`). Extended the `doing-articleship` branch to also match `already_doing_articleship` — completion now requires Basic Info + SRN + current articleship firm (mirrors the ADA wizard: Basic Info + Experience, no Professional Status). The existing creator-opt-in extension block (adds creator-field requirements when `is_creator = 1`) already applies on top correctly.
+- Apply-limit awareness modal now also suppressed for `already_doing_articleship` (alongside `creator`) — neither type applies for jobs.
+
+### Testing
+- `php -l` clean. `GET /candidates` (no filter): `already_doing_articleship` students absent from results. `GET /candidates?registered_for[]=creator`: `already_doing_articleship + is_creator=1` students present; `already_doing_articleship + is_creator=0` absent (not matched by either clause). Job seeker and pure creator results unaffected.
+- `updateProfile` for `already_doing_articleship` with name/email/mobile/city/srn/current_firm_name → `profile_completed: 1`, `show_apply_limit_modal: false`. Missing current_firm_name → `profile_completed: 0`. With `is_creator=1` also requires creator fields. Other looking_for flows unaffected.
+
+### Rollback Plan
+- In `FirmDashboardController::getCandidates()`: remove the `$isCreatorTabActive` block and the `if (!$isCreatorTabActive) { $query->where(...) }` clause.
+- In `UserController::updateProfile()`: revert the completion branch back to `=== 'doing-articleship'`, and remove the `&& $request->looking_for !== 'already_doing_articleship'` clause from the apply-limit modal guard.
+
+---
+
+## 2026-06-18 — Editable student name + welcome-bonus exclusion for Already Doing Articleship
+
+Two targeted changes: (1) the profile Name field is now actually persisted; (2) `already_doing_articleship` students are excluded from the onboarding welcome bonus.
+
+### DB Changes
+None.
+
+### Modified: `app/Http/Controllers/API/UserController.php` (`updateProfile`)
+- **Name now persisted.** Previously the profile form's Name field was editable and validated on the client but never written server-side — `updateProfile` did not validate or store `name`, so edits were silently discarded. Added `'name' => 'required|string|min:3|max:100'` to the validator and now write `'name' => trim($request->name)` into the `users` table update (the same statement that sets `profile_completed`). Only caller of `/updateProfile` is the student profile form, which always submits `name`; profile-image upload uses the separate `/updateProfileImage` endpoint, so making `name` required does not affect it.
+
+### Modified: `app/Helpers/SysCoinHelper.php` (`maybeGrantWelcomeBonus`)
+- **Welcome bonus excluded for `already_doing_articleship`.** The method already fetched `registration_type`; it now selects `looking_for` in the same query and returns early (no grant) when `looking_for === 'already_doing_articleship'`, before the provisional-eligibility check. This is the single enforcement point for both callers (`updateProfile` on completion, and the email-verification path). No other reward path is touched: SYS Coin amounts, wallet logic, ledger entries, referral bonus (`maybeGrantStudentReferralBonus`), and notifications are all unchanged. Note: ADA students keep `registration_type = 'provisional'`, so without this guard they WOULD have received the bonus — this is the targeted exception.
+
+### Testing
+- `php -l` clean on both files.
+- Name: `updateProfile` with `name = "New Name"` → `users.name` updated; `/me` reflects it. `name` length < 3 → `422` validation error. Other flows (creator, job seeker) save name unchanged.
+- Welcome bonus: Job Seeker + Creator (provisional) → `WELCOME_BONUS` transaction created as before. `already_doing_articleship` (even provisional, profile complete, email verified) → no `WELCOME_BONUS` row, no coin credit. Referral bonus to a referrer who referred an ADA student is unaffected (separate method).
+
+### Rollback Plan
+- `UserController::updateProfile()`: remove the `'name' => 'required|...'` validator rule and the `'name' => trim($request->name)` line from the `users` update.
+- `SysCoinHelper::maybeGrantWelcomeBonus()`: revert the `select('registration_type', 'looking_for')` back to `->value('registration_type')` and remove the `already_doing_articleship` early-return.
+
+---
+
+## 2026-06-18 — Error logs: raw error in `error_summary` + log errors only
+
+Admins can now see the actual exception text (e.g. "Base table or view not found … Table 'x' doesn't exist") straight from the dashboard without opening `laravel.log`.
+
+### DB Changes — ⚠️ MUST BE APPLIED MANUALLY
+- `error_summary` widened **VARCHAR(100) → VARCHAR(1000)**. Migration `2026_06_18_000001_widen_error_summary_on_error_logs.php` (idempotent, raw `ALTER … MODIFY`); also appended to `db_changes.txt` and updated in `sys.sql`.
+- The migration was **not run by this change** (the harness blocked `php artisan migrate` since prod/live status of this DB is unconfirmed). **Run it before deploying the code below**, via `php artisan migrate` or the `db_changes.txt` SQL: `ALTER TABLE error_logs MODIFY error_summary VARCHAR(1000) NULL;`
+
+### Column semantics (changed)
+- `error_summary` → **RAW** exception message: SQL is **kept** (that's the point — admins need to see the failing query/table), passwords/tokens/secrets are still **redacted**, single-lined, ≤1000 chars.
+- `message` → unchanged: short, fully sanitized one-liner (SQL tail stripped, secrets redacted), ≤1000 chars.
+
+### Modified: `app/Services/ErrorLogRecorder.php`
+- Split the old `sanitize()` into `redactSecrets()` (secret-mask + whitespace-collapse, SQL untouched) and `sanitize()` (strip SQL tail, then `redactSecrets()`).
+- New `rawMessage(Throwable)` → secret-redacted raw message (falls back to class name).
+- `writeRow()` now takes `($safe, $raw, $status, $request)`: writes `message = $safe` (≤1000) and `error_summary = $raw` (≤1000, falls back to `$safe`).
+- `recordLog()` computes a raw variant (`redactSecrets($message)`) alongside the sanitized one.
+- Stack traces are still NEVER stored in the DB.
+
+### Modified: `app/Http/Controllers/API/ErrorLogController.php` (`store`)
+- Frontend rows now also set `error_summary = mb_substr($message, 0, 1000)` (their submitted message *is* the raw error) so the dashboard's Raw Error view is uniform across api/frontend rows. `index()` already searched `error_summary`.
+
+### Config: `.env` — log errors only
+- `LOG_LEVEL` changed `debug → error` and `php artisan config:clear` run. The `single`/`daily` channels use `env('LOG_LEVEL','debug')`, so only `error`/`critical`/`alert`/`emergency` now reach `laravel.log`. **`Log::info`/`debug`/`notice`/`warning` calls remain in code but produce no file output** — no call sites were deleted (reversible by flipping the env back).
+- ⚠️ **Tradeoff:** this also suppresses `Log::warning` lines, including **PhonePe webhook signature-verification failures and payment no-credit warnings** (`PhonePeWalletController`, `PhonePeFirmController`, `PhonePeEngagementController`, `MessagingController`). If those warnings must stay visible, use `LOG_LEVEL=warning` instead.
+
+### Testing
+- `php -l` clean on `ErrorLogRecorder.php` and `ErrorLogController.php`. `config:clear` succeeded.
+- Pending live verification after the column ALTER is applied: trigger a DB error (query a missing table) → `error_summary` holds the full `SQLSTATE… Table … doesn't exist` text (≤1000), `message` holds the sanitized one-liner; a `Log::info` no longer appears in `laravel.log`; a thrown 500 still does.
+
+### Rollback Plan
+- `.env`: set `LOG_LEVEL=debug` (or `warning`), then `php artisan config:clear`.
+- `ErrorLogController@store`: remove the `error_summary` line.
+- `ErrorLogRecorder`: restore the single `sanitize()` (inline the secret regex), revert `writeRow()` to `($safe, $status, $request)` with `error_summary = mb_substr($safe,0,100)`, drop `rawMessage()`/`redactSecrets()`.
+- DB: `ALTER TABLE error_logs MODIFY error_summary VARCHAR(100) NULL;` (truncates rows > 100 chars) or `php artisan migrate:rollback`.
+
+

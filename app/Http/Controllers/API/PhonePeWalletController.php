@@ -315,12 +315,6 @@ class PhonePeWalletController extends Controller
                 return false;
             });
 
-            if ($credited) {
-                Log::info("PhonePe webhook: wallet credited for txn {$merchantTxnId}, user {$recharge->user_id}");
-            } else {
-                Log::info("PhonePe webhook: no credit applied for txn {$merchantTxnId} (state=" . ($payload['state'] ?? 'UNKNOWN') . ", event={$event})");
-            }
-
             return response()->json(['message' => 'OK'], 200);
         } catch (\Exception $e) {
             DB::rollBack();

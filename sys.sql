@@ -1050,7 +1050,7 @@ CREATE TABLE `error_logs` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `source` enum('api','frontend') COLLATE utf8mb4_unicode_ci NOT NULL,
   `message` text COLLATE utf8mb4_unicode_ci NOT NULL,
-  `error_summary` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `error_summary` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `status` smallint DEFAULT NULL,
   `url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `stack` text COLLATE utf8mb4_unicode_ci,

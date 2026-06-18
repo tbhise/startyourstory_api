@@ -311,11 +311,18 @@ class SysCoinHelper
             if (!$user || $user->role !== 'student') return;
             if (empty($user->email_verified_at) || (int) ($user->profile_completed ?? 0) !== 1) return;
 
-            // Only provisional-registration students qualify.
-            $registrationType = DB::table('student_profiles')
+            $profile = DB::table('student_profiles')
                 ->where('user_id', $userId)
-                ->value('registration_type');
-            if ($registrationType !== 'provisional') return;
+                ->select('registration_type', 'looking_for')
+                ->first();
+
+            // "Already Doing Articleship" students are not job-seeking and are
+            // excluded from onboarding rewards — skip the welcome bonus entirely.
+            // (Targeted exception; all other registration types are unaffected.)
+            if ($profile && $profile->looking_for === 'already_doing_articleship') return;
+
+            // Only provisional-registration students qualify.
+            if (!$profile || $profile->registration_type !== 'provisional') return;
 
             // Already granted?
             $exists = DB::table('sys_coin_transactions')

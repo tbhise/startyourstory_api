@@ -32,11 +32,9 @@ class AdminController extends Controller
                     'message' => $validator->errors()->first()
                 ], 422);
             }
-            // Log::info('Admin Login Attempt', ['email' => $request->email , 'password' => $request->password]);
             $admin = DB::table('admin_users')
                 ->where('email', $request->email)
                 ->first();
-            // Log::info('Admin Login Query Result', ['admin' => $admin]);
             if (!$admin) {
                 return response()->json([
                     'status' => false,
@@ -56,7 +54,6 @@ class AdminController extends Controller
                 ], 403);
             }
             $token = Str::random(80);
-            Log::info($admin->id);
             DB::table('admin_users')
                 ->where('id', $admin->id)
                 ->update([

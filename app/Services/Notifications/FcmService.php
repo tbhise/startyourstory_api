@@ -85,7 +85,6 @@ class FcmService
                 // Prune dead tokens so the table self-heals.
                 if (in_array($resp->status(), [404, 403], true) || $resp->json('error.status') === 'UNREGISTERED') {
                     AdminFcmToken::where('id', $id)->delete();
-                    Log::info("FcmService: pruned stale token id={$id}");
                 } elseif ($resp->failed()) {
                     Log::warning('FcmService: send failed', ['id' => $id, 'status' => $resp->status(), 'body' => $resp->body()]);
                 }

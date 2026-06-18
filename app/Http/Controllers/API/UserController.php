@@ -144,7 +144,6 @@ class UserController extends Controller
     {
         DB::beginTransaction();
         try {
-            // Log::info('Update Profile API called', ['request' => $request->all()]);
             $token = $request->cookie('auth_token');
             if (!$token) {
                 return response()->json([
@@ -163,6 +162,7 @@ class UserController extends Controller
                 ], 401);
             }
             $validator = Validator::make($request->all(), [
+                'name' => 'required|string|min:3|max:100',
                 'looking_for' => 'nullable|string',
                 'srn' => 'nullable|string|max:10|unique:student_profiles,srn,' . $user->id . ',user_id',
                 'city' => 'nullable|string',
@@ -312,7 +312,6 @@ class UserController extends Controller
             }
 
 
-            // Log::info($registrationType);
             $preferredLocations = [];
             if (!empty($request->preferred_locations_json)) {
                 $preferredLocations =
@@ -461,9 +460,14 @@ class UserController extends Controller
                         !empty($request->current_firm_name);
                 }
             } elseif (
-                strtolower(trim($request->looking_for ?? '')) === 'doing-articleship'
+                in_array(
+                    strtolower(trim($request->looking_for ?? '')),
+                    ['doing-articleship', 'already_doing_articleship']
+                )
             ) {
                 // Case B — wizard collects basic info, srn and the current articleship firm only.
+                // already_doing_articleship shares this completion criteria (Basic Info +
+                // Experience); Professional Status is not collected for it.
                 $isProfileComplete =
                     $basicInfoComplete &&
                     !empty($request->srn) &&
@@ -519,16 +523,19 @@ class UserController extends Controller
             DB::table('users')
                 ->where('id', $user->id)
                 ->update([
+                    'name' => trim($request->name),
                     'profile_completed' => $isProfileComplete ? 1 : 0,
                     'updated_at' => now()
                 ]);
 
-            // Determine whether to show the apply-limit awareness modal
+            // Determine whether to show the apply-limit awareness modal.
+            // Excluded for creators and already_doing_articleship — neither applies for jobs.
             $showModal = false;
             if (
                 $isProfileComplete &&
                 !$wasAlreadyCompleted &&
-                $request->looking_for !== 'creator'
+                $request->looking_for !== 'creator' &&
+                $request->looking_for !== 'already_doing_articleship'
             ) {
                 $freshProfile = DB::table('student_profiles')->where('user_id', $user->id)->first();
                 $dismissed = (bool) ($freshProfile->apply_limit_modal_dismissed ?? false);

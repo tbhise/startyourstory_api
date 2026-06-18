@@ -312,7 +312,6 @@ class PhonePeFirmController extends Controller
                 ReferralHelper::onFirmPremiumActivated((int) $subscription->firm_id);
 
                 DB::commit();
-                Log::info("PhonePeFirmController webhook: subscription {$subscription->id} activated via txn {$merchantTxnId}");
             } else {
                 DB::table('firm_subscriptions')
                     ->where('id', $subscription->id)

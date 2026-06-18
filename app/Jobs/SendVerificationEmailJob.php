@@ -28,8 +28,6 @@ class SendVerificationEmailJob implements ShouldQueue
 
     public function handle(): void
     {
-        Log::info('Preparing to send verification email to user ID: ' . $this->user->id);
-
         $verificationUrl = URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes(60),
@@ -49,8 +47,6 @@ class SendVerificationEmailJob implements ShouldQueue
         if ($this->emailLogId) {
             EmailLog::find($this->emailLogId)?->markSent();
         }
-
-        Log::info('Verification email sent to user ID: ' . $this->user->id);
     }
 
     public function failed(Throwable $exception): void

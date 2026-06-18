@@ -43,10 +43,6 @@ class SendHourlyApplicationDigestJob implements ShouldQueue
             return;
         }
 
-        Log::info('SendHourlyApplicationDigestJob dispatching for firms', [
-            'count' => $firms->count(),
-        ]);
-
         foreach ($firms as $firm) {
             SendApplicationDigestJob::dispatch(
                 (int) $firm->firm_id,

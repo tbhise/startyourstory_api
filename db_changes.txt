@@ -2282,3 +2282,17 @@ ALTER TABLE `error_logs` ADD COLUMN `error_summary` VARCHAR(100) NULL AFTER `mes
 ALTER TABLE `users` ADD COLUMN `deletion_reason` VARCHAR(500) NULL AFTER `scheduled_deletion_at`;
 
 -- ROLLBACK: ALTER TABLE `users` DROP COLUMN `deletion_reason`;
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## ERROR LOGS — error_summary widened 100 → 1000 — added 2026-06-18
+## ═══════════════════════════════════════════════════════════════════════════════
+## error_summary now stores the RAW (secret-redacted) exception message so admins can
+## see what actually happened (e.g. "Base table or view not found ... Table 'x' doesn't
+## exist") straight from the dashboard. `message` remains the short sanitized one-liner.
+## Idempotent (safe to re-run). Or run: php artisan migrate
+##   (migration: database/migrations/2026_06_18_000001_widen_error_summary_on_error_logs.php)
+
+ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(1000) NULL;
+
+-- ROLLBACK: ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(100) NULL; (truncates rows > 100 chars)

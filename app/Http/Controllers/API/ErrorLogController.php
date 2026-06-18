@@ -49,6 +49,9 @@ class ErrorLogController extends Controller
             DB::table('error_logs')->insert([
                 'source'     => $source,
                 'message'    => $message,
+                // Frontend rows: the submitted message IS the raw error — mirror it
+                // into error_summary (≤1000) so the dashboard's raw view is uniform.
+                'error_summary' => mb_substr($message, 0, 1000),
                 'status'     => $status,
                 'url'        => $url,
                 'stack'      => $stack,

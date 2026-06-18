@@ -46,7 +46,7 @@ class PublicController extends Controller
 
         // Notify admin
         try {
-            $adminEmail = config('mail.admin_address', env('ADMIN_EMAIL', 'admin@startyourstory.in'));
+            $adminEmail = config('mail.admin_address', env('ADMIN_EMAIL', 'contact@startyourstory.in'));
             \Illuminate\Support\Facades\Mail::raw(
                 "New contact form submission\n\nName: {$request->name}\nEmail: {$request->email}\nSubject: {$request->subject}\n\n{$request->message}",
                 fn ($m) => $m->to($adminEmail)->subject("Contact Form: {$request->subject}")

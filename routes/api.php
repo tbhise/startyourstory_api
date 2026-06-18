@@ -162,6 +162,11 @@ Route::post('/admin/login',   [AdminController::class, 'login']);
 Route::get('/admin/me',       [AdminController::class, 'me']);
 Route::post('/admin/logout',  [AdminController::class, 'logout']);
 
+// Admin — "Login as User" / impersonation (super_admin only; enforced in controller).
+// AdminAuthMiddleware already requires a valid admin_token on these /admin/* paths.
+Route::post('/admin/impersonate/stop',     [\App\Http\Controllers\API\AdminImpersonationController::class, 'stop']);
+Route::post('/admin/impersonate/{userId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'start']);
+
 // Admin — application-level system health widget
 Route::get('/admin/system-health', [\App\Http\Controllers\API\AdminSystemHealthController::class, 'health']);
 

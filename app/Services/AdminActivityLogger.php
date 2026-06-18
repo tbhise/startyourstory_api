@@ -70,6 +70,9 @@ class AdminActivityLogger
     public const ADMIN_ENABLED            = 'admin_enabled';
     public const ADMIN_DISABLED           = 'admin_disabled';
     public const ADMIN_DELETED            = 'admin_deleted';
+    // Impersonation (Login as User)
+    public const IMPERSONATION_STARTED    = 'impersonation_started';
+    public const IMPERSONATION_ENDED      = 'impersonation_ended';
 
     /**
      * Record one admin action.

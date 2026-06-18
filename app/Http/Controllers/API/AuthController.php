@@ -188,29 +188,59 @@ class AuthController extends Controller
                     'message' => 'Unauthenticated'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+
+            // ── Resolve session first (new arch + impersonation), then legacy api_token ──
+            // Mirrors ApiAuthMiddleware so impersonation tokens — which live only in
+            // user_sessions and never in users.api_token — are resolvable here too.
+            $impersonation = null;
+            $session = DB::table('user_sessions')->where('token', $token)->first();
+            if ($session) {
+                if ($session->expires_at && now()->greaterThan($session->expires_at)) {
+                    DB::table('user_sessions')->where('token', $token)->delete();
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Token expired'
+                    ], 401);
+                }
+                $user = DB::table('users')
+                    ->where('id', $session->user_id)
+                    ->where('is_deleted', false)
+                    ->first();
+                if ($user && ($session->is_impersonation ?? false)) {
+                    $adminName = DB::table('admin_users')
+                        ->where('id', $session->impersonated_by)
+                        ->value('name');
+                    $impersonation = [
+                        'active'     => true,
+                        'admin_id'   => $session->impersonated_by,
+                        'admin_name' => $adminName,
+                    ];
+                }
+            } else {
+                $user = DB::table('users')
+                    ->where('api_token', $token)
+                    ->where('is_deleted', false)
+                    ->first();
+                if (
+                    $user &&
+                    $user->token_expires_at &&
+                    now()->greaterThan($user->token_expires_at)
+                ) {
+                    DB::table('users')
+                        ->where('id', $user->id)
+                        ->update(['api_token' => null]);
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Token expired'
+                    ], 401);
+                }
+            }
+
             if (!$user) {
                 DB::table('user_sessions')->where('token', $token)->delete();
                 return response()->json([
                     'status' => false,
                     'message' => 'Invalid token'
-                ], 401);
-            }
-            if (
-                $user->token_expires_at &&
-                now()->greaterThan($user->token_expires_at)
-            ) {
-                DB::table('users')
-                    ->where('id', $user->id)
-                    ->update([
-                        'api_token' => null
-                    ]);
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Token expired'
                 ], 401);
             }
             $verificationStatus = null;
@@ -317,6 +347,8 @@ class AuthController extends Controller
                     ] : []),
                     'referral_code' => $user->referral_code ?? null,
                     'referral_count' => $user->referral_count ?? 0,
+                    // Present + active only when an admin is impersonating this account.
+                    'impersonation' => $impersonation,
                 ]
             ]);
         } catch (\Exception $e) {
@@ -379,6 +411,13 @@ class AuthController extends Controller
     {
         try {
             $token = $request->cookie('auth_token');
+
+            // If this is an admin impersonation session, close its audit row.
+            // (Does not touch users.api_token — impersonation never set it.)
+            DB::table('admin_impersonation_sessions')
+                ->where('token', $token)
+                ->whereNull('logout_time')
+                ->update(['logout_time' => now()]);
 
             DB::table('users')
                 ->where('api_token', $token)

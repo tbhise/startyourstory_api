@@ -4,6 +4,47 @@
 
 ---
 
+## 2026-06-18 — Admin "Login as User" (impersonation), read-only
+
+Super admins can open a student/firm account read-only for debugging — no password, without disturbing the admin's own session or the user's real sessions.
+
+### DB Changes — ⚠️ MUST BE APPLIED MANUALLY (or `php artisan migrate`)
+- New `admin_impersonation_sessions` table (audit: admin_id, target_user_id, target_role, token, ip_address, login_time, logout_time). Migration `2026_06_18_000002`.
+- `user_sessions`: added `is_impersonation TINYINT(1) DEFAULT 0` + `impersonated_by BIGINT NULL`. Migration `2026_06_18_000003` (idempotent). Normal logins leave both at defaults → existing auth untouched.
+- SQL also appended to `db_changes.txt`. **Gate setup:** `UPDATE admin_users SET role='super_admin' WHERE email='…';` (no schema change — `role` already exists).
+
+### How it works (no existing flow modified destructively)
+- The two auth systems already use separate cookies (`auth_token` for users, `admin_token` for admins) and can coexist. Impersonation mints a **separate, short-lived (1h) `user_sessions` row** flagged `is_impersonation=1` and sets it as `auth_token`. It **never** writes `users.api_token` or touches `admin_token`, so the real user's sessions and the admin's panel session are both intact. Exit clears only `auth_token`.
+
+### New: `app/Http/Controllers/API/AdminImpersonationController.php`
+- `start($userId)` (POST `/admin/impersonate/{userId}`): super_admin-only; target must be a non-deleted student/firm; auto-ends any prior impersonation by this admin; inserts session + audit rows; logs `impersonation_started`; returns `auth_token` cookie + `{ redirect }`.
+- `stop()` (POST `/admin/impersonate/stop`): stamps `logout_time`, deletes the impersonation session row, clears only `auth_token`; logs `impersonation_ended`. Admin returns to the panel with `admin_token` intact.
+
+### New: `app/Http/Middleware/BlockImpersonationWrites.php`
+- Registered globally on the `api` group (like `AdminAuthMiddleware`); **no-op unless `auth_token` is an active impersonation session**. For impersonation sessions it enforces read-only via a deny-list: all PUT/PATCH/DELETE blocked, plus a curated list of sensitive POST paths (apply, wallet/recharge, payments, profile/firm-profile update, password change, account deletion, downloads, messaging, subscriptions, creator-marketplace writes, free-content). POST-for-read endpoints keep working. Returns 403 `impersonation_read_only`.
+
+### Modified: `app/Http/Controllers/API/AuthController.php`
+- `me()`: now resolves the token via `user_sessions` first (mirrors `ApiAuthMiddleware`), then falls back to legacy `users.api_token` — required because impersonation tokens live only in `user_sessions`. **Backward-compatible**: normal tokens (present in both) resolve identically. Adds an `impersonation: { active, admin_id, admin_name } | null` field to the response.
+- `logout()`: if the `auth_token` belongs to an impersonation session, stamps `admin_impersonation_sessions.logout_time` before clearing the cookie. Normal logout behaviour otherwise unchanged.
+
+### Modified: `app/Services/AdminActivityLogger.php`
+- Added `IMPERSONATION_STARTED` / `IMPERSONATION_ENDED` action constants (also surface in the existing Activity Logs screen).
+
+### Modified: `routes/api.php`, `bootstrap/app.php`
+- Two new `/admin/impersonate/*` routes (stop before `{userId}` so it isn't captured). `BlockImpersonationWrites` appended to the `api` group.
+
+### Testing
+- `php -l` clean on all changed/new PHP files.
+- Pending live verification after migrations: super_admin starts impersonation of a student → `auth_token` set, `/me` returns `impersonation.active=true`, dashboards/reads work, a write (e.g. `/updateProfile`, `/jobs/{id}/apply`) returns 403; Exit clears `auth_token` and admin still has panel; non-super admin gets 403 on start; the admin's own `admin_token` and the user's real sessions are untouched throughout.
+
+### Rollback Plan
+- Remove the two routes + the `BlockImpersonationWrites` registration; delete `AdminImpersonationController` and the middleware.
+- `AuthController::me()`: restore the direct `users.api_token` lookup and drop the `impersonation` field. `logout()`: remove the `admin_impersonation_sessions` update.
+- `AdminActivityLogger`: remove the two constants.
+- DB: `DROP TABLE admin_impersonation_sessions;` + drop the two `user_sessions` columns (or `php artisan migrate:rollback`).
+
+---
+
 ## 2026-06-17 — Fix: email-verification redirect 404 (env() null under config:cache)
 
 The email-verification link redirected to `https://<api-host>/email-verification-result?status=success` and returned **404**. `email-verification-result` is a **React SPA route**, not an API route. Root cause: `UserController::verify()` built the redirect with `env('FRONTEND_URL')`, which returns **null** once `php artisan config:cache` has run (env is not loaded at runtime after caching). With a null host, `redirect()->away('/email-verification-result?...')` resolved relative to the **API** host → 404.

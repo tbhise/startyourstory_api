@@ -2296,3 +2296,47 @@ ALTER TABLE `users` ADD COLUMN `deletion_reason` VARCHAR(500) NULL AFTER `schedu
 ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(1000) NULL;
 
 -- ROLLBACK: ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(100) NULL; (truncates rows > 100 chars)
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## ADMIN IMPERSONATION ("Login as User") — added 2026-06-18
+## ═══════════════════════════════════════════════════════════════════════════════
+## Lets a SUPER ADMIN open a student/firm account read-only for debugging, without
+## the password and without disturbing the admin session OR the user's real sessions.
+## A separate short-lived user_sessions row is minted (is_impersonation = 1) and set
+## as the auth_token cookie; admin_token is never touched. Read-only is enforced
+## server-side by BlockImpersonationWrites. Audit trail in admin_impersonation_sessions.
+## Or run: php artisan migrate
+##   (migrations: 2026_06_18_000002_create_admin_impersonation_sessions_table.php
+##                2026_06_18_000003_add_impersonation_flags_to_user_sessions.php)
+
+-- 1) Impersonation flags on the existing session table.
+ALTER TABLE `user_sessions`
+  ADD COLUMN `is_impersonation` TINYINT(1) NOT NULL DEFAULT 0 AFTER `location`,
+  ADD COLUMN `impersonated_by`  BIGINT NULL AFTER `is_impersonation`;
+
+-- 2) Audit trail (mutable logout_time — kept separate from append-only admin_activity_logs).
+CREATE TABLE `admin_impersonation_sessions` (
+  `id`             BIGINT       NOT NULL AUTO_INCREMENT,
+  `admin_id`       BIGINT       NOT NULL,
+  `admin_name`     VARCHAR(255) NULL,
+  `target_user_id` BIGINT       NOT NULL,
+  `target_role`    VARCHAR(20)  NOT NULL,
+  `token`          VARCHAR(80)  NOT NULL,
+  `ip_address`     VARCHAR(45)  NULL,
+  `login_time`     DATETIME     NOT NULL,
+  `logout_time`    DATETIME     NULL,
+  `created_at`     TIMESTAMP    NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_ais_admin`  (`admin_id`),
+  KEY `idx_ais_target` (`target_user_id`),
+  KEY `idx_ais_token`  (`token`),
+  KEY `idx_ais_logout` (`logout_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3) Gate: only role = 'super_admin' can impersonate. Promote the chosen admin(s):
+--    UPDATE `admin_users` SET `role` = 'super_admin' WHERE `email` = 'you@example.com';
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `admin_impersonation_sessions`;
+-- ALTER TABLE `user_sessions` DROP COLUMN `impersonated_by`, DROP COLUMN `is_impersonation`;

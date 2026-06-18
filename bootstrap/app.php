@@ -18,6 +18,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('api', \App\Http\Middleware\XRobotsTagMiddleware::class);
         // Centralized admin auth (C1): enforces on /admin/* only, no-op elsewhere.
         $middleware->appendToGroup('api', \App\Http\Middleware\AdminAuthMiddleware::class);
+        // Read-only guard for admin impersonation: no-op unless auth_token is an
+        // active impersonation session (is_impersonation = 1).
+        $middleware->appendToGroup('api', \App\Http\Middleware\BlockImpersonationWrites::class);
         $middleware->alias([
             'firm.verified' => \App\Http\Middleware\FirmVerifiedMiddleware::class,
         ]);

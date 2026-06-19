@@ -199,6 +199,14 @@ Route::delete('/admin/payment-settings/qr',  [PaymentSettingsController::class, 
 Route::get('/admin/activity-logs',          [\App\Http\Controllers\API\AdminActivityLogController::class, 'index']);
 Route::get('/admin/activity-logs/filters',  [\App\Http\Controllers\API\AdminActivityLogController::class, 'filters']);
 
+// Admin — resume template management (CRUD; drives the Resume PDF rendering)
+Route::get('/admin/resume-templates',                    [\App\Http\Controllers\API\ResumeTemplateController::class, 'index']);
+Route::post('/admin/resume-templates',                   [\App\Http\Controllers\API\ResumeTemplateController::class, 'store']);
+Route::post('/admin/resume-templates/{id}',              [\App\Http\Controllers\API\ResumeTemplateController::class, 'update']);
+Route::post('/admin/resume-templates/{id}/toggle-active',[\App\Http\Controllers\API\ResumeTemplateController::class, 'toggleActive']);
+Route::post('/admin/resume-templates/{id}/preview',      [\App\Http\Controllers\API\ResumeTemplateController::class, 'uploadPreview']);
+Route::delete('/admin/resume-templates/{id}',            [\App\Http\Controllers\API\ResumeTemplateController::class, 'destroy']);
+
 // Admin — admin user management (CRUD)
 Route::get('/admin/users',                        [AdminUserController::class, 'index']);
 Route::post('/admin/users',                       [AdminUserController::class, 'store']);

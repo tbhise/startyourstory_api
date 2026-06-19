@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-06-19 — Resume Builder — Backend-managed templates (Parts 4–5)
+
+Moves the 4 mPDF resume templates out of the hardcoded Blade `@switch` into a DB-managed, admin-editable system. PDF rendering now reads the active template from the DB, with a safe fallback to the static view so nothing breaks. Engine unchanged (mPDF, pure PHP) per the chosen architecture.
+
+### New: `database/migrations/2026_06_19_000003_create_resume_templates_table.php`
+- Creates `resume_templates` (`id`, `template_name`, `template_key` unique, `html_content` longText, `css_content` longText, `preview_image` nullable, `is_active` bool default true, timestamps). Guarded (`hasTable`).
+- **Seeds the 4 existing templates** (classic/modern/executive/creative) — the exact mPDF HTML+CSS previously inline in `resources/views/resume/pdf.blade.php`, with two substitutions so admin-editable templates need no PHP helpers: responsibilities use precomputed `$x['lines']`; the Executive photo uses precomputed `$d['initials']`. Seed is skipped if the table already has rows (never clobbers admin edits).
+
+### New: `app/Http/Controllers/API/ResumeTemplateController.php`
+- Admin CRUD (query-builder, `{status,message,data}` shape): `index`, `store`, `update`, `toggleActive`, `uploadPreview` (multipart → `ImageHelper::optimizeToWebp` on the public disk, deletes the old file), `destroy` (also removes the preview file). `template_key` validated `^[a-z0-9_]+$` + unique. Auth via `AdminAuthMiddleware` on `/admin/*`.
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- New private `renderTemplateHtml($t, $d)`: renders the **active** `resume_templates` row via `Blade::render(<style>css</style> + html, ['d' => $d])`. Falls back to `view('resume.pdf')` when the table is missing/empty or the key has no active row → PDF generation never breaks.
+- `downloadPdf` now calls `renderTemplateHtml` instead of rendering the static view directly. mPDF config unchanged.
+- `normalizeResume` now also emits per-experience `lines` (split responsibilities) and top-level `initials`, so DB templates avoid custom Blade helpers. Removed the dead `showPhoto` key (Part 2).
+
+### Modified: `routes/api.php`
+- Added admin routes: `GET/POST /admin/resume-templates`, `POST /admin/resume-templates/{id}`, `POST /admin/resume-templates/{id}/toggle-active`, `POST /admin/resume-templates/{id}/preview`, `DELETE /admin/resume-templates/{id}`.
+
+### Architecture note (Part 5)
+- Per the chosen design, the **engine stays mPDF** (pure PHP) and the **live preview stays React**. Therefore: admin edits to a template's HTML/CSS change the **PDF output only**, not the on-screen React preview, and the PDF remains a close mPDF render (no flexbox/grid) rather than a pixel-identical browser render. Admin-authored templates are trusted Blade (admin-only) — same capability the inline templates already had.
+
+### Verified
+- `php -l` clean on all touched/new PHP. Migration applied via `--path` (the project DB predates the base migrations, so a full `migrate` is not runnable here). Confirmed all 4 seeded rows render through `Blade::render` with a representative payload (no Blade errors).
+
+### Rollback Plan
+- `php artisan migrate:rollback` the new migration (drops `resume_templates`); revert `downloadPdf` to `view('resume.pdf', …)->render()` and drop `renderTemplateHtml`; remove the admin routes + `ResumeTemplateController`. The static `resume/pdf.blade.php` is retained and remains the fallback, so reverting is non-destructive.
+
+---
+
+## 2026-06-19 — Resume Builder — UX cleanup (Parts 1–3)
+
+Companion to the same-day frontend cleanup. No schema, route or contract changes.
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- `normalizeResume()` — dropped the dead `showPhoto` key from the normalized PDF payload. Photo is intrinsic to the template (Executive Sidebar only) and was never read by any Blade template, so this removes a no-op field rather than changing any output. `showCertifications` / `showAchievements` / `sectionOrder` are unchanged.
+
+### Validation (Part 1 — no code change needed)
+- Confirmed resume drafts are persisted in the existing `resumes` table with the preferred structure (`id`, `user_id`, `template_key`, `resume_data` JSON, `created_at`, `updated_at`; unique per `user_id`). The `resume_data` JSON already carries personal fields (flat), `summary`, `education`, `experience`, `skills`, `certifications`, `achievements`, plus `completion_percentage` and `is_draft`. Upsert-by-`user_id` in `saveResume()` is correct.
+
+### Rollback Plan
+- Re-add `'showPhoto' => (bool) ($d['showPhoto'] ?? true),` to `normalizeResume()`.
+
+---
+
 ## 2026-06-18 — Admin "Login as User" (impersonation), read-only
 
 Super admins can open a student/firm account read-only for debugging — no password, without disturbing the admin's own session or the user's real sessions.

@@ -4,8 +4,10 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -124,7 +126,7 @@ class ResumeController extends Controller
             $t = $request->template_key;
             $d = $this->normalizeResume($request->input('resume_data'));
 
-            $html = view('resume.pdf', ['t' => $t, 'd' => $d])->render();
+            $html = $this->renderTemplateHtml($t, $d);
 
             $tempDir = storage_path('app/mpdf');
             if (!is_dir($tempDir)) {
@@ -161,6 +163,38 @@ class ResumeController extends Controller
         }
     }
 
+    /**
+     * Resolve the PDF HTML for a template key. Backend-managed templates (Part 4)
+     * win: the ACTIVE `resume_templates` row is rendered via Blade string render.
+     * Falls back to the static `resume/pdf.blade.php` view when the table is
+     * missing/empty or the key has no active row — so PDF generation never breaks.
+     */
+    private function renderTemplateHtml(string $t, array $d): string
+    {
+        $tpl = null;
+        if (Schema::hasTable('resume_templates')) {
+            $tpl = DB::table('resume_templates')
+                ->where('template_key', $t)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        if (!$tpl || !trim((string) $tpl->html_content)) {
+            return view('resume.pdf', ['t' => $t, 'd' => $d])->render();
+        }
+
+        $document =
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+            . (string) $tpl->css_content
+            . '</style></head><body>'
+            . (string) $tpl->html_content
+            . '</body></html>';
+
+        // Admin-authored templates are trusted content; Blade gives them the same
+        // @if/@foreach support the original inline templates relied on.
+        return Blade::render($document, ['d' => $d]);
+    }
+
     /** Coerce the incoming resume_data into a clean, fully-typed structure for the view. */
     private function normalizeResume($d): array
     {
@@ -191,11 +225,18 @@ class ResumeController extends Controller
         $experience = [];
         foreach ((array) ($d['experience'] ?? []) as $x) {
             if (!is_array($x)) continue;
+            $resp = (string) ($x['responsibilities'] ?? '');
+            // Precompute bullet lines so DB-managed templates need no PHP helpers.
+            $lines = array_values(array_filter(
+                array_map('trim', preg_split('/\r\n|\r|\n/', $resp) ?: []),
+                fn($l) => $l !== ''
+            ));
             $experience[] = [
                 'company'          => trim((string) ($x['company'] ?? '')),
                 'duration'         => trim((string) ($x['duration'] ?? '')),
                 'role'             => trim((string) ($x['role'] ?? '')),
-                'responsibilities' => (string) ($x['responsibilities'] ?? ''),
+                'responsibilities' => $resp,
+                'lines'            => $lines,
             ];
         }
 
@@ -207,8 +248,17 @@ class ResumeController extends Controller
             if (!in_array($k, $order, true)) $order[] = $k;
         }
 
+        // Initials for the Executive photo block (templates avoid custom helpers).
+        $initials = '';
+        foreach (preg_split('/\s+/', trim($str('name'))) ?: [] as $w) {
+            if ($w !== '') $initials .= mb_substr($w, 0, 1);
+            if (mb_strlen($initials) >= 2) break;
+        }
+        $initials = mb_strtoupper($initials !== '' ? $initials : 'CV');
+
         return [
             'name'               => $str('name'),
+            'initials'           => $initials,
             'title'              => $str('title'),
             'email'              => $str('email'),
             'mobile'             => $str('mobile'),
@@ -221,7 +271,7 @@ class ResumeController extends Controller
             'skills'             => $strArr('skills'),
             'certifications'     => $strArr('certifications'),
             'achievements'       => $strArr('achievements'),
-            'showPhoto'          => (bool) ($d['showPhoto'] ?? true),
+            // Photo is intrinsic to the template (Executive Sidebar only) — never a user choice.
             'showCertifications' => (bool) ($d['showCertifications'] ?? true),
             'showAchievements'   => (bool) ($d['showAchievements'] ?? true),
             'sectionOrder'       => $order,

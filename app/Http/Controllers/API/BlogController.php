@@ -58,6 +58,7 @@ class BlogController extends Controller
                 'blogs.content',
                 'blogs.meta_title',
                 'blogs.meta_description',
+                'blogs.social_caption',
                 'blog_categories.name as category_name',
                 'blog_categories.slug as category_slug',
                 'blogs.published_at',

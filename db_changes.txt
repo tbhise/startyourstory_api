@@ -2340,3 +2340,43 @@ CREATE TABLE `admin_impersonation_sessions` (
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `admin_impersonation_sessions`;
 -- ALTER TABLE `user_sessions` DROP COLUMN `impersonated_by`, DROP COLUMN `is_impersonation`;
+
+
+-- ============================================================
+--  Blog Module — Social Caption (2026-06-19)
+-- ============================================================
+-- Reusable social-media caption per blog, used when sharing across
+-- WhatsApp / LinkedIn / Twitter(X). Blog URL is NOT stored — it is
+-- generated dynamically from the slug at copy time. Nullable; existing
+-- blogs are unaffected.
+-- Migration: 2026_06_19_000001_add_social_caption_to_blogs_table.php
+-- ============================================================
+
+ALTER TABLE `blogs`
+  ADD COLUMN `social_caption` TEXT NULL AFTER `meta_description`;
+
+-- ROLLBACK:
+-- ALTER TABLE `blogs` DROP COLUMN `social_caption`;
+
+
+-- ============================================================
+--  Resume Builder — Drafts (2026-06-19)
+-- ============================================================
+-- One draft per user: selected template + full resume content (JSON).
+-- Save = upsert keyed by user_id; Get = the user's single draft.
+-- Migration: 2026_06_19_000002_create_resumes_table.php
+-- ============================================================
+
+CREATE TABLE `resumes` (
+  `id`           BIGINT       NOT NULL AUTO_INCREMENT,
+  `user_id`      BIGINT       NOT NULL,
+  `template_key` VARCHAR(50)  NOT NULL DEFAULT 'classic_professional',
+  `resume_data`  JSON         NULL,
+  `created_at`   TIMESTAMP    NULL DEFAULT NULL,
+  `updated_at`   TIMESTAMP    NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_resumes_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `resumes`;

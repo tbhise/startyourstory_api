@@ -1864,3 +1864,116 @@ Admins can now see the actual exception text (e.g. "Base table or view not found
 - DB: `ALTER TABLE error_logs MODIFY error_summary VARCHAR(100) NULL;` (truncates rows > 100 chars) or `php artisan migrate:rollback`.
 
 
+---
+
+## 2026-06-19 — Blog: reusable social-media caption
+
+Blogs can now store one reusable social caption (for WhatsApp / LinkedIn / Twitter-X). The admin UI copies a paste-ready post (caption + dynamic blog URL + default hashtags). The blog URL is generated from the slug at copy time and is **never stored**.
+
+### DB Changes — ⚠️ MUST BE APPLIED MANUALLY
+- New nullable column `blogs.social_caption TEXT NULL` (after `meta_description`). Migration `2026_06_19_000001_add_social_caption_to_blogs_table.php` (idempotent, `Schema::hasColumn` guarded). Also appended to `db_changes.txt`.
+- The migration was **not run by this change** (prod/live status of this DB is unconfirmed). **Run it before deploying**, via `php artisan migrate` or the SQL: `ALTER TABLE blogs ADD COLUMN social_caption TEXT NULL AFTER meta_description;`
+
+### Modified: `app/Http/Controllers/API/AdminBlogController.php`
+- `getBlogs` (listing): added `blogs.social_caption` to the select so the listing "Copy Social Post" button has the caption without a per-row fetch.
+- `getBlog` (detail): unchanged — already selects `blogs.*`, so `social_caption` is returned automatically.
+- `createBlog` / `updateBlog`: added validation `social_caption => nullable|string` (no length cap, line breaks preserved) and persist `social_caption` — `$request->filled('social_caption') ? $request->social_caption : null`, so an emptied caption is stored as `NULL`. Value is stored raw (not trimmed) to preserve line breaks. Existing create/edit/tag/topic/image flows are unchanged.
+
+### Not changed
+- Public `BlogController` endpoints — the copy feature is admin-only, so `social_caption` is not exposed on the public API.
+
+### Testing
+- `php -l` clean on the controller and the migration.
+- Pending live verification after the column ALTER is applied: create/edit a blog with a caption → value round-trips in `getBlog`; clearing it stores `NULL`; existing captionless blogs keep working.
+
+### Rollback Plan
+- Controller: remove the `social_caption` validation lines, the listing select column, and the two insert/update assignments.
+- DB: `ALTER TABLE blogs DROP COLUMN social_caption;` or `php artisan migrate:rollback`.
+
+
+---
+
+## 2026-06-19 — Blog: expose social_caption on public blog API
+
+Follow-up to the social-caption feature — the "Copy Social Post" action was moved to the **public** blog page's share row (next to WhatsApp/LinkedIn/X/Copy-link), so the caption must be returned publicly.
+
+### Modified: `app/Http/Controllers/API/BlogController.php`
+- `getPublishedBlogBySlug`: added `blogs.social_caption` to the select. Only published blogs are exposed (unchanged), so this leaks nothing draft-side. The blog URL is still generated client-side from the slug — not stored.
+- `getPublishedBlogs` (listing) left unchanged — the caption is only needed on the single-post page.
+
+### Rollback Plan
+- Remove `blogs.social_caption` from the `getPublishedBlogBySlug` select.
+
+
+---
+
+## 2026-06-19 — Resume Builder — Phase 5 (drafts: save + get)
+
+Backend for saving/loading a user's resume draft. New table + two query-builder endpoints; existing architecture untouched.
+
+### DB Changes — ⚠️ MUST BE APPLIED MANUALLY
+- New table `resumes` (one draft per user): `id`, `user_id` (UNIQUE `uq_resumes_user`), `template_key VARCHAR(50)`, `resume_data JSON`, timestamps. Migration `2026_06_19_000002_create_resumes_table.php` (guarded with `Schema::hasTable`). Also appended to `db_changes.txt` and `sys.sql`.
+- Not run by this change (DB live status unconfirmed). **Run before deploying**: `php artisan migrate`, or the `db_changes.txt` SQL.
+
+### New: `app/Http/Controllers/API/ResumeController.php`
+- `getResume` (GET): returns the auth user's draft `{ template_key, resume_data (decoded), updated_at }` or `data: null` if none. Query-builder only; reads `auth_user` from request attributes (set by `ApiAuthMiddleware`).
+- `saveResume` (POST): validates `template_key` (in the 4 allowed keys) + `resume_data` (`array`); **upserts** keyed by `user_id` (update if present, else insert with `created_at`); stores `resume_data` as `json_encode(...)`.
+
+### Modified: `routes/api.php`
+- Added `use App\Http\Controllers\API\ResumeController;` and, inside the existing `ApiAuthMiddleware` group, `GET /resume` + `POST /resume`.
+
+### Testing
+- `php -l` clean on the controller, migration, and `routes/api.php`.
+- Pending live verification after the table is created: POST `/resume` with `{template_key, resume_data}` persists one row per user; GET `/resume` round-trips the decoded JSON; a second POST updates (not duplicates) the row.
+
+### Rollback Plan
+- Remove the two routes + the import from `routes/api.php`; delete `ResumeController.php`; `DROP TABLE resumes;` or `php artisan migrate:rollback`.
+
+
+---
+
+## 2026-06-19 — Resume Builder — Phase 6 (delete resume endpoint)
+
+Adds resume deletion for the new "My Resume" dashboard. No DB/schema change (uses the existing `resumes` table from Phase 5).
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- New `deleteResume` (DELETE): removes the auth user's draft row (`DB::table('resumes')->where('user_id', …)->delete()`), returns `{status:true}`. Idempotent — succeeds even if no draft exists.
+
+### Modified: `routes/api.php`
+- Added `DELETE /resume` → `ResumeController@deleteResume` inside the existing `ApiAuthMiddleware` group (alongside the Phase-5 GET/POST).
+
+### Testing
+- `php -l` clean on the controller and `routes/api.php`. No migration required.
+
+### Rollback Plan
+- Remove the `DELETE /resume` route and the `deleteResume` method.
+
+
+---
+
+## 2026-06-19 — Resume Builder — Launch QA: backend PDF generation (mPDF)
+
+Replaces the client-side `window.print()` download with **server-side PDF generation** (PART 3 mandate). No schema change (uses the existing `resumes` data shape).
+
+### Dependency
+- `composer require mpdf/mpdf` → **mpdf/mpdf 8.3.1** (pure-PHP, no Chromium/Node). Chosen over dompdf for far better table/colour/Unicode support. ⚠️ Run `composer install` on deploy so `vendor/` has mPDF.
+
+### New: `resources/views/resume/pdf.blade.php`
+- Server-side Blade replica of all 4 templates (Classic / Modern / Executive / Creative), authored to match the reference designs within mPDF's constraints (same section order, typography hierarchy, colours, spacing). mPDF has no flex/grid, so:
+  - Single-column templates (Classic, Modern) use normal flow → paginate natively.
+  - **Executive (sidebar)** and **Creative (two-column)** use **float layouts (not tables)** so the main/left column paginates across pages — fixes a clipping/cutoff bug where a tall two-column *table* row was truncated to one page.
+- Edge cases: `word-wrap/overflow-wrap: break-word` everywhere; empty/optional sections omitted; respects `showPhoto`/`showCertifications`/`showAchievements`/`sectionOrder`. Executive photo → initials box (no binary asset needed).
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- New `downloadPdf` (POST): validates `template_key` + `resume_data`, normalizes via `normalizeResume()` (typed arrays, sane defaults, sanitized `sectionOrder`), renders the Blade, and streams an **A4** PDF (`Content-Disposition: attachment`). mPDF config: `format A4`, margins 0 (templates own their insets so full-bleed bands reach the edge), `default_font dejavusans` (₹/Unicode), `useSubstitutions`, `tempDir = storage/app/mpdf`.
+
+### Modified: `routes/api.php`
+- `POST /resume/pdf` → `ResumeController@downloadPdf` (inside the existing `ApiAuthMiddleware` group).
+
+### Testing
+- `php -l` clean. End-to-end render harness across **4 templates × 5 cases** (full / very-long / minimal / missing-optional / reordered): **all 20 render**, long content paginates to 2 pages on every template (verified Executive & Creative no longer clip), minimal/missing render cleanly. Output is vector/selectable text (sharp, recruiter-ready).
+
+### Rollback Plan
+- Remove `POST /resume/pdf` + `downloadPdf`/`normalizeResume`; delete `resources/views/resume/pdf.blade.php`; `composer remove mpdf/mpdf`. (Frontend would need its print path restored.)
+
+

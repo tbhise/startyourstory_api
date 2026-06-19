@@ -8,6 +8,7 @@ use App\Http\Controllers\API\FirmDashboardController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\UserController;
+use App\Http\Controllers\API\ResumeController;
 use App\Http\Middleware\ApiAuthMiddleware;
 use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
@@ -85,6 +86,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // ── Available to all authenticated users (no firm-verification gate) ──
     Route::post('/updateProfile',        [UserController::class, 'updateProfile']);
     Route::post('/getProfile',           [UserController::class, 'getProfile']);
+
+    // ── Resume Builder drafts (one per user) ──
+    Route::get('/resume',                [ResumeController::class, 'getResume']);
+    Route::post('/resume',               [ResumeController::class, 'saveResume']);
+    Route::post('/resume/pdf',           [ResumeController::class, 'downloadPdf']);
+    Route::delete('/resume',             [ResumeController::class, 'deleteResume']);
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);

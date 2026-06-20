@@ -4,6 +4,90 @@
 
 ---
 
+## 2026-06-20 — Blog image performance: cache headers + downscaling
+
+### Why
+PageSpeed flagged blog images (`/storage/blog-images/...`) with "Cache TTL: None"
+(repeat downloads) and oversized images (300–400 KB shown in small cards).
+
+### Issue 3 — Missing cache headers (P1)
+Root cause: images are served statically by Apache from `public/storage/` with no
+`Cache-Control`/`Expires`, so browsers re-download them every visit.
+
+#### Modified: `public/.htaccess`
+- Added `mod_headers` + `mod_expires` blocks setting
+  `Cache-Control: public, max-age=31536000, immutable` (1 year) for
+  webp/avif/jpg/png/gif/svg/ico. Safe because uploads get unique random
+  filenames and are never mutated in place (a re-upload is a new file).
+
+### Issue 4 — Oversized blog images (P1)
+Root cause: `ImageHelper::optimizeToWebp()` converted uploads to WebP but never
+**resized** them, so a multi-megapixel original stayed full-resolution and was
+rendered into small listing cards.
+
+#### Modified: `app/Helpers/ImageHelper.php`
+- Added a `$maxWidth` param (default 1600px) and a private `downscale()` helper
+  that scales oversized images down (never up) via GD `imagescale`, preserving
+  aspect ratio + alpha. Backward compatible — only new uploads pass through;
+  existing stored images are untouched; falls back to the original on any failure.
+- RECOMMENDED (not implemented — needs schema/API/frontend changes): generate a
+  dedicated small thumbnail (~600px) for listing cards and expose it as
+  `featured_image_thumb_url`, keeping the full image for the detail page.
+
+### Rollback Plan
+- `public/.htaccess`: remove the added `mod_headers`/`mod_expires` blocks.
+- `ImageHelper.php`: remove the `$maxWidth` param + `downscale()` method and the
+  `$src = self::downscale(...)` call.
+
+---
+
+## 2026-06-20 — Gate student job feed behind "Show Companies To Students"
+
+Jobs and companies are now hidden together for students. Previously `show_companies_to_students = false` only hid the Companies directory; the student job feed stayed visible. Now when the flag is off, students see no jobs.
+
+### Modified: `app/Http/Controllers/API/FirmController.php`
+- `getJobs`: after resolving the requesting user, if they are a **student** and the `show_companies_to_students` platform setting is off (same parsing as `AdminSettingsController::getPublicSettings`), returns an **empty paginated payload** (`jobs: [], total: 0`) before running the listing query. Server-side enforcement so the API can't leak jobs while the setting is off. Non-students (firms, public) are unaffected.
+
+---
+
+## 2026-06-20 — Admin Students/Firms: stat-card counts + firm filters
+
+Adds aggregate stat endpoints for the admin directory pages and extends the firm listing with the same filters the students list already had. No changes to pagination, existing filters, actions, or response shapes for existing fields.
+
+### Modified: `app/Http/Controllers/API/AdminController.php`
+- **New `getStudentStats` / `getFirmStats`** — each returns `{ total, verified, profile_completed }` for the page's stat cards. Computed in a **single grouped aggregate query** (no N+1) over `users` (`role` = student/firm, `is_deleted = 0`); `verified` = `email_verified_at IS NOT NULL`, `profile_completed` = `users.profile_completed = 1`. Counts cast to int.
+- **`getFirms` extended** (All Firms tab): search now also matches `fp.hr_name` (contact person) and `fp.frn`; added `email_verified` (verified|not_verified) and `profile_completion` (completed|incomplete) filters mirroring `getStudents`; select now also returns `fp.frn`, `fp.hr_name`, `u.profile_completed`, and `is_verified` (derived from `email_verified_at`). Existing fields unchanged.
+
+### Modified: `routes/api.php`
+- `GET /admin/students-stats` → `getStudentStats`; `GET /admin/firms-stats` → `getFirmStats` (distinct paths; no conflict with existing `/admin/students/{id}` or `/admin/firms`).
+
+---
+
+## 2026-06-20 — Re-engagement email campaign (Artisan command)
+
+Adds a backend-only, manually-triggered tool to email users who never finished onboarding (profile incomplete). One command sweeps the entire user base in a single run, auto-detecting each user's segment (student / firm / creator × verified / unverified) and sending the matching copy + CTAs. Reuses the existing mail stack — shared Blade layout, `EmailLog` tracking, and the database queue. No frontend changes; no existing mail flow touched.
+
+### Eligibility & segmentation (reuses existing columns)
+- Eligible = `users.is_deleted = 0` AND `users.profile_completed = 0` AND a valid email (`FILTER_VALIDATE_EMAIL`).
+- Type: `firm` if `role='firm'`; else `creator` if `student_profiles.looking_for='creator'`; else `student`.
+- Verified: from `email_verified_at` (NULL ⇒ unverified, shows a Verify Email CTA).
+
+### New: `app/Console/Commands/SendReEngagementEmails.php` (`mail:reengagement`)
+- Single LEFT JOIN query (`users` ⨝ `student_profiles`). Options: `--type=`, `--verified=0|1`, `--dry-run`, `--limit=`, `--sleep=`, `--queue`; all default to "everything".
+- Default send is **synchronous** (`Mail::to()->send()`) with live per-recipient `Sent`/`Failed` output and a pending→sent/failed `EmailLog` row per email; `--queue` routes through the existing `DispatchMailJob`. Sender identity resolved via `EmailSenderResolver` (marketing).
+- Each send wrapped in try/catch (one failure never aborts the run). Prints `Total eligible users: N`, a per-segment + grand-total summary; returns non-zero if any send failed.
+
+### New: `app/Mail/ReEngagementMail.php`
+- Reusable Mailable implementing `HasEmailPurpose` → new `EmailPurpose::REENGAGEMENT`. Renders `emails.reengagement` with name, userType, verified flag, subject, and CTA URL map.
+
+### New: `resources/views/emails/reengagement.blade.php`
+- Extends `emails.layouts.app`; type-specific heading/lead/benefit copy with verified vs unverified variants. CTAs via the existing `emails.partials.cta-button` partial: **Complete Profile** (firm → `/firm-profile`, else `/profile`), **Verify Email** (unverified only → `/verify-email`), and a **Login** link (`/login`). Base from `config('app.frontend_url')`.
+
+### Modified: `app/Enums/EmailPurpose.php`
+- Added `case REENGAGEMENT = 'reengagement';` mapped to the `marketing` sender key (distinguishable in `email_logs`).
+
+---
+
 ## 2026-06-19 — Resume Builder — Backend-managed templates (Parts 4–5)
 
 Moves the 4 mPDF resume templates out of the hardcoded Blade `@switch` into a DB-managed, admin-editable system. PDF rendering now reads the active template from the DB, with a safe fallback to the static view so nothing breaks. Engine unchanged (mPDF, pure PHP) per the chosen architecture.

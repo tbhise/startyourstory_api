@@ -1398,6 +1398,34 @@ class FirmController extends Controller
                     ->where('user_id', $user->id)
                     ->first();
             }
+
+            // Jobs and companies are gated together for students: when the admin
+            // has turned off "Show Companies To Students", the student job feed is
+            // hidden as well. Enforced here in addition to the UI guard so the API
+            // cannot leak jobs to students while the setting is off.
+            if ($user && $user->role === 'student') {
+                $showCompanies = DB::table('platform_settings')
+                    ->where('key', 'show_companies_to_students')
+                    ->value('value');
+                $companiesVisible = ($showCompanies === null)
+                    ? true
+                    : ($showCompanies === 'true' || $showCompanies === '1');
+
+                if (!$companiesVisible) {
+                    return response()->json([
+                        'status'  => true,
+                        'message' => 'Jobs fetched successfully',
+                        'data'    => [
+                            'jobs'         => [],
+                            'current_page' => 1,
+                            'last_page'    => 1,
+                            'per_page'     => 10,
+                            'total'        => 0,
+                        ],
+                    ]);
+                }
+            }
+
             $firmId = DB::table('firm_profiles')
                 ->where('firm_name', $request->company)
                 ->value('id');

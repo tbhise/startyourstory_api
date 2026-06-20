@@ -219,7 +219,9 @@ Route::post('/master/companies',           [MasterController::class, 'getCompani
 
 // Admin — directory listings (POST-for-list, matching other admin list endpoints)
 Route::post('/admin/firms',                [AdminController::class, 'getFirms']);
+Route::get('/admin/firms-stats',           [AdminController::class, 'getFirmStats']);
 Route::post('/admin/students',             [AdminController::class, 'getStudents']);
+Route::get('/admin/students-stats',        [AdminController::class, 'getStudentStats']);
 Route::get('/admin/students/{id}',         [AdminController::class, 'getStudent']);
 Route::get('/admin/students/{id}/file',    [AdminController::class, 'downloadStudentFile']);
 Route::delete('/admin/students/{id}',      [AdminController::class, 'deleteStudent']);

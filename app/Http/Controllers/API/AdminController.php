@@ -1370,7 +1370,9 @@ class AdminController extends Controller
                 $query->where(function ($q) use ($s) {
                     $q->where('fp.firm_name', 'like', $s)
                         ->orWhere('u.email', 'like', $s)
-                        ->orWhere('u.mobile', 'like', $s);
+                        ->orWhere('u.mobile', 'like', $s)
+                        ->orWhere('fp.hr_name', 'like', $s)
+                        ->orWhere('fp.frn', 'like', $s);
                 });
             }
 
@@ -1378,16 +1380,39 @@ class AdminController extends Controller
                 $query->where('fp.city', $request->city);
             }
 
+            // Email verification filter: all | verified | not_verified
+            $emailVerified = $request->input('email_verified');
+            if ($emailVerified === 'verified') {
+                $query->whereNotNull('u.email_verified_at');
+            } elseif ($emailVerified === 'not_verified') {
+                $query->whereNull('u.email_verified_at');
+            }
+
+            // Profile completion filter: all | completed | incomplete
+            // Uses the platform's existing users.profile_completed flag.
+            $profileCompletion = $request->input('profile_completion');
+            if ($profileCompletion === 'completed') {
+                $query->where('u.profile_completed', 1);
+            } elseif ($profileCompletion === 'incomplete') {
+                $query->where(function ($q) {
+                    $q->where('u.profile_completed', 0)->orWhereNull('u.profile_completed');
+                });
+            }
+
             $firms = $query
                 ->select(
                     'fp.user_id as id',
                     'fp.firm_name',
                     'fp.firm_type',
+                    'fp.frn',
+                    'fp.hr_name',
                     'fp.city',
                     'fp.verification_status',
                     'fp.created_at',
                     'u.email',
                     'u.mobile',
+                    'u.profile_completed',
+                    DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified'),
                     DB::raw("CASE WHEN fp.is_premium = 1 THEN 'premium' ELSE 'free' END as plan")
                 )
                 ->orderByDesc('fp.created_at')
@@ -1486,6 +1511,72 @@ class AdminController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('getStudents Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * Aggregate counts for the admin Students page stat cards.
+     * Single grouped query (no N+1): total active students, email-verified,
+     * and profile-completed. "Active" mirrors the listing default (not deleted).
+     */
+    public function getStudentStats(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $row = DB::table('users')
+                ->where('role', 'student')
+                ->where('is_deleted', false)
+                ->selectRaw('COUNT(*) as total')
+                ->selectRaw('SUM(CASE WHEN email_verified_at IS NOT NULL THEN 1 ELSE 0 END) as verified')
+                ->selectRaw('SUM(CASE WHEN profile_completed = 1 THEN 1 ELSE 0 END) as profile_completed')
+                ->first();
+
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'total' => (int) ($row->total ?? 0),
+                    'verified' => (int) ($row->verified ?? 0),
+                    'profile_completed' => (int) ($row->profile_completed ?? 0),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getStudentStats Error', ['message' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * Aggregate counts for the admin Firms page stat cards.
+     * Single grouped query (no N+1): total active firms, email-verified,
+     * and profile-completed. Mirrors the firm listing scope (role=firm, not deleted).
+     */
+    public function getFirmStats(Request $request)
+    {
+        try {
+            $admin = $this->adminFromRequest($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $row = DB::table('users')
+                ->where('role', 'firm')
+                ->where('is_deleted', false)
+                ->selectRaw('COUNT(*) as total')
+                ->selectRaw('SUM(CASE WHEN email_verified_at IS NOT NULL THEN 1 ELSE 0 END) as verified')
+                ->selectRaw('SUM(CASE WHEN profile_completed = 1 THEN 1 ELSE 0 END) as profile_completed')
+                ->first();
+
+            return response()->json([
+                'status' => true,
+                'data' => [
+                    'total' => (int) ($row->total ?? 0),
+                    'verified' => (int) ($row->verified ?? 0),
+                    'profile_completed' => (int) ($row->profile_completed ?? 0),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('getFirmStats Error', ['message' => $e->getMessage()]);
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

@@ -34,13 +34,16 @@ class ImageHelper
      * @param  string       $dir      Target directory on the disk (e.g. "blog-images/featured").
      * @param  string       $disk     Filesystem disk (default "public").
      * @param  int          $quality  WebP quality 0-100 (default 82 — balance of quality/size).
+     * @param  int          $maxWidth Cap the width (px) by downscaling oversized uploads
+     *                                (default 1600 — never upscales).
      * @return string                 The stored relative path (e.g. "blog-images/featured/abc123.webp").
      */
     public static function optimizeToWebp(
         UploadedFile $file,
         string $dir,
         string $disk = 'public',
-        int $quality = 82
+        int $quality = 82,
+        int $maxWidth = 1600
     ): string {
         $dir = trim($dir, '/');
 
@@ -55,6 +58,10 @@ class ImageHelper
                 // Unsupported/corrupt — fall back to storing the original.
                 return $file->store($dir, $disk);
             }
+
+            // Downscale oversized uploads so a multi-megapixel original isn't
+            // shipped to render in a small card. Only ever scales DOWN.
+            $src = self::downscale($src, $maxWidth);
 
             $filename = $dir . '/' . Str::random(40) . '.webp';
             $tmpPath  = tempnam(sys_get_temp_dir(), 'webp');
@@ -83,6 +90,36 @@ class ImageHelper
     private static function canEncodeWebp(): bool
     {
         return function_exists('imagewebp') && function_exists('imagecreatefromstring');
+    }
+
+    /**
+     * Downscale a GD image so its width never exceeds $maxWidth, preserving
+     * aspect ratio and alpha. Returns the original resource untouched when it's
+     * already within bounds or when scaling fails (so callers never break).
+     */
+    private static function downscale(\GdImage $src, int $maxWidth): \GdImage
+    {
+        if ($maxWidth <= 0 || ! function_exists('imagescale')) {
+            return $src;
+        }
+
+        $width = imagesx($src);
+        if ($width <= $maxWidth) {
+            return $src; // already small enough — never upscale
+        }
+
+        // imagescale (mode bilinear) keeps aspect ratio when height is omitted.
+        $scaled = imagescale($src, $maxWidth);
+        if ($scaled === false) {
+            return $src;
+        }
+
+        // Preserve transparency on the resized canvas.
+        imagealphablending($scaled, false);
+        imagesavealpha($scaled, true);
+
+        imagedestroy($src);
+        return $scaled;
     }
 
     /**

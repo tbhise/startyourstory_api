@@ -56,13 +56,39 @@
         .header {
             background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
             text-align: center;
-            padding: 32px;
+            padding: 36px 32px 30px;
+        }
+
+        .logo-badge {
+            width: 56px;
+            height: 56px;
+            margin: 0 auto 14px auto;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
         }
 
         .logo {
-            height: 42px;
-            width: auto;
-            margin: 0 auto 14px auto;
+            width: 32px;
+            height: 32px;
+            margin: 0 auto;
+        }
+
+        .brand-name {
+            margin: 0;
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            line-height: 1.2;
+        }
+
+        .brand-tagline {
+            margin: 6px 0 0;
+            color: #dbeafe;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
         }
 
         .heading {
@@ -121,7 +147,7 @@
             background: #f8fafc;
             border-top: 1px solid #e5e7eb;
             text-align: center;
-            padding: 24px 32px;
+            padding: 28px 32px;
         }
 
         .footer p {
@@ -133,6 +159,26 @@
 
         .footer p+p {
             margin-top: 6px;
+        }
+
+        .footer-help {
+            font-size: 14px;
+            color: #374151;
+            font-weight: 600;
+        }
+
+        .footer-link {
+            color: #2563eb;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .footer-divider {
+            height: 1px;
+            line-height: 1px;
+            font-size: 0;
+            background: #e5e7eb;
+            margin: 0 0 18px;
         }
 
         @media only screen and (max-width: 600px) {
@@ -184,10 +230,16 @@
                     <tr>
                         <td class="header">
 
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 14px;">
+                                <tr>
+                                    <td class="logo-badge" align="center" valign="middle" style="text-align:center;">
+                                        <img src="https://startyourstory.in/favicon.ico" width="32" height="32" alt="StartYourStory" class="logo">
+                                    </td>
+                                </tr>
+                            </table>
 
-                            <h1 class="heading">
-                                {{ $heading ?? 'Start Your Story' }}
-                            </h1>
+                            <h1 class="brand-name">StartYourStory</h1>
+                            <p class="brand-tagline">Your Story. Our Platform.</p>
 
                         </td>
                     </tr>
@@ -205,8 +257,18 @@
                     <tr>
                         <td class="footer">
 
+                            <p class="footer-help">
+                                Need help? We're here for you.
+                            </p>
+
+                            <p style="margin-top:4px;">
+                                <a href="mailto:support@startyourstory.in" class="footer-link">support@startyourstory.in</a>
+                            </p>
+
+                            <div class="footer-divider">&nbsp;</div>
+
                             <p>
-                                © {{ date('Y') }} Start Your Story. All rights reserved.
+                                © {{ date('Y') }} StartYourStory. All rights reserved.
                             </p>
 
                             <p>

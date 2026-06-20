@@ -22,6 +22,7 @@ enum EmailPurpose: string
     case PASSWORD_RESET        = 'password_reset';
     case BILLING               = 'billing';
     case MARKETING             = 'marketing';
+    case REENGAGEMENT          = 'reengagement';
 
     public function senderKey(): string
     {
@@ -44,6 +45,7 @@ enum EmailPurpose: string
             self::PASSWORD_RESET         => 'verify',
             self::BILLING                => 'billing',
             self::MARKETING              => 'marketing',
+            self::REENGAGEMENT           => 'marketing',
         };
     }
 

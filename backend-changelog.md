@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-06-21 — Expose firm_type + verification_status in /getCompanyDetails
+
+`FirmController@getCompanyDetails` response now includes `firm_type` (uncommented) and
+`verification_status` (new). Additive only — no existing field changed. Powers the
+firm-type label and Verified badge on the redesigned company detail page.
+
+## 2026-06-21 — Expose firm verification_status in /getCompanies
+
+### Why
+The `/companies` listing needs a "Verified Firm" trust badge. The firm's
+`firm_profiles.verification_status` (enum `pending|approved|rejected`) was
+available on the query (`firm_profiles.*`) but not included in the response map.
+
+### Modified: `app/Http/Controllers/API/FirmController.php`
+- `getCompanies()` response map now includes
+  `'verification_status' => $company->verification_status` (after `is_premium`).
+- Additive, non-breaking — existing consumers ignore the new field. No filter,
+  query, or pagination change; the listing is not restricted to verified firms.
+
+### Rollback
+- Remove the single `'verification_status' => ...` line from the map.
+
 ## 2026-06-20 — Blog image performance: cache headers + downscaling
 
 ### Why

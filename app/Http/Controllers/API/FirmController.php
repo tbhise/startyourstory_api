@@ -769,6 +769,16 @@ class FirmController extends Controller
                 );
             }
             $companies = $query->paginate(12);
+
+            // [Companies Debug] TEMPORARY — trace pagination. Remove after debugging.
+            Log::info('[Companies Debug] getCompanies', [
+                'page_received'  => (int) $request->input('page', 1),
+                'per_page'       => $companies->perPage(),
+                'current_page'   => $companies->currentPage(),
+                'last_page'      => $companies->lastPage(),
+                'total'          => $companies->total(),
+                'returned_rows'  => $companies->count(),
+            ]);
             $formattedCompanies = [];
             foreach ($companies->items() as $company) {
                 $formattedCompanies[] = [
@@ -787,6 +797,7 @@ class FirmController extends Controller
                     'website_url' => $company->website_url,
                     'logo_path' => $company->logo_path ? asset('storage/' . $company->logo_path) : null,
                     'is_premium' => $company->is_premium,
+                    'verification_status' => $company->verification_status,
                     'current_openings' => $company->current_openings,
                     'about' => $company->about,
                     'firm_type' => $company->firm_type,
@@ -945,7 +956,8 @@ class FirmController extends Controller
                 'employees_count' => $company->employees_count,
                 'articles_count' => $company->articles_count,
                 'about' => $company->about,
-                // 'firm_type' => $company->firm_type,
+                'firm_type' => $company->firm_type,
+                'verification_status' => $company->verification_status,
                 'establishment_year' =>
                 $company->establishment_year,
                 'services_offered' =>

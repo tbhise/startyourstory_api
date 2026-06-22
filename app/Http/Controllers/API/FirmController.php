@@ -207,8 +207,18 @@ class FirmController extends Controller
         */
             $validator = Validator::make($request->all(), [
                 'address' => 'required|string',
+                // File limits (kept in sync with the frontend firm-profile uploads):
+                // logo max 5MB, max 5 office images each max 5MB. max is in KB.
+                'logo'            => 'nullable|image|max:5120',
+                'office_images'   => 'nullable|array|max:5',
+                'office_images.*' => 'image|max:5120',
             ], [
-                'address.required' => 'Address is required.',
+                'address.required'      => 'Address is required.',
+                'logo.image'            => 'Firm logo must be an image (PNG or JPG).',
+                'logo.max'              => 'Firm logo must be 5MB or smaller.',
+                'office_images.max'     => 'You can upload a maximum of 5 office images.',
+                'office_images.*.image' => 'Office images must be image files (PNG or JPG).',
+                'office_images.*.max'   => 'Each office image must be 5MB or smaller.',
             ]);
             if ($validator->fails()) {
                 DB::rollBack();

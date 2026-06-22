@@ -4,6 +4,8 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\HandleCors;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\PostTooLargeException;
 use App\Services\ErrorLogRecorder;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -32,5 +34,21 @@ return Application::configure(basePath: dirname(__DIR__))
         // is still written to storage/logs/laravel.log as before.
         $exceptions->report(function (\Throwable $e): void {
             ErrorLogRecorder::record($e);
+        });
+
+        // Graceful "Post data is too large" — PHP rejects an oversized request
+        // body (post_max_size) before the controller runs, and Laravel throws a
+        // PostTooLargeException. Return the app's standard JSON error shape for
+        // API requests so the frontend shows a clean message instead of a raw
+        // 413 HTML page. (This case is still recorded in error_logs by the
+        // report() hook above.)
+        $exceptions->render(function (PostTooLargeException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Upload too large. Please reduce file sizes (max 5MB per image, up to 5 office images) and try again.',
+                ], 413);
+            }
+            return null;
         });
     })->create();

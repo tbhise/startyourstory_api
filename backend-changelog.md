@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-06-22 — Firm upload validation + graceful "Post data is too large"
+
+Hardening for the firm profile update endpoint (Task 1) and a friendlier 413 response.
+
+- **`app/Http/Controllers/API/FirmController.php`** (`firm_profile_update`) — Added file
+  validation to the existing `Validator::make`: `logo => nullable|image|max:5120` (5MB),
+  `office_images => nullable|array|max:5`, `office_images.* => image|max:5120` (5MB each),
+  with user-friendly messages. Returns the same `{status:false, message}` shape on failure.
+  No change to the existing `address` rule or any storage logic; updates with no new files
+  still work (rules are `nullable`).
+- **`bootstrap/app.php`** — Added a `render()` hook for `PostTooLargeException`: API/JSON
+  requests now get `{status:false, message:"Upload too large…"}` with HTTP 413 instead of a
+  raw HTML error page (PHP rejects oversized bodies via `post_max_size` before the
+  controller runs). Still recorded in `error_logs` by the existing `report()` hook.
+
+### Task 5 (error logging) — verified, NO code change
+
+`error_summary` already stores the actual (secret-redacted) exception message capped at
+1000 chars: `ErrorLogRecorder::record()` → `rawMessage()` for uncaught exceptions, and the
+`MessageLogged` listener (`AppServiceProvider`) → `recordLog()` for caught-and-logged
+controller failures. `PostTooLargeException` is not in the SKIP list, so "The POST data is
+too large." already lands in `error_summary`. The only deviation from the literal spec
+(`substr($e->getMessage(),0,1000)`) is deliberate secret redaction, kept on purpose; full
+file/line/stack remain in `storage/logs/laravel.log` by design. Confirmed the
+`error_summary` width migration (`2026_06_18_000001_widen_error_summary_on_error_logs.php`)
+is present. **Server config reminder:** raise PHP `post_max_size`/`upload_max_filesize`
+(see DEPLOYMENT.txt) so legitimate multi-image uploads aren't rejected pre-controller.
+
+---
+
 ## 2026-06-21 — Expose firm_type + verification_status in /getCompanyDetails
 
 `FirmController@getCompanyDetails` response now includes `firm_type` (uncommented) and

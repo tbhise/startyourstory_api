@@ -2299,6 +2299,21 @@ ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(1000) NULL;
 
 
 ## ═══════════════════════════════════════════════════════════════════════════════
+## ERROR LOGS — error_summary widened 1000 → TEXT + full stack stored — added 2026-06-22
+## ═══════════════════════════════════════════════════════════════════════════════
+## error_summary now holds the FULL raw (secret-redacted) exception message instead of a
+## 1000-char slice, and ErrorLogRecorder now also populates the existing `stack` (TEXT)
+## column with the full secret-redacted PHP stack trace (was previously always NULL).
+## So admins get the complete error + trace from the dashboard. The full trace also
+## still goes to storage/logs/laravel.log. Idempotent. Or run: php artisan migrate
+##   (migration: database/migrations/2026_06_22_000001_widen_error_summary_to_text_on_error_logs.php)
+
+ALTER TABLE `error_logs` MODIFY `error_summary` TEXT NULL;
+
+-- ROLLBACK: ALTER TABLE `error_logs` MODIFY `error_summary` VARCHAR(1000) NULL; (truncates rows > 1000 chars)
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
 ## ADMIN IMPERSONATION ("Login as User") — added 2026-06-18
 ## ═══════════════════════════════════════════════════════════════════════════════
 ## Lets a SUPER ADMIN open a student/firm account read-only for debugging, without

@@ -44,6 +44,10 @@ class ErrorLogRecorder
     /** Re-entrancy guard: never record a row while we are already recording one. */
     private static bool $writing = false;
 
+    /** Max chars stored for the raw message / stack trace (TEXT column, secret-redacted). */
+    private const RAW_MAX   = 10000;
+    private const STACK_MAX = 15000;
+
     public static function record(Throwable $e, ?Request $request = null): void
     {
         foreach (self::SKIP as $skip) {
@@ -52,7 +56,13 @@ class ErrorLogRecorder
             }
         }
 
-        self::writeRow(self::safeMessage($e), self::rawMessage($e), self::statusFor($e), $request);
+        self::writeRow(
+            self::safeMessage($e),
+            self::rawMessage($e),
+            self::statusFor($e),
+            $request,
+            self::stackTrace($e),
+        );
     }
 
     /**
@@ -81,6 +91,7 @@ class ErrorLogRecorder
         }
 
         // Raw = original log line with secrets redacted but SQL kept.
+        // No exception object here, so there is no stack trace to store.
         $raw = self::redactSecrets($message);
 
         self::writeRow($safe, $raw, 500);
@@ -89,10 +100,11 @@ class ErrorLogRecorder
     /**
      * Insert one row into `error_logs`. NON-THROWING and re-entrant-safe.
      *
-     * @param string $safe Short, sanitized one-liner → `message`.
-     * @param string $raw  Raw (secret-redacted) error → `error_summary`.
+     * @param string      $safe  Short, sanitized one-liner → `message`.
+     * @param string      $raw   Full raw (secret-redacted) error → `error_summary`.
+     * @param string|null $stack Full (secret-redacted) stack trace → `stack`.
      */
-    private static function writeRow(string $safe, string $raw, int $status, ?Request $request = null): void
+    private static function writeRow(string $safe, string $raw, int $status, ?Request $request = null, ?string $stack = null): void
     {
         if (self::$writing) {
             return;
@@ -108,12 +120,12 @@ class ErrorLogRecorder
             DB::table('error_logs')->insert([
                 'source'        => 'api',
                 'message'       => mb_substr($safe, 0, 1000),
-                // RAW error — what actually happened (SQL kept, secrets redacted).
-                'error_summary' => mb_substr($raw !== '' ? $raw : $safe, 0, 1000),
+                // FULL raw error — what actually happened (SQL kept, secrets redacted).
+                'error_summary' => mb_substr($raw !== '' ? $raw : $safe, 0, self::RAW_MAX),
                 'status'        => $status,
                 'url'           => $url ? '/' . ltrim($url, '/') : null,
-                // Stack traces are deliberately NEVER stored in the DB.
-                'stack'         => null,
+                // Full stack trace, secret-redacted and capped (TEXT column).
+                'stack'         => $stack !== null && $stack !== '' ? mb_substr($stack, 0, self::STACK_MAX) : null,
                 'user_id'       => $userId,
                 'user_role'     => $userRole,
                 'user_agent'    => $request ? mb_substr((string) $request->userAgent(), 0, 500) : null,
@@ -152,6 +164,22 @@ class ErrorLogRecorder
     }
 
     /**
+     * Build the full stack trace for the `stack` column. Prepends an "ExceptionClass
+     * @ file:line" header, then the framework trace. Secrets are redacted (a scalar
+     * string argument in a frame could otherwise leak a credential) but the trace is
+     * otherwise kept complete; writeRow() caps the length to fit the TEXT column.
+     */
+    private static function stackTrace(Throwable $e): string
+    {
+        $header = sprintf('%s @ %s:%d', get_class($e), $e->getFile(), $e->getLine());
+
+        // Keep newlines so the trace stays readable; only redact secret-looking values.
+        $trace = self::redactSecretsKeepLines($header . "\n" . $e->getTraceAsString());
+
+        return trim($trace);
+    }
+
+    /**
      * Strip SQL/bindings AND redact secrets — the fully sanitized one-liner.
      */
     private static function sanitize(string $msg): string
@@ -179,6 +207,21 @@ class ErrorLogRecorder
 
         // Collapse all whitespace/newlines into single spaces.
         return trim((string) preg_replace('/\s+/', ' ', $msg));
+    }
+
+    /**
+     * Like redactSecrets() but preserves newlines (for multi-line stack traces).
+     * Only redacts secret-looking key=value pairs; line structure is kept intact.
+     */
+    private static function redactSecretsKeepLines(string $msg): string
+    {
+        $msg = preg_replace(
+            '/\b(password|passwd|pwd|secret|token|authorization|auth|api[_-]?key|bearer|session|cookie|otp)\b\s*["\']?\s*[:=]\s*["\']?[^\s,"\'&]+/i',
+            '$1=[redacted]',
+            $msg
+        ) ?? $msg;
+
+        return $msg;
     }
 
     /**

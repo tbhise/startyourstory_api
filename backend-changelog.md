@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-06-22 — Error logs: store full raw error + full stack trace
+
+Admins can now see the complete backend error (not a 1000-char slice) plus the stack
+trace from the dashboard, instead of only a truncated message. Secrets stay redacted.
+
+- **`database/migrations/2026_06_22_000001_widen_error_summary_to_text_on_error_logs.php`**
+  (new) — Widen `error_logs.error_summary` from `VARCHAR(1000)` to `TEXT` so the full
+  raw (secret-redacted) exception message is stored untruncated. `stack` was already TEXT.
+- **`app/Services/ErrorLogRecorder.php`** — `record()` now captures and stores the full
+  PHP stack trace into the previously-always-`null` `stack` column. Added `stackTrace()`
+  (prepends `Class @ file:line`, then `getTraceAsString()`) and `redactSecretsKeepLines()`
+  (redacts secret key=value pairs but preserves newlines so the trace stays readable).
+  Raw message cap raised 1000 → `RAW_MAX` (10000); stack capped at `STACK_MAX` (15000) to
+  stay within the TEXT byte limit. `recordLog()` (no exception object) stores no stack.
+  The complete trace still also goes to `storage/logs/laravel.log`.
+
+---
+
 ## 2026-06-22 — Firm upload validation + graceful "Post data is too large"
 
 Hardening for the firm profile update endpoint (Task 1) and a friendlier 413 response.

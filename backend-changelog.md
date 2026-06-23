@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-06-23 — Fix resume PDF "Undefined variable $c1" (Modern Minimal template)
+
+`ResumeController::downloadPdf` threw `Undefined variable $c1` when rendering the
+`modern_minimal` template. Its DB row (`resume_templates` id=2) split skills into two
+columns via an inline `@php $c1 = ...; $c2 = ...; @endphp` block, but
+`renderTemplateHtml()` strips all `@php..@endphp` blocks before Blade renders
+admin-authored content — so the assignments were removed and the later
+`@foreach($c1 ...)` referenced an undefined variable.
+
+- **DB `resume_templates` (id=2, `modern_minimal`)** — removed the `@php` skill-split
+  block and pointed the two skill-column loops at the controller's pre-computed
+  `$d['skills_c1']` / `$d['skills_c2']` (see `normalizeResume()`), which exist precisely
+  so DB templates need no `@php`. No application code changed.
+
+## 2026-06-23 — Fix resume PDF download (Browsershot "Cannot find module 'puppeteer'")
+
+`ResumeController::downloadPdf` failed because Browsershot's `browser.cjs` could not
+resolve the `puppeteer` Node module and the configured Chrome path pointed at another
+user's cache.
+
+- Ran `npm install` in `sys_api/` — `puppeteer` (declared in `package.json`) was missing
+  from `node_modules`.
+- Ran `npx puppeteer browsers install chrome` to download Chrome for the current user
+  (`C:/Users/Tushar/.cache/puppeteer/chrome/win64-148.0.7778.97/...`).
+- **`.env`** (`RESUME_PDF_CHROME_PATH`) — repointed from the stale `C:/Users/PHP_651/...`
+  path to the current user's puppeteer Chrome path; ran `php artisan config:clear`.
+
+Note: this is a local-dev env fix. No application code changed.
+
+---
+
 ## 2026-06-22 — Error logs: store full raw error + full stack trace
 
 Admins can now see the complete backend error (not a 1000-char slice) plus the stack

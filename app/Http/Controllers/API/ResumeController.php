@@ -258,7 +258,9 @@ class ResumeController extends Controller
      */
     private function renderResumePdf(string $html): string
     {
-        $cfg = config('resumepdf');
+        // Default to [] so a missing/uncached config/resumepdf.php degrades to the
+        // built-in defaults instead of throwing "array offset on null" below.
+        $cfg = config('resumepdf') ?? [];
 
         $shot = \Spatie\Browsershot\Browsershot::html($html)
             ->format('A4')
@@ -268,7 +270,7 @@ class ResumeController extends Controller
 
         // Resolve puppeteer (and its bundled Chromium) from the project's
         // node_modules unless an explicit location is configured.
-        $modulesBase = $cfg['node_modules'] ?: base_path();
+        $modulesBase = ($cfg['node_modules'] ?? '') ?: base_path();
         $shot->setNodeModulePath(rtrim($modulesBase, '/\\') . DIRECTORY_SEPARATOR . 'node_modules');
 
         if (!empty($cfg['node_binary'])) $shot->setNodeBinary($cfg['node_binary']);

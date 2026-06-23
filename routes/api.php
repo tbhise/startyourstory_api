@@ -90,7 +90,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // ── Resume Builder drafts (one per user) ──
     Route::get('/resume',                [ResumeController::class, 'getResume']);
     Route::post('/resume',               [ResumeController::class, 'saveResume']);
-    Route::post('/resume/pdf',           [ResumeController::class, 'downloadPdf']);
+    Route::post('/resume/pdf',           [ResumeController::class, 'downloadPdf'])->middleware('throttle:resume-pdf');
+    // TEMPORARY — in-browser HTML preview for template development (returns text/html, not PDF).
+    Route::post('/resume/preview-html',  [ResumeController::class, 'previewHtml'])->middleware('throttle:resume-pdf');
     Route::delete('/resume',             [ResumeController::class, 'deleteResume']);
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);

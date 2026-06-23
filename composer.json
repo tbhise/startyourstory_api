@@ -12,6 +12,7 @@
         "laravel/tinker": "^3.0",
         "mpdf/mpdf": "^8.2",
         "predis/predis": "^3.5",
+        "spatie/browsershot": "^5.4",
         "vinkla/hashids": "^14.0"
     },
     "require-dev": {

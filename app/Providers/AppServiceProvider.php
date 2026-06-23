@@ -117,6 +117,12 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('payment-proof', static fn (Request $request) =>
             Limit::perMinute(10)->by('pay-proof-' . $userKey($request))->response($tooMany));
 
+        // ── Resume PDF generation ─────────────────────────────────────────────
+        // mPDF uses 20-50 MB RAM per call. Cap at 5/min per authenticated user
+        // to prevent memory exhaustion / DoS via bulk PDF generation.
+        RateLimiter::for('resume-pdf', static fn (Request $request) =>
+            Limit::perMinute(5)->by('resume-pdf-' . $userKey($request))->response($tooMany));
+
         // ── Public forms ─────────────────────────────────────────────────────
         // Contact / newsletter — 10/min per IP.
         RateLimiter::for('contact', static fn (Request $request) =>

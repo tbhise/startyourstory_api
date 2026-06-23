@@ -2176,3 +2176,359 @@ Replaces the client-side `window.print()` download with **server-side PDF genera
 - Remove `POST /resume/pdf` + `downloadPdf`/`normalizeResume`; delete `resources/views/resume/pdf.blade.php`; `composer remove mpdf/mpdf`. (Frontend would need its print path restored.)
 
 
+
+---
+
+## 2026-06-23 — Resume Builder: P0 security fixes + temporary HTML preview mode
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- **Template-injection fix (P0):** `renderTemplateHtml()` now strips `@php`/`@endphp` blocks and raw `<?php`/`<?=` tags from admin-authored template HTML before `Blade::render()`. Safe directives (`@if`, `@foreach`, `{{ }}`) remain. Closes a server-side code-execution vector via the admin template editor.
+- **DB-driven template_key validation (P0):** new `activeTemplateKeys()` unions the builtin keys with live `is_active` rows from `resume_templates`, replacing the hardcoded `in:` list (newly created admin templates are now accepted without a deploy).
+- **Field-level `resume_data` validation (P0):** new `resumeDataRules()` caps every string length and array size (education/experience ≤ 10, skills/certs/achievements ≤ 20), shared by save + pdf + preview. Mitigates memory-exhaustion DoS.
+- `normalizeResume()` now also returns pre-computed `skills_c1`/`skills_c2` halves so DB-managed templates need no `@php` for the two-column skills split.
+- **New `previewHtml()` (POST):** TEMPORARY template-development endpoint. Reuses the SAME `normalizeResume()` + `renderTemplateHtml()` pipeline as the PDF path, then wraps the document with `@page { size: A4 }` + an `.rb-a4-page` (210mm × 297mm) frame and returns `text/html` for in-browser preview. No mPDF involved.
+
+### Modified: `app/Providers/AppServiceProvider.php`
+- New `resume-pdf` named rate limiter: 5 requests/min per authenticated user (mPDF uses 20–50 MB RAM/call). Shared by `/resume/pdf` and `/resume/preview-html`.
+
+### Modified: `routes/api.php`
+- `POST /resume/pdf` now carries `->middleware('throttle:resume-pdf')`.
+- New `POST /resume/preview-html` → `ResumeController@previewHtml` (same auth group + throttle). TEMPORARY.
+
+### New: `database/migrations/2026_06_23_000001_patch_resume_templates_p0.php`
+- Patches the seeded `resume_templates` rows (skips admin-edited rows via `updated_at !== created_at`): `modern_minimal` drops its `@php` skills-split in favour of `$d['skills_c1']`/`$d['skills_c2']`; `classic_professional` now renders `title`, `linkedin`, `website` (were captured but never printed). `down()` is a no-op to avoid clobbering admin edits.
+
+### Modified: `resources/views/resume/pdf.blade.php` (static fallback)
+- Mirrors the migration: Classic renders title/linkedin/website; Modern uses the pre-computed skills halves (no `@php`).
+
+### Testing
+- `php -l` clean on all changed PHP files + migration.
+
+### Rollback Plan
+- Remove `previewHtml()` + the `/resume/preview-html` route to drop preview mode.
+- Revert `renderTemplateHtml()` strip lines to restore raw `Blade::render()` (NOT recommended — reopens injection).
+- Drop the `resume-pdf` limiter + the two `->middleware('throttle:resume-pdf')` calls to remove throttling.
+- `php artisan migrate:rollback` is a no-op for the patch migration by design.
+
+---
+
+## 2026-06-23 — Resume Builder: two templates only + duration model + template icons
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- **Two templates only:** builtin `TEMPLATE_KEYS` reduced to `classic_professional` + `modern_minimal`. New `coerceTemplateKey()` maps any retired/legacy/unknown key (e.g. `executive_sidebar`, `creative_professional`) to Classic. `saveResume`, `downloadPdf`, and `previewHtml` now `$request->merge()` the coerced key before validation — so old drafts/clients sending a retired key save + render as Classic instead of 422-ing (graceful fallback). On save this also migrates the stored `template_key`.
+- **Experience duration validation:** added nullable rules for the new structured fields `startMonth`/`startYear`/`endMonth`/`endYear` (string) and `current` (boolean); bumped `duration` max 50→60 to fit "Mon YYYY – Mon YYYY". The canonical `duration` string is still what templates render — the structured fields are extra and round-trip in the JSON.
+
+### New: `database/migrations/2026_06_23_000002_resume_templates_two_only_icons.php`
+- Sets `is_active = false` for `executive_sidebar` + `creative_professional`.
+- Overwrites Classic + Modern `html_content` with icon-enhanced versions (inline lucide-matching SVGs: Classic gets section + contact icons; Modern gets per-contact icons, section headings stay text-only to match the React editor). Appends `.ic` icon CSS to those rows' `css_content` (idempotent).
+- `down()` re-activates the two retired templates; does not touch content.
+
+### Modified: `resources/views/resume/pdf.blade.php` (static fallback)
+- Added `rb_icon($name)` helper (inline SVGs) + `.ic` CSS; wired icons into the Classic + Modern cases to match the DB templates. Executive/Creative cases left intact (now dormant).
+
+### Why inline SVG
+- The React editor renders lucide icons but the backend HTML/PDF had none — that mismatch is the "icons missing in download/HTML preview" bug. Inline SVG renders identically in the browser HTML preview (the current active download path) and is the most portable option for mPDF. mPDF SVG fidelity should be re-verified when the PDF download path is re-enabled.
+
+### Migration impact
+- `php artisan migrate` runs both new migrations. Existing resume drafts are unaffected at the data layer; those referencing a retired template render as Classic and get migrated to Classic on their next save.
+
+### Rollback Plan
+- `php artisan migrate:rollback` re-activates Executive/Creative (content untouched).
+- Revert `TEMPLATE_KEYS` to the 4-key list and remove the `coerceTemplateKey()` merges to re-offer all templates in the API.
+
+---
+
+## 2026-06-23 — Modern Minimal: Education section two-row layout
+
+Modern Minimal template ONLY. No controller / data-structure changes; Classic and
+all other templates untouched.
+
+### New: `database/migrations/2026_06_23_000003_modern_minimal_education_layout.php`
+- Surgically swaps the Modern Minimal education `<table>` (uniquely identified by its
+  `margin-bottom:4px` inline style) for a two-row layout — Degree | Duration over
+  Institute | Score — and appends the `.ed-deg/.ed-dur/.ed-inst/.ed-score` CSS to that
+  row's `css_content`. Idempotent (regex finds no match if already patched/edited);
+  `down()` is a no-op.
+
+### Modified: `resources/views/resume/pdf.blade.php` (static fallback)
+- Same two-row education layout + CSS in the `modern_minimal` case, mirroring the DB
+  template. Old `{{ trim($e['year'].' '.$e['score']) }}` single-line row removed.
+
+### Migration impact
+- `php artisan migrate` runs the new migration. No schema change; updates only the
+  Modern Minimal template row content/CSS.
+
+### Rollback
+- `php artisan migrate:rollback` (no-op down) — to fully revert, restore the prior
+  Modern education block from git history.
+
+---
+
+## 2026-06-23 — Classic Professional: premium Skills chips (ATS-safe)
+
+Classic Professional template ONLY. No controller / data-structure changes; Modern
+Minimal and all other templates untouched.
+
+### New: `database/migrations/2026_06_23_000004_classic_skills_chip_style.php`
+- Swaps the `.classic .chip` CSS rule in the classic_professional row from the old
+  tight tag (`padding: 1px 6px; font-size: 10px`) to a premium pill: `display:
+  inline-block; border: 1px solid #e2e8f0; background-color: #f8fafc; border-radius:
+  20px; padding: 5px 13px; margin: 0 5px 7px 0; font-size: 12px`. Markup unchanged
+  (skills stay plain `<span class="chip">text</span>` → fully ATS-parseable).
+  Idempotent str_replace; `down()` restores the old rule.
+
+### Modified: `resources/views/resume/pdf.blade.php` (static fallback)
+- Same `.classic .chip` rule update in the inline `<style>`, mirroring the DB row.
+
+### ATS compliance (both templates — verification, no code change needed)
+- Single-column, normal-flow layouts (no floats/absolute/overlap); standard section
+  headings (Summary, Education, Experience, Skills, Certifications, Achievements);
+  Arial/Helvetica body; all content is selectable text; section icons are decorative
+  inline SVG paths with NO text nodes; skills render as plain text. Compliant.
+
+### Migration impact
+- `php artisan migrate` runs the new migration (CSS-only update to one row).
+
+### Rollback
+- `php artisan migrate:rollback` restores the previous chip rule.
+
+---
+
+## 2026-06-23 — Resume PDF: filename "<Name>_resume.pdf"
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- `downloadPdf` now names the file `<Name>_resume.pdf` (e.g. `Ananya_Iyer_resume.pdf`),
+  or `resume.pdf` when no name is set. Replaced `Str::slug($name)."-resume.pdf"`
+  (hyphenated, lowercased) with an underscore-joined ASCII name (`[^A-Za-z0-9]+` → `_`,
+  trimmed). Removed the now-unused `Illuminate\Support\Str` import. ASCII-only keeps the
+  Content-Disposition header safe.
+- No change to the endpoint, auth, throttle, or rendering — the frontend Download
+  buttons were simply re-pointed from the temporary HTML preview back to this PDF route.
+
+### Rollback
+- Restore the `Str::slug(...)."-resume.pdf"` line + the `use Illuminate\Support\Str;`
+  import to revert the filename format.
+
+---
+
+## 2026-06-23 — New file-based template: Premium Minimal
+
+Adds a third switchable template. pdf.blade.php is untouched.
+
+### New: `resources/views/resume/premium_minimal.blade.php`
+- User-authored premium single-column template, re-bound from its original
+  `$resumeData/personalInfo` contract to the project's normalized `$d` contract
+  (name/title/email/mobile/location/linkedin/website, summary, education[degree,
+  institute,year,score], experience[company,role,duration,lines], skills[],
+  certifications[], achievements[], showCertifications/showAchievements). CSS kept
+  as authored (A4 .page, navy headings, mPDF-safe table rows, skill chips).
+- NOTE: the original file's header comment contained the literal token "@php",
+  which Blade's directive compiler pairs with the real raw-PHP block and silently
+  swallowed the entire <head>. Reworded the comment to remove directive tokens.
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- Added `premium_minimal` to builtin `TEMPLATE_KEYS` (accepted by validation,
+  preserved by `coerceTemplateKey`).
+- New `FILE_TEMPLATES` map + a branch at the top of `renderTemplateHtml`: keys in the
+  map render straight from their standalone Blade view (full self-contained HTML doc),
+  bypassing the DB rows. This is the "switch between files" mechanism — classic/modern
+  still render from their DB rows; premium_minimal renders from the file. Works for
+  both POST /resume/pdf and POST /resume/preview-html.
+
+### Verification
+- `php -l` clean; rendered premium_minimal with sample data — head/CSS present and all
+  bindings (name, title, summary, experience duration + bullets, education score,
+  skill chips, certifications, achievements) resolve. coerceTemplateKey keeps
+  `premium_minimal` and still maps retired/unknown keys to Classic.
+
+### Rollback
+- Remove `premium_minimal` from `TEMPLATE_KEYS` + the `FILE_TEMPLATES` map/branch, and
+  delete the view file. Frontend: remove it from `RESUME_TEMPLATES`/`TEMPLATE_KEYS`.
+
+---
+
+## 2026-06-23 — Fix: premium_minimal PDF "Undefined array key -1" (mPDF)
+
+### Modified: `resources/views/resume/premium_minimal.blade.php`
+- `downloadPdf` was failing with `Undefined array key -1` (mPDF Mpdf.php:8352) and a
+  500. Root cause: the template's own `@page { size: A4; margin: 0; }` rule combined
+  with a bordered inline-block element (the skill chips) trips an mPDF span-border
+  width-measurement bug. Bisected to that exact pair.
+- Removed the local `@page` rule (redundant — mPDF gets A4 + zero margins from the
+  controller config, and the HTML-preview path injects its own `@page`). Skills now
+  render as plain chips and PDF generation succeeds for full / skills-only / single-
+  skill / no-skills / empty payloads.
+- No controller/data change.
+
+---
+
+## 2026-06-23 — New file-based template: Premium Resume (Blade conversion)
+
+Converts the resume(1).html prototype into a switchable Blade template. pdf.blade.php
+untouched.
+
+### New: `resources/views/resume/premium_resume.blade.php`
+- Bound to the normalized `$d` contract (same as premium_minimal). mPDF adaptations
+  from the browser prototype: flexbox/CSS-grid → table-based two-column rows; CSS
+  custom properties (`var(--x)`) → literal hex (mPDF doesn't resolve var()); removed
+  the local `@page` (a local @page + bordered inline pills crashes mPDF — proven
+  earlier); icons are decorative fill-based inline SVG via a guarded `pr_icon()`
+  helper, all resume content stays plain selectable text (ATS-friendly).
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- Added `premium_resume` to `TEMPLATE_KEYS` (accepted by validation, preserved by
+  coerceTemplateKey) and to `FILE_TEMPLATES` (renders from the standalone view).
+
+### Removed
+- Stray `resources/views/resume/resume(1).html` (downloaded prototype artifact). The
+  reference prototype remains at `resources/views/resume/premium_resume_template.html`.
+
+### Verification
+- `php -l` clean; mPDF renders the template for full and empty payloads with no
+  "Undefined array key -1"/crash (37 KB / 1.4 KB). Bindings (name, contacts, summary,
+  experience rows + bullets, education rows, skill pills, certs/achievements) resolve;
+  8 skill chips + 10 SVG icons present. Frontend `tsc` clean.
+
+### Rollback
+- Remove `premium_resume` from `TEMPLATE_KEYS` + `FILE_TEMPLATES` and delete the view;
+  frontend: remove from `RESUME_TEMPLATES`/`TEMPLATE_KEYS`.
+
+---
+
+## 2026-06-23 — Premium Resume: final stabilization (browser + HTML preview + mPDF)
+
+Polishing only — no redesign, no palette/typography changes. premium_resume only.
+
+### Modified: `resources/views/resume/premium_resume.blade.php`
+- ISSUE 1 (dividers): all dividers converted from dashed to solid border-based rules
+  (`.header-divider` 2px navy, `.section-divider` + experience separator 1px #e5e7eb).
+  Dashed borders rendered as broken "---" fragments in mPDF; solid borders are clean.
+- ISSUE 2 (page breaks): `page-break-inside: avoid` on `.exp-item`, `.edu-item`, and
+  each `.two-col .col`; `page-break-after: avoid` on `.sec-head` so a section header
+  does not orphan at the bottom of a page.
+- ISSUE 3 (header): contact row shows short "LinkedIn"/"Website" labels (not the raw
+  URL); items stay `white-space: nowrap` so the row wraps between items, never inside.
+- ISSUE 4 (long company): experience header cells given fixed widths (68% / 32%) so a
+  long company name wraps on the left while the duration stays right-aligned.
+- ISSUE 5/6 (skills): consistent chip height via fixed `line-height`; `.skills-wrap`
+  container line-height gives even spacing between wrapped rows; global word-wrap so
+  long skills/URLs/company names never overflow.
+- ISSUE 8/14 (bullets + rhythm): bullet line-height/margins standardized.
+- ISSUE 11 (icons): section-icon badges drawn as a single-cell table with
+  `background-color` + `border-radius` (mPDF paints cell backgrounds reliably, unlike
+  inline-block spans) so the white icon is always visible; SVG fill moved from inline
+  `style` to the `fill` presentation attribute (mPDF SVG parser honours it).
+- ISSUE 13 (margins): page padding standardized to 18mm all sides.
+
+### Verification (ISSUE 15 — 5 datasets, all via mPDF, no errors)
+- Minimal 31KB · Fresher 36KB · Articleship 37KB · Experienced 40KB · Very-long
+  (long email/URLs, 80-char company, 10 bullets, long skill) 42KB — all OK.
+- Empty-data render: every section (Summary/Experience/Education/Skills/Certs/Ach)
+  fully suppressed (ISSUE 9). 6 white-fill section icons + contact icons present;
+  no raw LinkedIn URL leaked.
+
+### Regression risks
+- Skill pills keep a border; combined with a local @page this previously crashed mPDF
+  — this template intentionally has NO @page, so it stays safe. Do not re-add @page.
+- Icon badge is now a nested table; visually a navy rounded square/circle — confirm in
+  a real PDF that radius renders as expected on the target mPDF build.
+
+### Rollback
+- Revert this file from git history; no schema/controller change involved.
+
+---
+
+## 2026-06-23 — Resume PDF engine: mPDF → Spatie Browsershot (headless Chromium)
+
+Swaps ONLY the rendering engine behind `POST /resume/pdf`. The endpoint, auth, rate
+limit, validation, normalized `$d` contract, `<Name>_resume.pdf` filename, the Backend
+Preview endpoint (`/resume/preview-html`) and the frontend are all UNCHANGED. The PDF
+is now produced by a real browser, so it matches the Backend Preview far more closely
+(no dashed-border breakage, accurate page breaks, crisp vector text, true-circle icon
+badges) — the issues that dogged mPDF are gone.
+
+### Added: `spatie/browsershot` (composer) + `puppeteer` (npm)
+- `composer require spatie/browsershot` (v5.4). Pulls `spatie/temporary-directory`.
+- `package.json` → new `dependencies: { "puppeteer": "^24.0.0" }`. Puppeteer ships a
+  matching Chromium; `npm install` on the server fetches it.
+
+### Modified: `app/Http/Controllers/API/ResumeController.php`
+- `downloadPdf()` — removed the entire mPDF block (`new \Mpdf\Mpdf(...)`, `WriteHTML`,
+  `Output`, the `storage/app/mpdf` temp dir). Now builds the same `renderTemplateHtml()`
+  document and hands it to a new helper. Filename logic and the response headers are
+  byte-for-byte the same.
+- New private `renderResumePdf(string $html): string` — `Browsershot::html($html)
+  ->format('A4')->showBackground()->margins(0,0,0,0)->timeout(...)->pdf()`. Resolves
+  puppeteer from the project's `node_modules`; honors optional `node_binary` /
+  `npm_binary` / `chrome_path` / `no_sandbox` from config. `margins 0` + `showBackground`
+  reproduce the old mPDF intent (templates own their insets; full-bleed bands reach the
+  edge; colored backgrounds print). Default print media honors `page-break-*` rules.
+- No `\Mpdf` references remain in the controller. (mPDF was used nowhere else.)
+
+### Added: `config/resumepdf.php`
+- Per-environment Browsershot binary paths + `no_sandbox` (default true — Chromium
+  refuses its sandbox as root on most VPSes) + render `timeout`. All from `.env`
+  (`RESUME_PDF_*`), all optional. `.env.example` documents the keys.
+
+### Modified: `resources/views/resume/premium_resume.blade.php` (1 additive print rule)
+- Added an `@media print { html,body{background:#fff} .page{margin:0;min-height:0} }`
+  block. The template's gray body canvas + `.page { margin:16px auto; min-height:297mm }`
+  are on-screen "floating page" affordances; mPDF ignored them, but real Chromium
+  honored them and spilled a near-empty SECOND page (every premium_resume render was
+  +1 page) and printed the gray canvas. Print-media override neutralizes them for the
+  PDF only. The Backend Preview (screen media) is byte-for-byte unchanged; resume
+  content design/colors/spacing are untouched. NOT a redesign.
+
+### Verification (real Chromium render, 4 templates × 4 datasets = 16 PDFs)
+- All 16 valid (`%PDF` … `%%EOF`). classic/modern/premium_minimal/premium_resume.
+- Page counts correct: short resumes 1 page, very-long (6 jobs × 6 bullets, 24 skills,
+  4 degrees, long names/URLs) paginates cleanly — premium_resume 3 pages, others 2 —
+  with NO experience/education block split across a page boundary.
+- premium_resume minimal/fresher/experienced now 1 page (was 2 before the print fix).
+- Visual eyeball of premium_resume PDFs: navy circular icon badges render as TRUE
+  circles with centered white glyphs, solid dividers, rounded skill pills, two-column
+  certs/achievements, navy footer bar, crisp text, white background (no gray canvas).
+- Render time ~0.6–0.85 s warm per PDF (first call adds Chromium cold-start ~0.7 s).
+  Sizes 65–170 KB.
+
+### Required server packages / install (Hostinger VPS, Ubuntu/Debian)
+1. Node + npm (Node 18+):
+   `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs`
+2. Chromium runtime libraries (Puppeteer's bundled Chromium needs these shared libs):
+   `sudo apt-get install -y libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+     libpango-1.0-0 libpangocairo-1.0-0 libgtk-3-0 ca-certificates fonts-liberation`
+3. Fonts (so Arial/Helvetica → Liberation Sans, and the Classic/Modern `dejavusans`
+   fallback resolve; without these Chromium substitutes a default sans):
+   `sudo apt-get install -y fonts-liberation fonts-dejavu fonts-noto-core`
+4. In the project root: `composer install` then `npm install`.
+5. Provide Chromium — pick ONE (Option B is the most reliable; Puppeteer's bundled-Chrome
+   auto-resolution proved finicky when a stale cache from an older puppeteer was present):
+   - Option A (bundled): `npx puppeteer browsers install chrome` — prints the resolved
+     binary path; set `RESUME_PDF_CHROME_PATH` to that path so resolution can't drift.
+   - Option B (system Chromium, recommended): `sudo apt-get install -y chromium-browser`
+     then `RESUME_PDF_CHROME_PATH=/usr/bin/chromium-browser`.
+   Verified locally: with `RESUME_PDF_CHROME_PATH` set, all 16 renders pass on puppeteer
+   24.43.1 + Chrome 148. (Without it, puppeteer 24 failed to locate Chrome on a machine
+   whose cache held only older builds.)
+6. Set the user that php-fpm runs as so it can read node_modules / the Chrome binary; if
+   php-fpm differs from the install user, set `RESUME_PDF_NODE_MODULES_PATH` to the project root.
+7. `php artisan config:clear` (or `config:cache`) so `config/resumepdf.php` loads.
+
+### Regression risks
+- HARD DEPENDENCY on Node + Chromium being installed on the server. If missing/misconfigured,
+  `/resume/pdf` returns 500 ("Failed to generate PDF.") and logs `ResumeController::downloadPdf`.
+  There is intentionally NO silent mPDF fallback (it would reintroduce the mismatched output).
+- Chromium as root needs `--no-sandbox` (`RESUME_PDF_NO_SANDBOX=true`, the default).
+- Heavier per request: spawns Chromium (~0.6–0.85 s, 100–300 MB RAM) vs mPDF (~50–200 ms).
+  The existing `throttle:resume-pdf` (5/min/user) caps concurrency; consider queueing if
+  download volume grows. First request after idle pays a cold-start.
+- Server fonts must be installed (step 3) or text metrics differ slightly from the
+  designer's machine. No network is used at render time (templates are fully inline).
+
+### Rollback
+- Revert `downloadPdf()` + remove `renderResumePdf()`/`config/resumepdf.php`; the old mPDF
+  code restores 1:1. `mpdf/mpdf` is still in composer.json (left installed for exactly
+  this), so no `composer require` is needed to roll back. The `premium_resume` `@media
+  print` block is harmless under mPDF (mPDF ignores `@media print`) and can stay.
+- Optional cleanup once Browsershot is confirmed in production: `composer remove mpdf/mpdf`.

@@ -2395,3 +2395,38 @@ CREATE TABLE `resumes` (
 
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `resumes`;
+
+
+-- =====================================================================
+-- Resume Builder P0 Security & Completeness Fixes — 2026-06-23
+-- =====================================================================
+-- No DDL changes. All changes are code-only except the migration below.
+--
+-- Migration: 2026_06_23_000001_patch_resume_templates_p0.php
+--   Updates two rows in `resume_templates` (seeded rows only; skips if
+--   admin has edited them):
+--   1. modern_minimal   — removes @php skills-split block; now uses
+--                         pre-computed $d['skills_c1'] / $d['skills_c2']
+--   2. classic_professional — adds title, linkedin, website to contact
+--                             header (were present in data but not rendered)
+--
+-- Code changes (no DB schema change):
+--   app/Http/Controllers/API/ResumeController.php
+--     - renderTemplateHtml(): strips @php/@endphp + raw <?php tags from
+--       admin-authored template HTML before Blade::render() — closes
+--       template injection vector
+--     - normalizeResume(): adds skills_c1 / skills_c2 to returned array
+--     - saveResume() + downloadPdf(): template_key validated against live
+--       DB active keys (was hardcoded); resume_data validated field-by-field
+--       (string/array size bounds)
+--   app/Providers/AppServiceProvider.php
+--     - Adds 'resume-pdf' rate limiter: 5 requests/min per authenticated user
+--   routes/api.php
+--     - POST /resume/pdf now carries ->middleware('throttle:resume-pdf')
+--   resources/views/resume/pdf.blade.php (static fallback)
+--     - classic_professional: renders title, linkedin, website
+--     - modern_minimal: uses $d['skills_c1']/$d['skills_c2'] (no @php)
+--
+-- Run migration:  php artisan migrate
+-- Rollback note: migration down() is a no-op (prevents clobbering admin edits)
+-- =====================================================================

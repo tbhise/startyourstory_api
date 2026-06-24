@@ -208,6 +208,12 @@ class FirmController extends Controller
         */
             $validator = Validator::make($request->all(), [
                 'address' => 'required|string',
+                // Firm Details counts are INT columns — accept only whole, non-negative
+                // numbers (reject decimals, ranges like "20-25", text and symbols).
+                // Mirrors the frontend integer-only guard on firm-profile.tsx.
+                'employees' => 'nullable|integer|min:0',
+                'partners'  => 'nullable|integer|min:0',
+                'articles'  => 'nullable|integer|min:0',
                 // File limits (kept in sync with the frontend firm-profile uploads):
                 // logo max 5MB, max 5 office images each max 5MB. max is in KB.
                 'logo'            => 'nullable|image|max:5120',
@@ -215,6 +221,12 @@ class FirmController extends Controller
                 'office_images.*' => 'image|max:5120',
             ], [
                 'address.required'      => 'Address is required.',
+                'employees.integer'     => 'Number of employees must be a whole number (e.g. 20, 50, 100).',
+                'employees.min'         => 'Number of employees cannot be negative.',
+                'partners.integer'      => 'Partners must be a whole number (e.g. 20, 50, 100).',
+                'partners.min'          => 'Partners cannot be negative.',
+                'articles.integer'      => 'Article Assistants must be a whole number (e.g. 20, 50, 100).',
+                'articles.min'          => 'Article Assistants cannot be negative.',
                 'logo.image'            => 'Firm logo must be an image (PNG or JPG).',
                 'logo.max'              => 'Firm logo must be 5MB or smaller.',
                 'office_images.max'     => 'You can upload a maximum of 5 office images.',
@@ -626,6 +638,8 @@ class FirmController extends Controller
                 // soft-deleted never surface on the public companies page.
                 ->join('users', 'firm_profiles.user_id', '=', 'users.id')
                 ->where('users.is_deleted', false)
+                // Only admin-approved firms appear in the public companies directory.
+                ->where('firm_profiles.verification_status', 'approved')
                 ->leftJoin('firm_departments', 'firm_profiles.id', '=', 'firm_departments.firm_id')
                 ->select(
                     'firm_profiles.*',
@@ -744,6 +758,12 @@ class FirmController extends Controller
                     $request->exposure_type
                 );
             }
+            // Premium firms always surface first. This is the PRIMARY sort key, added
+            // before the chosen sort below, so within each (premium / non-premium)
+            // group the existing ordering is preserved. When no premium firms exist
+            // every is_premium is 0, making this a no-op (current behaviour unchanged).
+            $query->orderBy('firm_profiles.is_premium', 'DESC');
+
             if (!empty($request->sort)) {
                 switch ($request->sort) {
                     case 'premium':
@@ -876,6 +896,9 @@ class FirmController extends Controller
                 )
                 ->leftJoin('users', 'users.id', 'firm_profiles.user_id')
                 ->where('firm_profiles.id', $id)
+                // Only admin-approved firms are publicly viewable.
+                ->where('firm_profiles.verification_status', 'approved')
+                ->where('users.is_deleted', false)
                 ->first();
             if (!$company) {
                 return response()->json([
@@ -1537,10 +1560,10 @@ class FirmController extends Controller
                     $request->departments
                 );
             }
-            $query->orderBy(
-                'jobs.created_at',
-                'desc'
-            );
+            // Newest jobs first. id DESC is a stable tiebreaker so jobs created in
+            // the same second still surface in a deterministic newest-first order.
+            $query->orderBy('jobs.created_at', 'desc')
+                ->orderBy('jobs.id', 'desc');
             $jobs = $query->paginate(10);
             $appliedJobIds = [];
             $savedJobIds = [];

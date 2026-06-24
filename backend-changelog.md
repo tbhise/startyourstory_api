@@ -4,6 +4,93 @@
 
 ---
 
+## 2026-06-24 — Sitemap: add /resume-builder to static pages
+
+- **`app/Http/Controllers/API/SitemapController.php`** — added `/resume-builder`
+  to `STATIC_PAGES` (changefreq monthly, priority 0.7), so it appears in the
+  backend-served `/sitemaps/static.xml`. `staticUrlCount()` (admin health check)
+  picks up the new count automatically.
+
+---
+
+## 2026-06-24 — Modern Minimal resume PDF: fix Education section layout
+
+- **`database/migrations/2026_06_24_000010_modern_minimal_education_layout_fix.php`**
+  (new) — **the actual PDF fix.** The downloaded PDF for modern_minimal renders
+  from the ACTIVE `resume_templates` DB row (ResumeController::renderTemplateHtml),
+  not from the blade — so the blade edit alone never reached the PDF. The DB row's
+  education block still used the original single right cell rendering
+  `trim($e['year'].' '.$e['score'])`, i.e. Duration + Score **concatenated into
+  one cell** ("May - 2019 97" — the exact merge reported). The migration now sets
+  the whole `.modern` body to a known-good template string (deterministic — no
+  cross-section regex) with: a stable full-width two-row Education table
+  (`width:100%; border-collapse`; right cells `text-align:right;
+  white-space:nowrap; padding-left:14px`) so Duration and Score sit on separate
+  rows/cells; `.ed-score` highlighted (#475569 → #0f172a); and Skills as a
+  one-per-line bullet list (matching the editor preview + Classic/Premium blades).
+  Verified: `@if`/`@endif` (10/10) and `@foreach`/`@endforeach` (7/7) balanced and
+  the template renders. Idempotent; Modern Minimal only.
+  NOTE: an earlier draft of this migration used a greedy `.*?</table>` regex that
+  over-matched from the Skills table through Education and stripped intervening
+  Blade directives, causing a transient `unexpected "endforeach"` compile error;
+  the deterministic full-set replacement above is the fix and supersedes it.
+- **`resources/views/resume/pdf.blade.php`** (Modern Minimal case only) — same fix
+  applied to the fallback blade (used when no active DB row exists): `.modern
+  .ed-table` (`width:100%; border-collapse`) + `.ed-left` / `.ed-right` cell
+  classes (right cell: `text-align:right; white-space:nowrap; padding-left:14px`);
+  `.ed-score` highlighted. Classic / Premium Minimal blades untouched.
+
+---
+
+## 2026-06-24 — Batch: firm int validation, resume skills, premium-first companies, subs null fix, impersonation read-only
+
+- **`app/Http/Controllers/API/FirmController.php`**
+  - `firm_profile_update()` — added integer validation for `employees`,
+    `partners`, `articles` (`nullable|integer|min:0`) with friendly messages, so
+    decimals/ranges/text are rejected server-side (mirrors the frontend guard).
+    Empty values are handled by Laravel's ConvertEmptyStringsToNull middleware.
+  - `getCompanies()` — **premium firms first**: added
+    `orderBy('firm_profiles.is_premium', 'DESC')` as the PRIMARY sort before the
+    chosen/default sort, so premium firms surface first while within-group order
+    is preserved (no-op when no premium firms exist).
+  - `getJobs()` — added `id DESC` tiebreaker after `created_at DESC` for stable
+    newest-first dashboard job ordering.
+- **`resources/views/resume/pdf.blade.php`** & **`resume/premium_minimal.blade.php`**
+  — Skills now render as a one-per-line bullet list (matching Certifications /
+  Achievements) for Classic, Modern and Premium Minimal, so the downloaded PDF
+  matches the new editor preview. Premium Resume blade left intact (template
+  disabled in the UI only).
+- **`app/Http/Controllers/API/AdminController.php`** — `getAdminSubscriptions()`:
+  fixed the "Viewing null" root cause. `firm_subscriptions.firm_id` is stored
+  under two conventions (admin-assigned → `users.id`; payment/PhonePe →
+  `firm_profiles.id`); the list now resolves the firm under BOTH via aliased
+  left-joins + `COALESCE` so `firm_name` / `firm_email` are never null. Search
+  updated to match across both aliases. No data migration.
+- **`app/Http/Middleware/BlockImpersonationWrites.php`** — extended the
+  impersonation read-only deny-list with `resume` (saveResume), `resume/pdf`
+  (download) and `payout-details` (add/edit). `resume/preview-html` stays allowed
+  so the admin can still view the resume; DELETE /resume already blocked by the
+  verb rule.
+
+Note: `/admin/notifications` (AdminNotificationController@index) already orders
+`created_at DESC, id DESC` — verified, no change needed.
+
+---
+
+## 2026-06-24 — Public companies directory gated to approved firms
+
+- **`app/Http/Controllers/API/FirmController.php`** — `getCompanies()` (POST
+  `/getCompanies`, backs the students' All Companies page) now adds
+  `where('firm_profiles.verification_status', 'approved')` to the base query, so
+  only admin-approved firms are returned. Pending/rejected firms no longer
+  surface in the directory.
+- **`app/Http/Controllers/API/FirmController.php`** — `getCompanyDetails()`
+  (POST `/getCompanyDetails/{id}`, backs the company detail page) now also
+  requires `verification_status = 'approved'` (plus `users.is_deleted = false`),
+  so a pending/rejected firm reached via direct URL returns "Company not found".
+
+---
+
 ## 2026-06-24 — User-auth migration to user_sessions only — backend
 
 Migrated ALL user authentication (students / firms / creators) to resolve

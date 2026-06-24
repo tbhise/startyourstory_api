@@ -2530,3 +2530,7 @@ ALTER TABLE `users` DROP COLUMN `token_expires_at`;
 -- ROLLBACK (restores empty columns; token values are not restored):
 --   ALTER TABLE `users` ADD COLUMN `api_token` VARCHAR(255) NULL AFTER `password`;
 --   ALTER TABLE `users` ADD COLUMN `token_expires_at` TIMESTAMP NULL AFTER `api_token`;
+
+
+
+=============================================== On Live :- 24/06/2026====================

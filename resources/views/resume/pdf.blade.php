@@ -286,7 +286,26 @@ if (!function_exists('rb_icon')) {
             font-size: 11.5px;
         }
 
-        /* Education — Degree | Duration / Institute | Score (premium two-row layout) */
+        /* Education — Degree | Duration / Institute | Score (stable two-column table) */
+        .modern .ed-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .modern .ed-table .ed-left {
+            text-align: left;
+            vertical-align: baseline;
+        }
+
+        /* Right column hugs the page edge; padding-left + nowrap keep the duration /
+           score from ever merging with a long left value. */
+        .modern .ed-table .ed-right {
+            text-align: right;
+            vertical-align: baseline;
+            white-space: nowrap;
+            padding-left: 14px;
+        }
+
         .modern .ed-deg {
             font-size: 12.5px;
             font-weight: bold;
@@ -303,10 +322,11 @@ if (!function_exists('rb_icon')) {
             color: #475569;
         }
 
+        /* Score is highlighted (bold + dark) so it stands apart from the muted duration. */
         .modern .ed-score {
             font-size: 10.5px;
             font-weight: bold;
-            color: #475569;
+            color: #0f172a;
         }
 
         /* ── Executive Sidebar ── */
@@ -588,11 +608,12 @@ if (!function_exists('rb_icon')) {
                     @if ($key === 'skills' && count($d['skills']))
                         <div class="sec">{!! rb_icon('chart') !!}Skills</div>
                         <div class="secrule"></div>
-                        <div>
+                        {{-- One skill per line, matching Certifications / Achievements. --}}
+                        <ul>
                             @foreach ($d['skills'] as $s)
-                                <span class="chip">{{ $s }}</span>
+                                <li>{{ $s }}</li>
                             @endforeach
-                        </div>
+                        </ul>
                     @endif
                 @endforeach
 
@@ -650,24 +671,14 @@ if (!function_exists('rb_icon')) {
                     @if ($key === 'skills' && count($d['skills']))
                         <div class="sec">Skills</div>
                         <div class="secrule"></div>
-                        <table class="skills">
-                            <tr>
-                                <td style="width:50%">
-                                    <ul>
-                                        @foreach ($d['skills_c1'] as $s)
-                                            <li>{{ $s }}</li>
-                                        @endforeach
-                                    </ul>
-                                </td>
-                                <td style="width:50%">
-                                    <ul>
-                                        @foreach ($d['skills_c2'] as $s)
-                                            <li>{{ $s }}</li>
-                                        @endforeach
-                                    </ul>
-                                </td>
-                            </tr>
-                        </table>
+                        {{-- One skill per line (single column), matching Certifications /
+                             Achievements. skills_c1/skills_c2 are still provided by the
+                             backend but no longer used here. --}}
+                        <ul>
+                            @foreach ($d['skills'] as $s)
+                                <li>{{ $s }}</li>
+                            @endforeach
+                        </ul>
                     @endif
 
                     @if ($key === 'experience' && count($d['experience']))
@@ -699,19 +710,23 @@ if (!function_exists('rb_icon')) {
                         <div class="sec">Education</div>
                         <div class="secrule"></div>
                         @foreach ($d['education'] as $e)
-                            {{-- Two-row layout: Degree | Duration  /  Institute | Score (no bullet). --}}
-                            <table style="margin-bottom:7px">
+                            {{-- Stable 2-column table: full width with right-aligned right
+                                 column so Degree|Duration and Institute|Score render on two
+                                 clean rows. width:100% + border-collapse keeps the right cell
+                                 flush to the page edge; the right cell's left padding + nowrap
+                                 guarantee the duration/score never merge with the left value. --}}
+                            <table class="ed-table" style="margin-bottom:7px">
                                 <tr>
-                                    <td style="width:70%"><span class="ed-deg">{{ $e['degree'] }}</span></td>
-                                    <td style="width:30%;text-align:right">
+                                    <td class="ed-left"><span class="ed-deg">{{ $e['degree'] }}</span></td>
+                                    <td class="ed-right">
                                         @if ($e['year'])
                                             <span class="ed-dur">{{ $e['year'] }}</span>
                                         @endif
                                     </td>
                                 </tr>
                                 <tr>
-                                    <td style="width:70%"><span class="ed-inst">{{ $e['institute'] }}</span></td>
-                                    <td style="width:30%;text-align:right">
+                                    <td class="ed-left"><span class="ed-inst">{{ $e['institute'] }}</span></td>
+                                    <td class="ed-right">
                                         @if ($e['score'])
                                             <span class="ed-score">{{ $e['score'] }}</span>
                                         @endif

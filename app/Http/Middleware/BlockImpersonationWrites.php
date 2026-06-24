@@ -53,6 +53,15 @@ class BlockImpersonationWrites
         // Resume / candidate file download (firm side)
         'downloadFile',
 
+        // Student resume builder — editing + downloading are blocked in
+        // impersonation (view only). 'resume/preview-html' stays allowed so the
+        // admin can still SEE the resume; DELETE /resume is blocked by the verb rule.
+        'resume',                    // POST /resume = saveResume (edit)
+        'resume/pdf',                // POST /resume/pdf = downloadPdf (download)
+
+        // Centralized payout details (referral earners + creators) — add/edit blocked.
+        'payout-details',
+
         // Wallet / premium / payments
         'wallet/recharge',
         'wallet/recharge/*',

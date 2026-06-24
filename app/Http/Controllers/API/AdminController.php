@@ -180,9 +180,17 @@ class AdminController extends Controller
     {
         try {
             $search = trim($request->search ?? '');
+            // firm_subscriptions.firm_id is stored under two historical conventions:
+            //   - admin-assigned rows (addSubscriptions)      → users.id
+            //   - payment/PhonePe rows (PhonePeFirmController) → firm_profiles.id
+            // Resolve the firm under BOTH so firm_name/email are never null (the cause
+            // of the "Viewing null" bug). Each alias matches at most one row (id is PK,
+            // user_id is unique per firm), so no row duplication is introduced.
             $query = DB::table('firm_subscriptions')
-                ->leftJoin('firm_profiles', 'firm_subscriptions.firm_id', '=', 'firm_profiles.user_id')
-                ->leftJoin('users', 'firm_profiles.user_id', '=', 'users.id')
+                ->leftJoin('firm_profiles as fp_uid', 'firm_subscriptions.firm_id', '=', 'fp_uid.user_id')
+                ->leftJoin('firm_profiles as fp_pid', 'firm_subscriptions.firm_id', '=', 'fp_pid.id')
+                ->leftJoin('users as u_uid', 'fp_uid.user_id', '=', 'u_uid.id')
+                ->leftJoin('users as u_pid', 'fp_pid.user_id', '=', 'u_pid.id')
                 ->select(
                     'firm_subscriptions.id',
                     'firm_subscriptions.firm_id',
@@ -193,15 +201,17 @@ class AdminController extends Controller
                     'firm_subscriptions.expires_at',
                     'firm_subscriptions.created_at',
                     'firm_subscriptions.updated_at',
-                    'firm_profiles.firm_name',
-                    'users.email as firm_email'
+                    DB::raw('COALESCE(fp_uid.firm_name, fp_pid.firm_name) as firm_name'),
+                    DB::raw('COALESCE(u_uid.email, u_pid.email) as firm_email')
                 )
                 ->orderByDesc('firm_subscriptions.id');
             if (!empty($search)) {
                 $query->where(function ($q) use ($search) {
-                    $q
-                        ->where('firm_profiles.firm_name', 'LIKE', '%' . $search . '%')
-                        ->orWhere('users.email', 'LIKE', '%' . $search . '%');
+                    $like = '%' . $search . '%';
+                    $q->where('fp_uid.firm_name', 'LIKE', $like)
+                        ->orWhere('fp_pid.firm_name', 'LIKE', $like)
+                        ->orWhere('u_uid.email', 'LIKE', $like)
+                        ->orWhere('u_pid.email', 'LIKE', $like);
                 });
             }
             $subscriptions = $query->get();

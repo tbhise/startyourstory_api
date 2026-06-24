@@ -298,14 +298,15 @@
         @if (!empty($skills) && is_array($skills))
             <div class="section">
                 <div class="section-title">Skills</div>
-                
-                <div class="skills-wrap">
+
+                {{-- One skill per line, matching the Certifications / Achievements lists. --}}
+                <ul class="plain">
                     @foreach ($skills as $skill)
                         @if (!empty(trim((string) $skill)))
-                            <span class="skill-chip">{{ $skill }}</span>
+                            <li>{{ $skill }}</li>
                         @endif
                     @endforeach
-                </div>
+                </ul>
             </div>
         @endif
 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\AuthHelper;
 
 class ErrorLogController extends Controller
 {
@@ -33,17 +34,10 @@ class ErrorLogController extends Controller
             // Attach authenticated user info if available
             $userId   = null;
             $userRole = null;
-            $token    = $request->cookie('auth_token');
-            if ($token) {
-                $user = DB::table('users')
-                    ->where('api_token', $token)
-                    ->where('is_deleted', false)
-                    ->select('id', 'role')
-                    ->first();
-                if ($user) {
-                    $userId   = $user->id;
-                    $userRole = $user->role;
-                }
+            $user     = AuthHelper::resolveUser($request);
+            if ($user) {
+                $userId   = $user->id;
+                $userRole = $user->role;
             }
 
             DB::table('error_logs')->insert([

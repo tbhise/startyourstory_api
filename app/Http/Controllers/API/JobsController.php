@@ -7,6 +7,7 @@ use App\Services\Notifications\EmailNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\AuthHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
@@ -27,10 +28,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -194,10 +192,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -301,10 +296,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -530,10 +522,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -663,10 +652,7 @@ class JobsController extends Controller
                 ], 401);
             }
 
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
 
             if (!$user) {
                 return response()->json([
@@ -971,10 +957,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1194,10 +1177,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1541,10 +1521,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1760,10 +1737,7 @@ class JobsController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -2028,10 +2002,7 @@ class JobsController extends Controller
             if (!$token) {
                 return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
             }

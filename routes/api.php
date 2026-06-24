@@ -26,6 +26,7 @@ use App\Http\Controllers\API\AdminWalletController;
 use App\Http\Controllers\API\MessagingController;
 use App\Http\Controllers\API\AdminMessagingController;
 use App\Http\Controllers\API\ErrorLogController;
+use App\Http\Controllers\API\EmailLogController;
 use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
 use App\Http\Controllers\API\PublicController;
@@ -39,6 +40,7 @@ use App\Http\Controllers\API\BlogController;
 use App\Http\Controllers\API\PhonePeWalletController;
 use App\Http\Controllers\API\SysCoinController;
 use App\Http\Controllers\API\AdminReferralController;
+use App\Http\Controllers\API\PayoutDetailsController;
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact'])->middleware('throttle:contact');
@@ -126,6 +128,10 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
     Route::get('/referrals', [ReferralController::class, 'index']);
+
+    // ── Centralized payout details (referral earners + creators) ──
+    Route::get('/payout-details',  [PayoutDetailsController::class, 'show']);
+    Route::post('/payout-details', [PayoutDetailsController::class, 'save']);
 
     // ── SYS Coins (points currency, separate from wallet money) ──
     Route::get('/sys-coins',         [SysCoinController::class, 'getAccount']);
@@ -255,6 +261,7 @@ Route::post('/admin/wallet/recharges/{id}/reject',       [AdminWalletController:
 Route::post('/admin/referral-payouts',                   [AdminReferralController::class, 'listPayouts']);
 Route::post('/admin/referral-payouts/{id}/approve',      [AdminReferralController::class, 'approvePayout']);
 Route::post('/admin/referral-payouts/{id}/mark-paid',    [AdminReferralController::class, 'markPayoutPaid']);
+Route::post('/admin/referral-payouts/{id}/send-mail',    [AdminReferralController::class, 'sendPayoutDetailsMail']);
 Route::post('/admin/sys-coins/transactions',             [AdminReferralController::class, 'listCoinTransactions']);
 Route::post('/admin/referral-transactions',              [AdminReferralController::class, 'listReferralTransactions']);
 
@@ -442,6 +449,11 @@ Route::post('/error-logs',                [ErrorLogController::class, 'store']);
 Route::get('/admin/error-logs',           [ErrorLogController::class, 'index']);
 Route::get('/admin/error-logs/stats',     [ErrorLogController::class, 'stats']);
 Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']);
+
+// Admin — Email Logs (read-only analytics + click tracking)
+Route::get('/admin/email-logs',           [EmailLogController::class, 'index']);
+Route::get('/admin/email-logs/stats',     [EmailLogController::class, 'stats']);
+Route::delete('/admin/email-logs',        [EmailLogController::class, 'destroy']);
 
 // ── Admin — Blog Module (Phase 1) ─────────────────────────────────────────────
 Route::prefix('admin/blog')->group(function () {

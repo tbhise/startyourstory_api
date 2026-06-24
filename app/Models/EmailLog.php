@@ -18,12 +18,15 @@ class EmailLog extends Model
         'status',
         'error_message',
         'sent_at',
+        'click_count',
+        'clicked_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'sent_at' => 'datetime',
+            'sent_at'    => 'datetime',
+            'clicked_at' => 'datetime',
         ];
     }
 
@@ -35,5 +38,19 @@ class EmailLog extends Model
     public function markFailed(string $error): void
     {
         $this->update(['status' => 'failed', 'error_message' => $error]);
+    }
+
+    /**
+     * Record a CTA click: always bump click_count; stamp clicked_at on the
+     * first click only. Direct save() (not increment()) so both columns persist
+     * in one write.
+     */
+    public function registerClick(): void
+    {
+        $this->click_count = (int) $this->click_count + 1;
+        if (is_null($this->clicked_at)) {
+            $this->clicked_at = now();
+        }
+        $this->save();
     }
 }

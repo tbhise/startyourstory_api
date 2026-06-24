@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
+use App\Helpers\AuthHelper;
 
 class FirmController extends Controller
 {
@@ -621,6 +622,10 @@ class FirmController extends Controller
     {
         try {
             $query = DB::table('firm_profiles')
+                // Inner join to users so firms whose account is missing or
+                // soft-deleted never surface on the public companies page.
+                ->join('users', 'firm_profiles.user_id', '=', 'users.id')
+                ->where('users.is_deleted', false)
                 ->leftJoin('firm_departments', 'firm_profiles.id', '=', 'firm_departments.firm_id')
                 ->select(
                     'firm_profiles.*',
@@ -780,15 +785,8 @@ class FirmController extends Controller
             }
             $companies = $query->paginate(12);
 
-            // [Companies Debug] TEMPORARY — trace pagination. Remove after debugging.
-            Log::info('[Companies Debug] getCompanies', [
-                'page_received'  => (int) $request->input('page', 1),
-                'per_page'       => $companies->perPage(),
-                'current_page'   => $companies->currentPage(),
-                'last_page'      => $companies->lastPage(),
-                'total'          => $companies->total(),
-                'returned_rows'  => $companies->count(),
-            ]);
+
+            
             $formattedCompanies = [];
             foreach ($companies->items() as $company) {
                 $formattedCompanies[] = [
@@ -1406,14 +1404,9 @@ class FirmController extends Controller
     public function getJobs(Request $request)
     {
         try {
-            $token = $request->cookie('auth_token');
-            $user = null;
-            if ($token) {
-                $user = DB::table('users')
-                    ->where('api_token', $token)
-                    ->where('is_deleted', false)
-                    ->first();
-            }
+            // Optional auth: resolves the logged-in user when present (this route
+            // sits inside ApiAuthMiddleware, so a user is normally set), null otherwise.
+            $user = AuthHelper::resolveUser($request);
             $studentProfile = null;
             if ($user && $user->role === 'student') {
                 $studentProfile = DB::table('student_profiles')

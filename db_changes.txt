@@ -2430,3 +2430,103 @@ CREATE TABLE `resumes` (
 -- Run migration:  php artisan migrate
 -- Rollback note: migration down() is a no-op (prevents clobbering admin edits)
 -- =====================================================================
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 2026-06-24 — email_logs: CTA click tracking for re-engagement campaign
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Adds click tracking so the single "Login to Continue" CTA in the re-engagement
+-- email can record engagement. The signed route GET /e/click/{emailLog} increments
+-- click_count on every hit and stamps clicked_at on the first click only.
+--
+-- Migration file:
+--   database/migrations/2026_06_24_000001_add_click_tracking_to_email_logs.php
+
+ALTER TABLE `email_logs`
+  ADD COLUMN `click_count` INT       NOT NULL DEFAULT 0 AFTER `sent_at`,
+  ADD COLUMN `clicked_at`  TIMESTAMP NULL              AFTER `click_count`;
+
+-- ROLLBACK:
+-- ALTER TABLE `email_logs`
+--   DROP COLUMN `clicked_at`,
+--   DROP COLUMN `click_count`;
+
+
+
+
+
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 2026-06-24 — Centralized payout details (user_payout_details)
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- One payout profile per user, shared by ALL payout flows (creator payouts,
+-- referral payouts, future). Replaces the creator-only creator_bank_details.
+-- account_number / ifsc_code are stored ENCRYPTED (Laravel Crypt), identical to
+-- the legacy table, so existing encrypted values are copied across as-is.
+-- Validation (app layer): preferred_method=upi requires upi_id; =bank requires
+-- account_holder_name, bank_name, account_number, ifsc_code.
+--
+-- Migration file:
+--   database/migrations/2026_06_24_000002_create_user_payout_details_table.php
+-- The migration ALSO copies all creator_bank_details rows into this table
+-- (preferred_method='bank', insertOrIgnore — idempotent).
+--
+-- SAFETY: creator_bank_details is NOT dropped here. It is retained until the
+-- migrated creator + referral flows are verified in production. A later, separate
+-- migration will drop it once zero dependencies remain.
+
+CREATE TABLE `user_payout_details` (
+  `id`                   BIGINT       NOT NULL AUTO_INCREMENT,
+  `user_id`              BIGINT       NOT NULL,
+  `preferred_method`     ENUM('upi','bank') NOT NULL DEFAULT 'upi',
+  `upi_id`               VARCHAR(255) NULL DEFAULT NULL,
+  `account_holder_name`  VARCHAR(255) NULL DEFAULT NULL,
+  `bank_name`            VARCHAR(255) NULL DEFAULT NULL,
+  `account_number`       TEXT         NULL DEFAULT NULL,   -- encrypted
+  `ifsc_code`            TEXT         NULL DEFAULT NULL,    -- encrypted
+  `is_verified`          TINYINT(1)   NOT NULL DEFAULT 0,
+  `created_at`           TIMESTAMP    NULL DEFAULT NULL,
+  `updated_at`           TIMESTAMP    NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_upd_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Data migration (copy legacy creator bank details into the centralized table):
+INSERT IGNORE INTO `user_payout_details`
+  (`user_id`,`preferred_method`,`account_holder_name`,`bank_name`,`account_number`,`ifsc_code`,`is_verified`,`created_at`,`updated_at`)
+SELECT `creator_id`,'bank',`account_holder_name`,`bank_name`,`account_number`,`ifsc_code`,`is_verified`,`created_at`,`updated_at`
+FROM `creator_bank_details`;
+
+-- ROLLBACK: DROP TABLE IF EXISTS `user_payout_details`;
+-- NOTE: creator_bank_details is intentionally retained (dropped later, separately).
+
+
+-- ───────────────────────────────────────────────────────────────────────────────
+-- 2026-06-24 — Payout UX refinements (NO SCHEMA CHANGE)
+-- ───────────────────────────────────────────────────────────────────────────────
+-- Payout details form moved from /referrals to /settings?tab=payout. Admin
+-- referral-payouts: Send Mail shown only when payout details are missing; removed
+-- the "Recommended" badge (admin-facing). All payout reads/writes continue to use
+-- the centralized `user_payout_details` table (with legacy creator_bank_details
+-- fallback during migration). No table/column changes required.
+
+
+-- ───────────────────────────────────────────────────────────────────────────────
+-- 2026-06-24 — User-auth migration to user_sessions only (drops legacy columns)
+-- ───────────────────────────────────────────────────────────────────────────────
+-- All user authentication (students/firms/creators) now resolves via the
+-- user_sessions table only. users.api_token + users.token_expires_at are no longer
+-- read or written by any user-facing code (admin auth via admin_users.api_token is
+-- UNCHANGED). Migration: 2026_06_24_000003_drop_legacy_user_api_token_columns.php
+--
+-- ⚠️ RUN ORDER: deploy the new application code FIRST and verify all flows
+-- (login/logout/dashboard/jobs/wallet/payments/impersonation), THEN run this. The
+-- dropped values are ephemeral session tokens — dropping them only forces re-login.
+
+ALTER TABLE `users` DROP COLUMN `api_token`;
+ALTER TABLE `users` DROP COLUMN `token_expires_at`;
+
+-- ROLLBACK (restores empty columns; token values are not restored):
+--   ALTER TABLE `users` ADD COLUMN `api_token` VARCHAR(255) NULL AFTER `password`;
+--   ALTER TABLE `users` ADD COLUMN `token_expires_at` TIMESTAMP NULL AFTER `api_token`;

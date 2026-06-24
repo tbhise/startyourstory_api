@@ -10,6 +10,7 @@ use App\Services\Email\EmailSenderResolver;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\URL;
 use Throwable;
 
 /**
@@ -36,13 +37,14 @@ class SendReEngagementEmails extends Command
     protected $signature = 'mail:reengagement
         {--type=    : Restrict to a single user type: student|firm|creator}
         {--verified= : Restrict to a verification state: 0 (unverified) or 1 (verified)}
+        {--profile= : Restrict to a profile state: 0 (incomplete) or 1 (completed)}
         {--dry-run  : List eligible recipients and counts without sending}
         {--limit=   : Cap the number of emails sent}
         {--sleep=0  : Seconds to pause between sends (SMTP rate-limit safety)}
         {--queue    : Dispatch via the database queue instead of sending synchronously}
         {--test     : Redirect ALL emails to TEST_EMAIL instead of the real recipients}';
 
-    protected $description = 'Send re-engagement emails to users with incomplete profiles (all segments in one sweep).';
+    protected $description = 'Send re-engagement emails across all 6 segments (student|firm × unverified|incomplete|completed). Narrow with --type/--verified/--profile.';
 
     private const TYPES = ['student', 'firm', 'creator'];
 
@@ -56,6 +58,7 @@ class SendReEngagementEmails extends Command
     {
         $type     = $this->option('type');
         $verified = $this->option('verified');
+        $profile  = $this->option('profile');
         $dryRun   = (bool) $this->option('dry-run');
         $useQueue = (bool) $this->option('queue');
         $useTest  = (bool) $this->option('test');
@@ -71,12 +74,17 @@ class SendReEngagementEmails extends Command
             $this->error('Invalid --verified value. Use 0 (unverified) or 1 (verified).');
             return self::FAILURE;
         }
+        if ($profile !== null && !in_array($profile, ['0', '1'], true)) {
+            $this->error('Invalid --profile value. Use 0 (incomplete) or 1 (completed).');
+            return self::FAILURE;
+        }
 
         // --- Build the single eligibility query -------------------------------
+        // Covers all 6 segments. profile_completed is selected (not hard-filtered)
+        // so verified+completed users are reachable; narrow with --profile.
         $query = DB::table('users')
             ->leftJoin('student_profiles', 'student_profiles.user_id', '=', 'users.id')
             ->where('users.is_deleted', 0)
-            ->where('users.profile_completed', 0)
             ->whereNotNull('users.email')
             ->where('users.email', '<>', '')
             ->select([
@@ -85,6 +93,7 @@ class SendReEngagementEmails extends Command
                 'users.email',
                 'users.role',
                 'users.email_verified_at',
+                'users.profile_completed',
                 'student_profiles.looking_for',
             ]);
 
@@ -92,6 +101,12 @@ class SendReEngagementEmails extends Command
             $query->whereNotNull('users.email_verified_at');
         } elseif ($verified === '0') {
             $query->whereNull('users.email_verified_at');
+        }
+
+        if ($profile === '1') {
+            $query->where('users.profile_completed', 1);
+        } elseif ($profile === '0') {
+            $query->where('users.profile_completed', 0);
         }
 
         if ($type === 'firm') {
@@ -151,25 +166,24 @@ class SendReEngagementEmails extends Command
         $failed  = [];
 
         foreach ($rows as $row) {
-            $userType = $this->typeOf($row);
-            $isVerified = !is_null($row->email_verified_at);
-            $segment  = ($isVerified ? 'verified' : 'unverified') . " {$userType}";
-            $deliverTo = $useTest ? self::TEST_EMAIL : $row->email;
+            $userType    = $this->typeOf($row);
+            $isVerified  = !is_null($row->email_verified_at);
+            $isCompleted = (bool) $row->profile_completed;
+            $state       = !$isVerified ? 'unverified' : ($isCompleted ? 'completed' : 'incomplete');
+            $segment     = "{$state} {$userType}";
+            $deliverTo   = $useTest ? self::TEST_EMAIL : $row->email;
 
             $label = $useTest ? "{$deliverTo} (test → {$row->email}, {$segment})" : "{$row->email} ({$segment})";
             $this->output->write("Sending email to {$label} ... ");
 
-            try {
-                $cta      = $this->ctaUrls($userType);
-                $subject  = $this->subjectFor($userType, $isVerified);
-                $mailable = new ReEngagementMail(
-                    $row->name ?: 'there',
-                    $userType,
-                    $isVerified,
-                    $subject,
-                    $cta
-                );
+            // Reset per-iteration so a prior row's log can't be reused by the catch.
+            $log = null;
 
+            try {
+                $subject = $this->subjectFor($userType, $isVerified, $isCompleted);
+
+                // Create the log FIRST so its id can be embedded in the signed
+                // click-tracking URL that becomes the single CTA target.
                 $log = EmailLog::create([
                     'recipient_email' => $row->email,
                     'recipient_type'  => $userType === 'firm' ? 'firm' : 'student',
@@ -179,6 +193,17 @@ class SendReEngagementEmails extends Command
                     'subject'         => $subject,
                     'status'          => 'pending',
                 ]);
+
+                $trackingUrl = URL::signedRoute('email.click', ['emailLog' => $log->id]);
+
+                $mailable = new ReEngagementMail(
+                    $row->name ?: 'there',
+                    $userType,
+                    $isVerified,
+                    $isCompleted,
+                    $subject,
+                    $trackingUrl
+                );
 
                 if ($useQueue) {
                     DispatchMailJob::dispatch($deliverTo, $mailable, $log->id);
@@ -237,38 +262,36 @@ class SendReEngagementEmails extends Command
         return $row->looking_for === 'creator' ? 'creator' : 'student';
     }
 
-    /** Human-readable "verified/unverified type" label for dry-run grouping. */
+    /** Human-readable "state type" label for dry-run grouping (3 states). */
     private function segmentOf(object $row): string
     {
-        $state = is_null($row->email_verified_at) ? 'unverified' : 'verified';
+        $state = is_null($row->email_verified_at)
+            ? 'unverified'
+            : ((bool) $row->profile_completed ? 'completed' : 'incomplete');
         return "{$state} {$this->typeOf($row)}";
     }
 
-    /** Frontend CTA URLs for a given user type. */
-    private function ctaUrls(string $userType): array
+    /** Subject line per segment (userType × 3 lifecycle states). */
+    private function subjectFor(string $userType, bool $verified, bool $completed): string
     {
-        $base = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
+        $state = !$verified ? 'unverified' : ($completed ? 'completed' : 'incomplete');
 
-        return [
-            'login'   => "{$base}/login",
-            'profile' => $userType === 'firm' ? "{$base}/firm-profile" : "{$base}/profile",
-            'verify'  => "{$base}/verify-email",
-        ];
-    }
-
-    /** Subject line per segment. */
-    private function subjectFor(string $userType, bool $verified): string
-    {
         return match ($userType) {
-            'firm' => $verified
-                ? 'Complete your firm profile and start hiring — Start Your Story'
-                : 'Verify your email to start hiring — Start Your Story',
-            'creator' => $verified
-                ? 'Complete your creator profile to get discovered — Start Your Story'
-                : 'Verify your email to get discovered — Start Your Story',
-            default => $verified
-                ? 'Complete your profile and start applying — Start Your Story'
-                : 'Verify your email to start applying — Start Your Story',
+            'firm' => match ($state) {
+                'unverified' => 'Verify your email to start hiring',
+                'incomplete' => 'Complete your firm profile and start hiring',
+                default      => 'Start posting jobs and reaching candidates',
+            },
+            'creator' => match ($state) {
+                'unverified' => 'Verify your email to get discovered',
+                'incomplete' => 'Complete your creator profile to get discovered',
+                default      => 'Get discovered for new content projects',
+            },
+            default => match ($state) {
+                'unverified' => 'Verify your email to start applying',
+                'incomplete' => 'Complete your profile and start applying',
+                default      => 'New jobs and firms are waiting for you',
+            },
         };
     }
 }

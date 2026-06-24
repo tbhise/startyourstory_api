@@ -75,12 +75,6 @@ class SessionController extends Controller
 
             DB::table('user_sessions')->where('id', $id)->delete();
 
-            // If this revoked token happens to still be in users.api_token, clear it.
-            DB::table('users')
-                ->where('id', $user->id)
-                ->where('api_token', $session->token)
-                ->update(['api_token' => null, 'token_expires_at' => null, 'updated_at' => now()]);
-
             return response()->json([
                 'status'  => true,
                 'message' => 'Device logged out successfully.',

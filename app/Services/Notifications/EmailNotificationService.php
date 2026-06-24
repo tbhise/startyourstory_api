@@ -16,6 +16,7 @@ use App\Mail\InterviewAcceptedMail;
 use App\Mail\InterviewRejectedMail;
 use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
+use App\Mail\ReferralPayoutRequestMail;
 use App\Models\EmailLog;
 use App\Models\User;
 use Illuminate\Mail\Mailable;
@@ -329,6 +330,31 @@ class EmailNotificationService
             $mailable,
             "{$count} {$noun} Received — Start Your Story",
             EmailPurpose::APPLICATION_DIGEST
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Referral payouts — request payout details from the referrer (admin-triggered)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Ask a referrer to add their payout details so a pending reward can be paid.
+     * Logged in email_logs via the shared queue() primitive.
+     */
+    public function sendReferralPayoutRequest(
+        string $email,
+        string $name,
+        float  $amount,
+        string $payoutUrl
+    ): int {
+        $mailable = new ReferralPayoutRequestMail($name, $amount, $payoutUrl);
+
+        return $this->queue(
+            $email,
+            'user',
+            $mailable,
+            'Action needed: add your payout details — Start Your Story',
+            EmailPurpose::REFERRAL_PAYOUT_REQUEST
         );
     }
 }

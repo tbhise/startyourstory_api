@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\SubscriptionHelper;
+use App\Models\UserPayoutDetail;
+use App\Services\PayoutDetailsService;
 use Illuminate\Support\Str;
 
 class CreatorMarketplaceController extends Controller
@@ -1982,41 +1984,48 @@ class CreatorMarketplaceController extends Controller
     {
         try {
         if ($err = $this->forbidNonCreator($request)) return $err;
-        $user    = $request->attributes->get('auth_user');
-        $details = DB::table('creator_bank_details')
-            ->where('creator_id', $user->id)
-            ->first();
+        $user = $request->attributes->get('auth_user');
 
-        if (! $details) {
+        // Read from the centralized table first; fall back to legacy creator_bank_details
+        // (covers any row not yet copied by the data migration). Bank-type only — the
+        // creator page is bank-based; UPI profiles render via the shared payout endpoint.
+        $row      = UserPayoutDetail::where('user_id', $user->id)->first();
+        $isLegacy = false;
+        if (! $row) {
+            $row      = DB::table('creator_bank_details')->where('creator_id', $user->id)->first();
+            $isLegacy = true;
+        }
+
+        $method = $row ? ($isLegacy ? 'bank' : $row->preferred_method) : null;
+        if (! $row || $method !== 'bank') {
             return response()->json(['status' => true, 'data' => ['bank_details' => null]]);
         }
 
         $accountMasked = '';
         try {
-            $decrypted     = Crypt::decryptString($details->account_number);
-            $accountMasked = '••••' . substr($decrypted, -4);
+            $accountMasked = '••••' . substr(Crypt::decryptString($row->account_number), -4);
         } catch (\Exception $e) {
-            $accountMasked = '••••' . substr($details->account_number, -4);
+            $accountMasked = '••••' . substr((string) $row->account_number, -4);
         }
 
         $ifsc = '';
         try {
-            $ifsc = Crypt::decryptString($details->ifsc_code);
+            $ifsc = Crypt::decryptString($row->ifsc_code);
         } catch (\Exception $e) {
-            $ifsc = $details->ifsc_code;
+            $ifsc = $row->ifsc_code;
         }
 
         return response()->json([
             'status' => true,
             'data'   => [
                 'bank_details' => [
-                    'id'                  => $details->id,
-                    'account_holder_name' => $details->account_holder_name,
-                    'bank_name'           => $details->bank_name,
+                    'id'                  => $row->id,
+                    'account_holder_name' => $row->account_holder_name,
+                    'bank_name'           => $row->bank_name,
                     'account_number'      => $accountMasked,
                     'ifsc_code'           => $ifsc,
-                    'is_verified'         => (bool) $details->is_verified,
-                    'updated_at'          => $details->updated_at,
+                    'is_verified'         => (bool) $row->is_verified,
+                    'updated_at'          => $row->updated_at,
                 ],
             ],
         ]);
@@ -2032,44 +2041,18 @@ class CreatorMarketplaceController extends Controller
         if ($err = $this->forbidNonCreator($request)) return $err;
         $user = $request->attributes->get('auth_user');
 
-        $validator = Validator::make($request->all(), [
-            'account_holder_name' => 'required|string|max:255',
-            'bank_name'           => 'required|string|max:255',
-            'account_number'      => 'required|string|min:9|max:20',
-            'ifsc_code'           => ['required', 'string', 'regex:/^[A-Z]{4}0[A-Z0-9]{6}$/i'],
+        // Persist through the centralized service (writes to user_payout_details,
+        // encrypts bank fields). Creator page is bank-only, so force the bank method.
+        $result = PayoutDetailsService::save((int) $user->id, [
+            'preferred_method'    => 'bank',
+            'account_holder_name' => $request->account_holder_name,
+            'bank_name'           => $request->bank_name,
+            'account_number'      => $request->account_number,
+            'ifsc_code'           => $request->ifsc_code,
         ]);
 
-        if ($validator->fails()) {
-            return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
-        }
-
-        $encryptedAccount = Crypt::encryptString($request->account_number);
-        $encryptedIfsc    = Crypt::encryptString(strtoupper($request->ifsc_code));
-
-        $existing = DB::table('creator_bank_details')
-            ->where('creator_id', $user->id)
-            ->first();
-
-        if ($existing) {
-            DB::table('creator_bank_details')->where('id', $existing->id)->update([
-                'account_holder_name' => $request->account_holder_name,
-                'bank_name'           => $request->bank_name,
-                'account_number'      => $encryptedAccount,
-                'ifsc_code'           => $encryptedIfsc,
-                'is_verified'         => 0,
-                'updated_at'          => now(),
-            ]);
-        } else {
-            DB::table('creator_bank_details')->insert([
-                'creator_id'          => $user->id,
-                'account_holder_name' => $request->account_holder_name,
-                'bank_name'           => $request->bank_name,
-                'account_number'      => $encryptedAccount,
-                'ifsc_code'           => $encryptedIfsc,
-                'is_verified'         => 0,
-                'created_at'          => now(),
-                'updated_at'          => now(),
-            ]);
+        if (! $result['ok']) {
+            return response()->json(['status' => false, 'message' => $result['message']], 422);
         }
 
         return response()->json(['status' => true, 'message' => 'Bank details saved.']);
@@ -2098,9 +2081,8 @@ class CreatorMarketplaceController extends Controller
             ->where('engagement_id', $engagementId)
             ->first();
 
-        $hasBankDetails = DB::table('creator_bank_details')
-            ->where('creator_id', $user->id)
-            ->exists();
+        // Centralized check (new table OR legacy creator_bank_details).
+        $hasBankDetails = PayoutDetailsService::has((int) $user->id);
 
         return response()->json([
             'status' => true,

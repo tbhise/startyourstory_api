@@ -23,6 +23,7 @@ enum EmailPurpose: string
     case BILLING               = 'billing';
     case MARKETING             = 'marketing';
     case REENGAGEMENT          = 'reengagement';
+    case REFERRAL_PAYOUT_REQUEST = 'referral_payout_request';
 
     public function senderKey(): string
     {
@@ -46,6 +47,7 @@ enum EmailPurpose: string
             self::BILLING                => 'billing',
             self::MARKETING              => 'marketing',
             self::REENGAGEMENT           => 'marketing',
+            self::REFERRAL_PAYOUT_REQUEST => 'support',
         };
     }
 

@@ -1,56 +1,109 @@
 @php
-    // Self-contained template: derives heading/lead/benefits from the userType +
-    // verified flag passed in by ReEngagementMail (or the preview route). Keeping
-    // this computation inside the view means the mailable/artisan command pass only
-    // name, userType, verified and cta — no sending logic changes required.
-    $userType = $userType ?? 'student';
-    $verified = $verified ?? false;
+    // Self-contained template: derives heading/lead/benefits from userType +
+    // verified + profileCompleted passed in by ReEngagementMail (or the preview
+    // route). Keeping this computation inside the view means the mailable/command
+    // pass only name, userType, verified, profileCompleted and trackingUrl.
+    $userType         = $userType ?? 'student';
+    $verified         = $verified ?? false;
+    $profileCompleted = $profileCompleted ?? false;
+    $trackingUrl      = $trackingUrl ?? '#';
+
+    // Three lifecycle states: unverified → (verified) incomplete → complete.
+    $state = !$verified ? 'unverified' : (!$profileCompleted ? 'incomplete' : 'complete');
 
     switch ($userType) {
         case 'firm':
-            $heading = $verified
-                ? 'Your next great hire is waiting'
-                : 'Verify your email to start hiring';
-            $lead = $verified
-                ? "You're almost there — complete your firm profile to unlock the full power of Start Your Story:"
-                : 'Verify your email to activate your firm account and unlock the full power of Start Your Story:';
-            $benefits = [
-                'Better candidate engagement',
-                'More trust from applicants',
-                'Higher-quality applications',
-                'Post jobs',
-                'Hire right talent faster',
-            ];
+            $heading = match ($state) {
+                'unverified' => 'Verify your email to start hiring',
+                'incomplete' => 'Your next great hire is waiting',
+                default      => 'Start hiring on Start Your Story',
+            };
+            $lead = match ($state) {
+                'unverified' => 'Verify your email to activate your firm account and unlock the full power of Start Your Story:',
+                'incomplete' => "You're almost there — complete your firm profile to start hiring on Start Your Story:",
+                default      => 'Your firm profile is ready — here is everything you can do now:',
+            };
+            $benefits = match ($state) {
+                'unverified' => [
+                    'Verify your email',
+                    'Complete your firm profile',
+                    'Get reviewed & approved by our team',
+                    'Post jobs / content creation requests',
+                    'See candidates',
+                ],
+                'incomplete' => [
+                    'Complete your firm profile',
+                    'Get reviewed & approved by our team',
+                    'Post jobs / content creation requests',
+                    'See candidates',
+                ],
+                default => [
+                    'Post jobs / content creation requests',
+                    'View candidates',
+                    'Reach candidates via contact details',
+                ],
+            };
             break;
 
         case 'creator':
-            $heading = $verified
-                ? "You're one step from more projects"
-                : 'Verify your email to get discovered';
-            $lead = $verified
-                ? "You're almost there — complete your creator profile to make the most of Start Your Story:"
-                : 'Verify your email to activate your creator profile and make the most of Start Your Story:';
-            $benefits = [
-                'Better visibility to firms',
-                'More project opportunities',
-                'Higher chances of collaboration',
-                'Stronger profile credibility',
-            ];
+            $heading = match ($state) {
+                'unverified' => 'Verify your email to get discovered',
+                'incomplete' => "You're one step from more projects",
+                default      => 'Get discovered for new projects',
+            };
+            $lead = match ($state) {
+                'unverified' => 'Verify your email to activate your creator profile and make the most of Start Your Story:',
+                'incomplete' => "You're almost there — complete your creator profile to make the most of Start Your Story:",
+                default      => 'Your creator profile is ready — here is what is waiting for you:',
+            };
+            $benefits = match ($state) {
+                'unverified' => [
+                    'Verify your email',
+                    'Complete your creator profile',
+                    'Get discovered by firms',
+                    'See content creation projects',
+                ],
+                'incomplete' => [
+                    'Complete your creator profile',
+                    'Get discovered by firms',
+                    'See content creation projects',
+                ],
+                default => [
+                    'Browse content creation projects',
+                    'Get discovered by more firms',
+                    'Win more collaborations',
+                ],
+            };
             break;
 
         default: // student
-            $heading = $verified
-                ? "You're almost ready to get hired"
-                : 'Verify your email to start applying';
-            $lead = $verified
-                ? "You're almost there — complete your profile to get the most out of Start Your Story:"
-                : 'Verify your email to activate your account and get the most out of Start Your Story:';
-            $benefits = [
-                'Apply to jobs',
-                'Better job recommendations',
-                'More visibility to firms',
-                'Faster shortlisting',
-            ];
+            $heading = match ($state) {
+                'unverified' => 'Verify your email to start applying',
+                'incomplete' => "You're almost ready to get hired",
+                default      => 'Explore jobs and firms on Start Your Story',
+            };
+            $lead = match ($state) {
+                'unverified' => 'Verify your email to activate your account and get the most out of Start Your Story:',
+                'incomplete' => "You're almost there — complete your profile to get the most out of Start Your Story:",
+                default      => 'Your profile is ready — here is what is waiting for you:',
+            };
+            $benefits = match ($state) {
+                'unverified' => [
+                    'Verify your email',
+                    'Complete your profile',
+                    'See jobs',
+                    'See firms',
+                ],
+                'incomplete' => [
+                    'Complete your profile',
+                    'See jobs',
+                    'See firms',
+                ],
+                default => [
+                    'See jobs',
+                    'See firms',
+                ],
+            };
             break;
     }
 @endphp
@@ -170,13 +223,10 @@
                                             @if($userType === 'student')
                                                 Top firms are actively searching for candidates like you.
                                             @elseif($userType === 'firm')
-                                                Candidates trust complete profiles more and apply faster.
+                                                The best candidates apply to firms that are fully set up.
                                             @elseif($userType === 'creator')
                                                 Complete profiles get more visibility and project opportunities.
                                             @endif
-                                        </div>
-                                        <div style="font-size:15px; line-height:23px; color:#475569; padding-top:4px;">
-                                            {{ $lead }}
                                         </div>
                                     </td>
                                 </tr>
@@ -188,10 +238,12 @@
                     <tr>
                         <td class="sys-px" style="padding:26px 44px 0 44px;">
                             <p style="margin:0 0 16px 0; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:19px; line-height:25px; color:#0f172a; font-weight:700;">
-                                @if($verified)
-                                    With a complete profile, you can:
-                                @else
+                                @if($state === 'unverified')
                                     Once verified, you can:
+                                @elseif($state === 'incomplete')
+                                    Once your profile is complete, you can:
+                                @else
+                                    Here is what you can do now:
                                 @endif
                             </p>
 
@@ -227,66 +279,21 @@
                     <tr>
                         <td class="sys-px" style="padding:28px 44px 0 44px;">
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-
-                                @if(! $verified)
-                                    {{-- UNVERIFIED: Verify (primary, green) -> Complete Profile (secondary, outline) -> Login (tertiary) --}}
-                                    <tr>
-                                        <td style="padding-bottom:12px;">
-                                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                <tr>
-                                                    <td align="center" bgcolor="#16a34a" style="background-color:#16a34a; background-image:linear-gradient(135deg,#22c55e,#15803d); border-radius:12px; box-shadow:0 8px 18px rgba(22,163,74,0.24);">
-                                                        <a href="{{ $cta['verify'] }}" style="display:block; text-align:center; color:#ffffff; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:18px; font-weight:700; line-height:22px; padding:17px 24px; border-radius:12px;">
-                                                            &#128737;&nbsp;&nbsp;Verify Email
-                                                        </a>
-                                                    </td>
-                                                </tr>
-                                            </table>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td style="padding-bottom:22px;">
-                                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                <tr>
-                                                    <td align="center" bgcolor="#ffffff" style="background-color:#ffffff; border:2px solid #2563eb; border-radius:12px; box-shadow:0 2px 6px rgba(37,99,235,0.08);">
-                                                        <a href="{{ $cta['profile'] }}" style="display:block; text-align:center; color:#2563eb; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:18px; font-weight:700; line-height:22px; padding:15px 24px; border-radius:12px;">
-                                                            &#128100;&nbsp;&nbsp;Complete Your Profile
-                                                        </a>
-                                                    </td>
-                                                </tr>
-                                            </table>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td align="center" style="padding-bottom:4px;">
-                                            <a href="{{ $cta['login'] }}" style="display:inline-block; color:#2563eb; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:15px; font-weight:700;">
-                                                Or log in to Start Your Story&nbsp;&rarr;
-                                            </a>
-                                        </td>
-                                    </tr>
-                                @else
-                                    {{-- VERIFIED: Complete Profile (primary, blue) -> Login (secondary) --}}
-                                    <tr>
-                                        <td style="padding-bottom:22px;">
-                                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                                                <tr>
-                                                    <td align="center" bgcolor="#2563eb" style="background-color:#2563eb; background-image:linear-gradient(135deg,#3b82f6,#1e40af); border-radius:12px; box-shadow:0 8px 18px rgba(37,99,235,0.24);">
-                                                        <a href="{{ $cta['profile'] }}" style="display:block; text-align:center; color:#ffffff; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:18px; font-weight:700; line-height:22px; padding:17px 24px; border-radius:12px;">
-                                                            &#128100;&nbsp;&nbsp;Complete Your Profile
-                                                        </a>
-                                                    </td>
-                                                </tr>
-                                            </table>
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td align="center" style="padding-bottom:4px;">
-                                            <a href="{{ $cta['login'] }}" style="display:inline-block; color:#2563eb; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:15px; font-weight:700;">
-                                                Or log in to Start Your Story&nbsp;&rarr;
-                                            </a>
-                                        </td>
-                                    </tr>
-                                @endif
-
+                                {{-- SINGLE CTA for every segment. Points at the signed click-tracking
+                                     route, which records the click then redirects to the frontend /login. --}}
+                                <tr>
+                                    <td style="padding-bottom:22px;">
+                                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                            <tr>
+                                                <td align="center" bgcolor="#2563eb" style="background-color:#2563eb; background-image:linear-gradient(135deg,#3b82f6,#1e40af); border-radius:12px; box-shadow:0 8px 18px rgba(37,99,235,0.24);">
+                                                    <a href="{{ $trackingUrl }}" style="display:block; text-align:center; color:#ffffff; font-family:'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size:18px; font-weight:700; line-height:22px; padding:17px 24px; border-radius:12px;">
+                                                        Login to Continue
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
                             </table>
                         </td>
                     </tr>

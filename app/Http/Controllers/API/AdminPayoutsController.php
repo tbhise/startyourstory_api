@@ -50,7 +50,7 @@ class AdminPayoutsController extends Controller
             ->join('creator_projects as proj', 'proj.id', '=', 'ce.creator_requirement_id')
             ->join('firm_profiles as fp', 'fp.id', '=', 'ce.firm_id')
             ->join('users as cu', 'cu.id', '=', 'p.creator_id')
-            ->leftJoin('creator_bank_details as cbd', 'cbd.creator_id', '=', 'p.creator_id')
+            ->leftJoin('user_payout_details as upd', 'upd.user_id', '=', 'p.creator_id')
             ->select([
                 'p.id', 'p.engagement_id',
                 'p.gross_amount', 'p.commission_rate', 'p.commission_amount', 'p.net_amount',
@@ -60,11 +60,13 @@ class AdminPayoutsController extends Controller
                 'cu.email  as creator_email',
                 'proj.title as project_title',
                 'fp.firm_name',
-                'cbd.account_holder_name',
-                'cbd.bank_name',
-                'cbd.account_number',
-                'cbd.ifsc_code',
-                'cbd.is_verified as bank_verified',
+                'upd.preferred_method',
+                'upd.upi_id',
+                'upd.account_holder_name',
+                'upd.bank_name',
+                'upd.account_number',
+                'upd.ifsc_code',
+                'upd.is_verified as bank_verified',
             ])
             ->when($status !== 'all', fn($q) => $q->where('p.status', $status))
             ->orderByDesc('p.created_at');

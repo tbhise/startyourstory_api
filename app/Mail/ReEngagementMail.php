@@ -19,18 +19,20 @@ class ReEngagementMail extends Mailable implements HasEmailPurpose
     use Queueable;
 
     /**
-     * @param string $name      Recipient display name.
-     * @param string $userType  'student' | 'firm' | 'creator'.
-     * @param bool   $verified  Whether the recipient's email is verified.
-     * @param string $subjectLine Pre-built subject line.
-     * @param array  $cta         Map of CTA URLs: ['login' => ..., 'profile' => ..., 'verify' => ...].
+     * @param string $name             Recipient display name.
+     * @param string $userType         'student' | 'firm' | 'creator'.
+     * @param bool   $verified         Whether the recipient's email is verified.
+     * @param bool   $profileCompleted Whether the recipient's profile is complete.
+     * @param string $subjectLine      Pre-built subject line.
+     * @param string $trackingUrl      Single CTA target (signed click-tracking route).
      */
     public function __construct(
         public string $name,
         public string $userType,
         public bool   $verified,
+        public bool   $profileCompleted,
         public string $subjectLine,
-        public array  $cta
+        public string $trackingUrl
     ) {}
 
     public function emailPurpose(): EmailPurpose
@@ -43,10 +45,11 @@ class ReEngagementMail extends Mailable implements HasEmailPurpose
         return $this->subject($this->subjectLine)
             ->view('emails.reengagement')
             ->with([
-                'name'     => $this->name,
-                'userType' => $this->userType,
-                'verified' => $this->verified,
-                'cta'      => $this->cta,
+                'name'             => $this->name,
+                'userType'         => $this->userType,
+                'verified'         => $this->verified,
+                'profileCompleted' => $this->profileCompleted,
+                'trackingUrl'      => $this->trackingUrl,
             ]);
     }
 }

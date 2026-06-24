@@ -262,6 +262,21 @@ class ResumeController extends Controller
         // built-in defaults instead of throwing "array offset on null" below.
         $cfg = config('resumepdf') ?? [];
 
+        // Chrome (and its crashpad handler) write profile/cache/crash data under
+        // $HOME. Under PHP-FPM the web user's HOME is often a dir it cannot write
+        // (e.g. /var/www), which makes Chrome's crashpad handler die on launch with
+        // "chrome_crashpad_handler: --database is required" → "Failed to launch the
+        // browser process". Point HOME at a guaranteed-writable temp dir so the
+        // child Chrome process (which inherits this env) has somewhere to write.
+        $tmp = rtrim(sys_get_temp_dir(), '/\\');
+        $chromeHome  = $cfg['home_dir'] ?? ($tmp . '/chrome-home');
+        $chromeData  = $tmp . '/chrome-browsershot';
+        $chromeCrash = $tmp . '/chrome-crashes';
+        foreach ([$chromeHome, $chromeData, $chromeCrash] as $dir) {
+            if (!is_dir($dir)) @mkdir($dir, 0777, true);
+        }
+        putenv('HOME=' . $chromeHome);
+
         $shot = \Spatie\Browsershot\Browsershot::html($html)
             ->format('A4')
             ->showBackground()
@@ -275,10 +290,33 @@ class ResumeController extends Controller
 
         if (!empty($cfg['node_binary'])) $shot->setNodeBinary($cfg['node_binary']);
         if (!empty($cfg['npm_binary']))  $shot->setNpmBinary($cfg['npm_binary']);
-        if (!empty($cfg['chrome_path'])) $shot->setChromePath($cfg['chrome_path']);
+        // chrome_path may hold several "|"-separated candidate paths (e.g. the same
+        // puppeteer Chrome under different user profiles, or system Chrome vs bundled).
+        // Use the first one that actually exists; fall back to the first candidate so
+        // Browsershot still emits a clear "not found at <path>" instead of silently
+        // resolving puppeteer's default cache (which differs per OS user).
+        if (!empty($cfg['chrome_path'])) {
+            $candidates = array_filter(array_map('trim', explode('|', $cfg['chrome_path'])));
+            $chromePath = null;
+            foreach ($candidates as $candidate) {
+                if (is_file($candidate)) { $chromePath = $candidate; break; }
+            }
+            $shot->setChromePath($chromePath ?? reset($candidates));
+        }
         // Chromium refuses its sandbox when run as root (typical on a VPS). Safe to
         // disable here: the HTML is generated from our own templates, never user markup.
         if (!empty($cfg['no_sandbox']))  $shot->noSandbox();
+        // VPS-safe flags: prevent Chrome from trying to write to home dirs it doesn't
+        // own and avoid /dev/shm exhaustion under low-memory conditions.
+        $shot->addChromiumArguments([
+            'disable-dev-shm-usage',
+            'disable-gpu',
+            'no-crashpad',
+            'disable-crashpad',
+            'disable-breakpad',
+            'crash-dumps-dir=' . $chromeCrash,
+            'user-data-dir=' . $chromeData,
+        ]);
 
         return $shot->pdf();
     }

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\ReferralHelper;
+use App\Helpers\AuthHelper;
 use App\Services\SystemSettingService;
 
 class ReferralController extends Controller
@@ -43,23 +44,10 @@ class ReferralController extends Controller
     public function index(Request $request)
     {
         try {
-            $token = $request->cookie('auth_token');
-
-            if (!$token) {
-                return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
-            }
-
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
 
             if (!$user) {
                 return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
-            }
-
-            if ($user->token_expires_at && now()->greaterThan($user->token_expires_at)) {
-                return response()->json(['status' => false, 'message' => 'Token expired'], 401);
             }
 
             $userId       = $user->id;

@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Helpers\AuthHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
 use App\Helpers\SysCoinHelper;
@@ -151,10 +152,7 @@ class UserController extends Controller
                     'message' => 'Unauthenticated'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -579,7 +577,7 @@ class UserController extends Controller
             if (!$token) {
                 return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
             }
-            $user = DB::table('users')->where('api_token', $token)->where('is_deleted', false)->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
             }
@@ -603,14 +601,7 @@ class UserController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     public function requestAccountDeletion(Request $request)
     {
-        $token = $request->cookie('auth_token');
-        if (!$token) {
-            return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
-        }
-        $user = DB::table('users')
-            ->where('api_token', $token)
-            ->where('is_deleted', false)
-            ->first();
+        $user = AuthHelper::resolveUser($request);
         if (!$user) {
             return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
         }
@@ -697,11 +688,7 @@ class UserController extends Controller
                 }
             }
 
-            // 3. Log the student out (invalidate token + sessions).
-            DB::table('users')->where('id', $user->id)->update([
-                'api_token'        => null,
-                'token_expires_at' => null,
-            ]);
+            // 3. Log the student out (delete all their sessions).
             DB::table('user_sessions')->where('user_id', $user->id)->delete();
 
             DB::commit();
@@ -728,10 +715,7 @@ class UserController extends Controller
             if (!$token) {
                 return response()->json(['status' => false, 'message' => 'Unauthenticated'], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json(['status' => false, 'message' => 'Invalid token'], 401);
             }
@@ -771,10 +755,7 @@ class UserController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -850,10 +831,7 @@ class UserController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -961,10 +939,7 @@ class UserController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1107,9 +1082,10 @@ class UserController extends Controller
                     'message' => 'Unauthorized'
                 ], 401);
             }
-            $user = User::where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $userId = AuthHelper::resolveUserId($request);
+            $user = $userId
+                ? User::where('id', $userId)->where('is_deleted', false)->first()
+                : null;
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1156,9 +1132,10 @@ class UserController extends Controller
                 ], 401);
             }
 
-            $user = User::where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $userId = AuthHelper::resolveUserId($request);
+            $user = $userId
+                ? User::where('id', $userId)->where('is_deleted', false)->first()
+                : null;
 
             if (!$user) {
                 return response()->json([

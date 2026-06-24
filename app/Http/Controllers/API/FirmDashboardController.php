@@ -43,7 +43,10 @@ class FirmDashboardController extends Controller
                 // Hide students who have requested account deletion (30-day grace).
                 // Reversible: a login clears deletion_requested_at and they reappear.
                 ->whereNull('users.deletion_requested_at')
-                ->where('users.role', 'student');
+                ->where('users.role', 'student')
+                // Only surface students who have completed their profile, so firms
+                // never see sparse / half-filled candidate cards.
+                ->where('users.profile_completed', true);
 
             /*
         |--------------------------------------------------------------------------

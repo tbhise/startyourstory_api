@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
+use App\Helpers\AuthHelper;
 
 class AuthController extends Controller
 {
@@ -72,13 +73,8 @@ class AuthController extends Controller
             $token     = base64_encode(Str::random(40));
             $expiresAt = now()->addDays(7);
 
-            DB::table('users')
-                ->where('id', $user->id)
-                ->update([
-                    'api_token'        => $token,
-                    'token_expires_at' => $expiresAt,
-                    'updated_at'       => now(),
-                ]);
+            // Auth is user_sessions-only: the token lives in user_sessions (below).
+            // users.api_token / token_expires_at are no longer written.
 
             // ── Session & login-history tracking ──────────────────────────
             $ua      = $request->header('User-Agent', '');
@@ -189,10 +185,10 @@ class AuthController extends Controller
                 ], 401);
             }
 
-            // ── Resolve session first (new arch + impersonation), then legacy api_token ──
-            // Mirrors ApiAuthMiddleware so impersonation tokens — which live only in
-            // user_sessions and never in users.api_token — are resolvable here too.
+            // ── Resolve via user_sessions only (new arch + impersonation) ──
+            // Impersonation tokens live only in user_sessions, so they resolve here too.
             $impersonation = null;
+            $user = null;
             $session = DB::table('user_sessions')->where('token', $token)->first();
             if ($session) {
                 if ($session->expires_at && now()->greaterThan($session->expires_at)) {
@@ -215,24 +211,6 @@ class AuthController extends Controller
                         'admin_id'   => $session->impersonated_by,
                         'admin_name' => $adminName,
                     ];
-                }
-            } else {
-                $user = DB::table('users')
-                    ->where('api_token', $token)
-                    ->where('is_deleted', false)
-                    ->first();
-                if (
-                    $user &&
-                    $user->token_expires_at &&
-                    now()->greaterThan($user->token_expires_at)
-                ) {
-                    DB::table('users')
-                        ->where('id', $user->id)
-                        ->update(['api_token' => null]);
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'Token expired'
-                    ], 401);
                 }
             }
 
@@ -373,11 +351,7 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            $token = $request->cookie('auth_token');
-            $user  = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            $user = AuthHelper::resolveUser($request);
 
             if (!$user) {
                 return response()->json(['status' => false, 'message' => 'User not found'], 404);
@@ -413,17 +387,12 @@ class AuthController extends Controller
             $token = $request->cookie('auth_token');
 
             // If this is an admin impersonation session, close its audit row.
-            // (Does not touch users.api_token — impersonation never set it.)
             DB::table('admin_impersonation_sessions')
                 ->where('token', $token)
                 ->whereNull('logout_time')
                 ->update(['logout_time' => now()]);
 
-            DB::table('users')
-                ->where('api_token', $token)
-                ->update(['api_token' => null]);
-
-            // Remove from session tracker
+            // Auth is user_sessions-only — removing the session row logs the user out.
             DB::table('user_sessions')->where('token', $token)->delete();
 
             return response()->json([

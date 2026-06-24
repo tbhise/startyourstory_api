@@ -4,6 +4,178 @@
 
 ---
 
+## 2026-06-24 — User-auth migration to user_sessions only — backend
+
+Migrated ALL user authentication (students / firms / creators) to resolve
+exclusively through the `user_sessions` table. The legacy hybrid path —
+`users.api_token` / `users.token_expires_at` — is no longer read or written by
+any user-facing code. **Admin auth is unchanged** (`admin_users.api_token` +
+`admin_token` cookie). Impersonation (a `user_sessions` row) now works across
+every endpoint, since nothing self-resolves `api_token` anymore.
+
+Cutover note: low user count + forced re-login is acceptable. Existing logins
+already had a `user_sessions` row, so most users stay logged in; any token that
+only existed in `users.api_token` (pre-sessions) is now rejected → re-login.
+
+- **`app/Helpers/AuthHelper.php`** (NEW) — single source of truth for "who is the
+  logged-in user". `resolveUser($request)` / `resolveUserId($request)` reuse the
+  `auth_user` attribute set by `ApiAuthMiddleware` when present, else resolve the
+  `auth_token` cookie against `user_sessions` (covers optional-auth / public routes
+  outside the middleware group). Never reads `users.api_token`. Expired sessions are
+  deleted and treated as unauthenticated.
+- **Phase 1 — controllers off `users.api_token`:** replaced every self-resolving
+  `DB::table('users')->where('api_token',$token)` block with `AuthHelper::resolveUser`:
+  - `JobsController` (10 sites); `UserController` (updateProfile, getProfile,
+    dismissApplyLimitModal, requestAccountDeletion, updateDirectoryVisibility,
+    trackRecruiterAction, reportStudentProfile; plus the two Eloquent
+    `User::where('api_token')` sites — sendVerificationLink, verificationStatus —
+    now resolve the id via session then load the Eloquent model by id);
+  - `FirmController::getJobs` (optional-auth preserved); `ReferralController::index`
+    (also dropped the now-redundant `token_expires_at` check — session expiry handles it);
+    `SysCoinController`; `WalletController` + `PhonePeWalletController`
+    (role='student' guard preserved); `PhonePeFirmController`;
+    `AuthController::changePassword`; `AdminController::submitPremiumRequest`
+    (a user-facing endpoint that lives outside the middleware group);
+    `ErrorLogController::store` and `ErrorLogRecorder::resolveUser` (best-effort,
+    optional — unchanged behavior).
+- **Phase 2 — `AuthController::login`:** no longer writes `users.api_token` /
+  `token_expires_at`. The token is written only to `user_sessions`. Cookie
+  (`auth_token`, 7 days, Lax) unchanged.
+- **Phase 3 — fallback removal:** `ApiAuthMiddleware` is now session-only (removed
+  the legacy `api_token` lookup + the api_token-clearing on expiry).
+  `AuthController::me` likewise resolves via `user_sessions` only (removed the
+  `else` api_token branch); impersonation resolution unchanged.
+- **Phase 4 — legacy cleanup:** removed `users.api_token` writes from
+  `AuthController::logout`, `UserController::requestAccountDeletion` (now just
+  deletes the user's sessions), `SessionController::destroy` (dropped the stray
+  api_token clear), and `AdminController` deleteFirm / deleteStudent (force-logout
+  is the `user_sessions` delete that was already there).
+- **Phase 5 — DB drop (migration created, NOT yet run):**
+  `database/migrations/2026_06_24_000003_drop_legacy_user_api_token_columns.php`
+  drops `users.api_token` + `users.token_expires_at`. **Run only AFTER deploying
+  this code to the server and verifying all flows** (running it before the new code
+  is live would break old code paths). Reversible `down()` re-adds the (empty) columns.
+- Note: `FirmDashboardController` still `unset()`s `api_token`/`token_expires_at`
+  from candidate output — left as a harmless defensive no-op (unsetting an absent
+  array key is safe once the columns are dropped).
+
+## 2026-06-24 — Payout UX refinements — backend
+
+- **`app/Http/Controllers/API/AdminReferralController.php`** — `sendPayoutDetailsMail`
+  link now points to `/settings?tab=payout` (payout details moved from the referrals
+  page to Settings). No other backend change — the centralized `user_payout_details`
+  table and `PayoutDetailsService` already power both flows; Send-Mail "show only when
+  details missing" is enforced on the frontend using the `payout_details` already
+  attached to each payout by `listPayouts`.
+
+## 2026-06-24 — Centralized payout details + referral payout flow — backend
+
+Introduced a single `user_payout_details` table for all payout flows (creator +
+referral + future), migrated the creator flow onto it (backward compatible),
+added referrer payout-details collection + admin Send-Mail, and hardened
+notifications ordering. **`creator_bank_details` is NOT dropped** — retained until
+the migrated flows are verified live (a later migration drops it).
+
+- **`app/Http/Controllers/API/AdminNotificationController.php`** — `index()` order
+  is now `created_at DESC, id DESC` (stable tiebreaker; same-second notifications
+  always surface newest-first). [Task 1]
+- **Task 2 (no code change)** — the ₹500↔₹2000 mismatch is by design:
+  `referral_payouts.reward_amount` is a snapshot captured at creation; old rows
+  predate the setting change. Verified the settings update path
+  (`AdminSystemSettingController::update` → `SystemSettingService::set`) busts the
+  cache, so new payouts correctly read the current value. Historical rows unchanged.
+- **`database/migrations/2026_06_24_000002_create_user_payout_details_table.php`**
+  (new) — creates `user_payout_details` (one row per user, UPI or encrypted bank)
+  and copies all legacy `creator_bank_details` rows in (idempotent). Mirrored in
+  `db_changes.txt`.
+- **`app/Models/UserPayoutDetail.php`** (new) — model for the centralized table.
+- **`app/Services/PayoutDetailsService.php`** (new) — single source of truth:
+  `has()` (checks new table OR legacy), `getForDisplay()` (new table → legacy
+  fallback; masks account, decrypts IFSC), `save()` (method-aware validation;
+  encrypts bank fields; writes new table only).
+- **`app/Http/Controllers/API/CreatorMarketplaceController.php`** — `getBankDetails`,
+  `saveBankDetails`, `getPayoutStatus` now route through `PayoutDetailsService`
+  (reads new table w/ legacy fallback; writes new table). Response shapes unchanged.
+- **`app/Http/Controllers/API/AdminPayoutsController.php`** — creator-payouts admin
+  list now joins `user_payout_details` (was `creator_bank_details`); selects
+  `preferred_method`/`upi_id` too. Decrypt logic unchanged.
+- **`app/Http/Controllers/API/PayoutDetailsController.php`** (new) — user endpoints
+  `GET/POST /payout-details` (show + save via the service).
+- **`app/Http/Controllers/API/AdminReferralController.php`** — `listPayouts` now
+  attaches each referrer's `payout_details` (via the service); new
+  `sendPayoutDetailsMail()` emails the referrer a request to add payout details
+  (reuses the shared mail stack; logged in `email_logs`).
+- **`app/Enums/EmailPurpose.php`** — new `REFERRAL_PAYOUT_REQUEST` case (sender:
+  support).
+- **`app/Mail/ReferralPayoutRequestMail.php`** + **`resources/views/emails/referral/payout-request.blade.php`**
+  (new) — the payout-details request email (includes a link to the referral payout page).
+- **`app/Services/Notifications/EmailNotificationService.php`** — new
+  `sendReferralPayoutRequest()` using the existing `queue()` primitive.
+- **`routes/api.php`** — added `GET/POST /payout-details` (auth group) and
+  `POST /admin/referral-payouts/{id}/send-mail`; imported `PayoutDetailsController`.
+
+## 2026-06-24 — Admin Email Logs page (read-only analytics) — backend
+
+New admin-only, read-only API over the shared `email_logs` table so admins can
+monitor sent emails, delivery status, campaign type, and CTA click tracking.
+Mirrors `ErrorLogController` (paginated index, stats, delete-all). No DB change —
+reuses `email_logs` incl. the `click_count`/`clicked_at` columns added earlier
+today. All `/admin/*` paths are already guarded by `AdminAuthMiddleware`.
+
+- **`app/Http/Controllers/API/EmailLogController.php`** (new) — `index()` returns
+  paginated logs (50/page, latest first) with filters: `status` (sent|failed|pending),
+  `campaign_type` (email_purpose), `from`/`to` date range, optional `search`
+  (email/subject). Left-joins `users` by email only to surface the recipient name;
+  the total count is computed on `email_logs` alone so the join can never inflate it.
+  `stats()` returns total/sent/failed/clicked counts + distinct campaign types (keeps
+  the filter dropdown data-driven). `destroy()` clears ALL rows (irreversible).
+- **`routes/api.php`** — added `EmailLogController` import and three admin routes:
+  `GET /admin/email-logs`, `GET /admin/email-logs/stats`, `DELETE /admin/email-logs`
+  (placed beside the error-logs routes; inherit admin protection).
+
+## 2026-06-24 — Re-engagement email: 6-segment support + single CTA + click tracking
+
+Reworked the existing re-engagement campaign to cover all six segments
+(student|firm × unverified | verified-incomplete | verified-completed), collapse
+the old multi-button CTA into one "Login to Continue" button, and track CTA
+clicks via a signed redirect route. Backend only — no React/frontend changes; the
+button lands on the existing frontend `/login` (unverified users can log in and
+are routed to verification by the existing flow). Reuses the existing mailable,
+Blade template, EmailLog, and queue/DispatchMailJob path.
+
+- **`database/migrations/2026_06_24_000001_add_click_tracking_to_email_logs.php`**
+  (new) — Adds `click_count` (INT, default 0) and `clicked_at` (nullable timestamp)
+  to `email_logs`. `down()` drops both. SQL mirrored in `db_changes.txt`.
+- **`app/Models/EmailLog.php`** — Added `click_count` + `clicked_at` to `$fillable`,
+  cast `clicked_at` to datetime, and added `registerClick()` (bumps `click_count`
+  every hit; stamps `clicked_at` on the first click only, in one `save()`).
+- **`app/Mail/ReEngagementMail.php`** — Constructor signature changed from
+  `(name, userType, verified, subjectLine, cta[])` to
+  `(name, userType, verified, profileCompleted, subjectLine, trackingUrl)`.
+  The `cta[]` array (multi-button URLs) is gone; the view now receives
+  `profileCompleted` and a single `trackingUrl`.
+- **`resources/views/emails/reengagement.blade.php`** — Content derivation extended
+  from 2 states to 3 (`unverified | incomplete | complete`) via a `$state` switch,
+  with per-segment "ask" lists matching the campaign spec. Replaced the
+  verified/unverified multi-button CTA block with a single "Login to Continue"
+  button → `$trackingUrl`. Fixed a pre-existing bug where `$lead` rendered twice
+  (removed the duplicate in the motivation box) and reworded the firm social-proof
+  line. Benefits-header conditional updated for 3 states.
+- **`app/Console/Commands/SendReEngagementEmails.php`** — Added `--profile=0|1`
+  option; removed the hard `profile_completed = 0` filter (now selected, not
+  filtered) so verified+completed users are reachable. Selects
+  `users.profile_completed`. Creates the `EmailLog` row BEFORE building the mailable
+  so its id seeds a signed `URL::signedRoute('email.click', …)` tracking URL.
+  Builds the mailable with the new signature (passes `profileCompleted` +
+  `trackingUrl`). `subjectFor()` now takes `$completed` and returns 3-state subjects
+  (also dropped the "— Start Your Story" suffix). `segmentOf()` reports 3 states for
+  dry-run. Removed the now-unused `ctaUrls()` helper. Added `URL` facade import.
+- **`routes/web.php`** — Added signed route `GET /e/click/{emailLog}`
+  (`name=email.click`): records the click via `registerClick()`, then
+  `redirect()->away()` to the frontend `/login`. Updated the dev-only
+  `/mail-preview/reengagement` route to the new mailable signature (added a
+  `profile=0|1` query param; passes `trackingUrl`).
+
 ## 2026-06-23 — Fix resume PDF "Undefined variable $c1" (Modern Minimal template)
 
 `ResumeController::downloadPdf` threw `Undefined variable $c1` when rendering the

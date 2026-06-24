@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Storage;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
 use App\Helpers\NotificationHelper;
+use App\Helpers\AuthHelper;
 use App\Services\AdminActivityLogger;
 
 class AdminController extends Controller
@@ -363,17 +364,9 @@ class AdminController extends Controller
         |--------------------------------------------------------------------------
         */
             DB::beginTransaction();
-            $token = $request->cookie('auth_token');
-            if (!$token) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Unauthorized'
-                ], 401);
-            }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->first();
+            // User-facing endpoint (firm submits a premium request). Resolves the
+            // logged-in user via user_sessions; this route is outside ApiAuthMiddleware.
+            $user = AuthHelper::resolveUser($request);
             if (!$user) {
                 return response()->json([
                     'status' => false,
@@ -1205,7 +1198,6 @@ class AdminController extends Controller
                 'deletion_requested_at' => $now,
                 'scheduled_deletion_at' => $now,
                 'deletion_reason'       => $reason,
-                'api_token'             => null,
                 'updated_at'            => $now,
             ]);
 
@@ -1662,7 +1654,7 @@ class AdminController extends Controller
      * (admin listing default, auth resolution, etc.).
      *
      * Effects (all inside one transaction):
-     *  - users.is_deleted = 1, deletion timestamps stamped, api_token cleared.
+     *  - users.is_deleted = 1, deletion timestamps stamped.
      *  - active login sessions invalidated (so the student is logged out).
      * No related rows are deleted, so no orphans are created.
      */
@@ -1709,7 +1701,6 @@ class AdminController extends Controller
                 'deletion_requested_at' => $now,
                 'scheduled_deletion_at' => $now,
                 'deletion_reason'       => $reason,
-                'api_token'             => null,
                 'updated_at'            => $now,
             ]);
 

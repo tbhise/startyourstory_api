@@ -49,11 +49,11 @@ class MasterController extends Controller
     public function getCompanies(Request $request)
     {
         try {
-            $query = DB::table('firm_profiles')
-                ->select('user_id as id', 'firm_name');
-
-            $companies = $query
-                ->orderBy('firm_name')
+            $companies = DB::table('firm_profiles')
+                ->select('firm_profiles.user_id as id', 'firm_profiles.firm_name')
+                ->join('users', 'firm_profiles.user_id', '=', 'users.id')
+                ->where('users.is_deleted', false)
+                ->orderBy('firm_profiles.firm_name')
                 ->get();
             return response()->json([
                 'status' => true,

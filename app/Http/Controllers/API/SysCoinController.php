@@ -7,18 +7,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\SysCoinHelper;
+use App\Helpers\AuthHelper;
 
 class SysCoinController extends Controller
 {
     /** Any authenticated, non-deleted user may view their own coin balance. */
     private function getUser(Request $request): ?object
     {
-        $token = $request->cookie('auth_token');
-        if (!$token) return null;
-        return DB::table('users')
-            ->where('api_token', $token)
-            ->where('is_deleted', false)
-            ->first();
+        return AuthHelper::resolveUser($request);
     }
 
     /*

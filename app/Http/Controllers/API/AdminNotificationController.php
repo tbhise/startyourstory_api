@@ -37,7 +37,9 @@ class AdminNotificationController extends Controller
         if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
 
         try {
-            $query = AdminNotification::query()->orderByDesc('created_at');
+            // created_at DESC, then id DESC as a tiebreaker so notifications created
+            // in the same second always surface newest-first (stable ordering).
+            $query = AdminNotification::query()->orderByDesc('created_at')->orderByDesc('id');
 
             if ($request->filled('type')) {
                 $query->where('type', $request->input('type'));

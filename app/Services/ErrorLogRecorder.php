@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use App\Helpers\AuthHelper;
 use Throwable;
 
 /**
@@ -244,15 +245,10 @@ class ErrorLogRecorder
     private static function resolveUser(?Request $request): array
     {
         try {
-            $token = $request?->cookie('auth_token');
-            if (! $token) {
+            if (! $request) {
                 return [null, null];
             }
-            $user = DB::table('users')
-                ->where('api_token', $token)
-                ->where('is_deleted', false)
-                ->select('id', 'role')
-                ->first();
+            $user = AuthHelper::resolveUser($request);
 
             return $user ? [$user->id, $user->role] : [null, null];
         } catch (Throwable) {

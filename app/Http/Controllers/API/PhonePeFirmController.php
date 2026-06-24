@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\ReferralHelper;
+use App\Helpers\AuthHelper;
 
 class PhonePeFirmController extends Controller
 {
@@ -20,12 +21,7 @@ class PhonePeFirmController extends Controller
 
     private function getFirmUser(Request $request): ?object
     {
-        $token = $request->cookie('auth_token');
-        if (!$token) return null;
-        return DB::table('users')
-            ->where('api_token', $token)
-            ->where('is_deleted', false)
-            ->first();
+        return AuthHelper::resolveUser($request);
     }
 
     private function getFirmProfile(int $userId): ?object

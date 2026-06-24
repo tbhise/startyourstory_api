@@ -34,10 +34,24 @@ Route::get('/admin/cls', function () {
 });
 
 // ============================================================================
+// Re-engagement email CTA click tracking.
+// The single "Login to Continue" button in reengagement.blade.php points here
+// (signed URL built in SendReEngagementEmails). We record the click on the
+// matching email_logs row, then redirect to the frontend /login. Signed
+// middleware prevents id enumeration / forged inflation of click counts.
+// ============================================================================
+Route::get('/e/click/{emailLog}', function (\App\Models\EmailLog $emailLog) {
+    $emailLog->registerClick();
+
+    $base = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
+    return redirect()->away($base . '/login');
+})->middleware('signed')->name('email.click');
+
+// ============================================================================
 // TEMPORARY — DEV-ONLY EMAIL PREVIEW. Safe to delete this whole block later.
 // Renders the re-engagement email in the browser using the SAME mailable +
 // Blade template that real sends use (no template logic duplicated).
-//   /mail-preview/reengagement?type=student|firm|creator&verified=0|1
+//   /mail-preview/reengagement?type=student|firm|creator&verified=0|1&profile=0|1
 // Disabled outside local/dev so it can never be hit in production.
 // ============================================================================
 Route::get('/mail-preview/reengagement', function (\Illuminate\Http\Request $request) {
@@ -46,20 +60,16 @@ Route::get('/mail-preview/reengagement', function (\Illuminate\Http\Request $req
     $type     = in_array($request->query('type'), ['student', 'firm', 'creator'], true)
         ? $request->query('type')
         : 'student';
-    $verified = $request->query('verified') === '1';
-
-    $cta = [
-        'login'   => 'https://startyourstory.in/login',
-        'profile' => 'https://startyourstory.in/profile',
-        'verify'  => 'https://startyourstory.in/verify-email',
-    ];
+    $verified  = $request->query('verified') === '1';
+    $completed = $request->query('profile') === '1';
 
     // Reuse the exact mailable (subject is irrelevant for the HTML preview).
     return (new \App\Mail\ReEngagementMail(
         name: 'Tushar Bhise',
         userType: $type,
         verified: $verified,
+        profileCompleted: $completed,
         subjectLine: 'Preview',
-        cta: $cta
+        trackingUrl: 'https://startyourstory.in/login'
     ))->render();
 });

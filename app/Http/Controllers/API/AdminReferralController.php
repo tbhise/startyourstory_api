@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\NotificationHelper;
 use App\Services\AdminActivityLogger;
+use App\Services\PayoutDetailsService;
+use App\Services\Notifications\EmailNotificationService;
 
 class AdminReferralController extends Controller
 {
@@ -60,6 +62,8 @@ class AdminReferralController extends Controller
 
             $payouts = $query->get()->map(function ($p) {
                 $p->created_at_formatted = $p->created_at ? date('d M Y h:i A', strtotime($p->created_at)) : null;
+                // Centralized payout details for the referrer (UPI or masked bank).
+                $p->payout_details = PayoutDetailsService::getForDisplay((int) $p->referrer_user_id);
                 return $p;
             });
 
@@ -165,6 +169,49 @@ class AdminReferralController extends Controller
             return response()->json(['status' => true, 'message' => 'Payout marked as paid']);
         } catch (\Exception $e) {
             Log::error('AdminReferralController@markPayoutPaid: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | POST /admin/referral-payouts/{id}/send-mail
+    | Email the referrer asking them to add payout details (reuses the shared
+    | mail stack; logged in email_logs). Includes a link to the payout page.
+    |--------------------------------------------------------------------------
+    */
+    public function sendPayoutDetailsMail(Request $request, $id)
+    {
+        try {
+            $admin = $this->getAdmin($request);
+            if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+
+            $payout = DB::table('referral_payouts')->where('id', $id)->first();
+            if (!$payout) return response()->json(['status' => false, 'message' => 'Not found'], 404);
+
+            $referrer = DB::table('users')
+                ->where('id', $payout->referrer_user_id)
+                ->where('is_deleted', false)
+                ->first();
+            if (!$referrer || empty($referrer->email)) {
+                return response()->json(['status' => false, 'message' => 'Referrer email not available']);
+            }
+
+            $base      = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
+            $payoutUrl = "{$base}/settings?tab=payout";
+
+            app(EmailNotificationService::class)->sendReferralPayoutRequest(
+                $referrer->email,
+                $referrer->name ?: 'there',
+                (float) $payout->reward_amount,
+                $payoutUrl
+            );
+            // The send is recorded in email_logs by the mail service; no separate
+            // activity-log action type exists for "email sent", so we don't log one.
+
+            return response()->json(['status' => true, 'message' => "Email sent to {$referrer->email}"]);
+        } catch (\Exception $e) {
+            Log::error('AdminReferralController@sendPayoutDetailsMail: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

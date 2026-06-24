@@ -9,18 +9,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use App\Helpers\AuthHelper;
 
 class PhonePeWalletController extends Controller
 {
     private function getStudent(Request $request): ?object
     {
-        $token = $request->cookie('auth_token');
-        if (!$token) return null;
-        return DB::table('users')
-            ->where('api_token', $token)
-            ->where('is_deleted', false)
-            ->where('role', 'student')
-            ->first();
+        $user = AuthHelper::resolveUser($request);
+        return ($user && $user->role === 'student') ? $user : null;
     }
 
     private function creatorGuard(object $user): ?\Illuminate\Http\JsonResponse

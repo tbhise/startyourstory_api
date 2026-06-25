@@ -864,6 +864,9 @@ class MessagingController extends Controller
             // Effective gate for a student starting a NEW conversation: firm policy
             // (premium / free-under-limit) AND the accept_direct_messages toggle.
             $canStart = MessagingHelper::canStudentMessageFirm($firmId);
+            // Strict premium flag — the candidate-side "Message" button is gated on
+            // this alone (only premium firms accept direct messages).
+            $isPremium = SubscriptionHelper::isPremiumFirm($firmId);
             $user    = $this->authUser($request);
 
             $existingConvId = null;
@@ -881,6 +884,7 @@ class MessagingController extends Controller
                 'data'    => [
                     'accept_direct_messages'   => $accepts,
                     'can_start_conversation'   => $canStart['allowed'],
+                    'is_premium'               => $isPremium,
                     'existing_conversation_id' => $existingConvId,
                 ],
             ]);

@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-06-25 — Messaging: expose firm is_premium in firm messaging status
+
+- **`app/Http/Controllers/API/MessagingController.php`** — `getFirmMessagingStatus`
+  (`GET /messaging/firm/{firmId}/status`) now also returns `is_premium`, derived
+  from `SubscriptionHelper::isPremiumFirm($firmId)` (the active-subscription source
+  of truth, not the denormalized `firm_profiles.is_premium`). Powers the
+  candidate-side "Message" button, which is now gated strictly on the firm being
+  premium (see frontend changelog). `accept_direct_messages` /
+  `can_start_conversation` / `existing_conversation_id` unchanged.
+
+---
+
+## 2026-06-25 — Messaging: accept direct messages ON by default (toggle removed)
+
+The per-firm "Direct Message Preference" toggle was removed from the firm profile
+page (see frontend changelog). Firms now accept candidate direct messages by
+default, so the default flips from opt-in (false) to opt-out (true).
+
+- **`app/Helpers/MessagingHelper.php`**:
+  - `getOrCreateSettings()` — auto-created `messaging_settings` rows now insert
+    `accept_direct_messages = true` (was `false`).
+  - `acceptsDirectMessages()` — fallback when no row exists is now `true` (was
+    `false`), so a firm without a settings row also accepts messages.
+  - No change to `canStudentMessageFirm()` / `firmCanHaveNewConversation()` — the
+    firm-policy + admin free-limit gates still apply on top of this toggle.
+- **`db_changes.txt`** (2026-06-25) — `ALTER TABLE messaging_settings MODIFY
+  accept_direct_messages TINYINT(1) NOT NULL DEFAULT 1` + `UPDATE messaging_settings
+  SET accept_direct_messages = 1` to flip all existing firms to accepting. Rollback
+  SQL included.
+- `updateMessagingSettings` / `getMessagingSettings` endpoints remain (still used by
+  admin messaging surfaces); only the firm-profile toggle UI and the default changed.
+
+---
+
 ## 2026-06-25 — Messaging Phase 3: realtime via Laravel Reverb
 
 REQUIRES: `composer require laravel/reverb` then run the Reverb server

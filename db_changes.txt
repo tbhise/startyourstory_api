@@ -2678,3 +2678,19 @@ UPDATE conversations c SET
     WHERE m.conversation_id = c.id AND m.sender_type = 'firm' AND m.is_read = 0
   );
 -- 25/06/2026
+
+
+-- ── messaging_settings: accept direct messages ON by default ──────────────────
+-- The per-firm "Direct Message Preference" toggle was removed from the firm
+-- profile page; firms now accept candidate direct messages by default.
+-- 1) Flip the column default from 0 to 1 (new rows).
+-- 2) Backfill all existing firms to accepting.
+ALTER TABLE `messaging_settings`
+  MODIFY COLUMN `accept_direct_messages` TINYINT(1) NOT NULL DEFAULT 1;
+
+UPDATE `messaging_settings` SET `accept_direct_messages` = 1;
+
+-- ROLLBACK:
+--   ALTER TABLE `messaging_settings`
+--     MODIFY COLUMN `accept_direct_messages` TINYINT(1) NOT NULL DEFAULT 0;
+-- 25/06/2026

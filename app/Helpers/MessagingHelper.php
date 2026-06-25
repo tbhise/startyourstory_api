@@ -103,7 +103,7 @@ class MessagingHelper
         if (!$settings) {
             DB::table('messaging_settings')->insert([
                 'firm_id'               => $firmId,
-                'accept_direct_messages' => false,
+                'accept_direct_messages' => true,
                 'created_at'            => now(),
                 'updated_at'            => now(),
             ]);
@@ -115,7 +115,7 @@ class MessagingHelper
     public static function acceptsDirectMessages(int $firmId): bool
     {
         $s = DB::table('messaging_settings')->where('firm_id', $firmId)->first();
-        return $s ? (bool) $s->accept_direct_messages : false;
+        return $s ? (bool) $s->accept_direct_messages : true;
     }
 
     /*

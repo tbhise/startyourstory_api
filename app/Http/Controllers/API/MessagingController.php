@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Helpers\MessagingHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
+use App\Events\MessageSent;
+use App\Events\MessageRead;
+use App\Events\ConversationUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -30,45 +33,110 @@ class MessagingController extends Controller
         return DB::table('firm_profiles')->where('user_id', $userId)->first();
     }
 
-    private function formatConversation(object $conv, int $authUserId, string $role): array
+    /*
+    |--------------------------------------------------------------------------
+    | Realtime broadcasting (Reverb) — best-effort; never breaks the request.
+    |--------------------------------------------------------------------------
+    */
+
+    /** @return array{0:?int,1:?int} [candidateUserId, firmUserId] */
+    private function conversationParticipantUserIds(object $conv): array
     {
-        $lastMsg = DB::table('messages')
-            ->where('conversation_id', $conv->id)
-            ->orderByDesc('created_at')
-            ->first();
+        $firm = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
+        return [(int) $conv->candidate_id, $firm ? (int) $firm->user_id : null];
+    }
 
-        // Unread count for this viewer
-        $otherSenderType = $role === 'student' ? 'firm' : 'candidate';
-        $unread = DB::table('messages')
-            ->where('conversation_id', $conv->id)
-            ->where('sender_type', $otherSenderType)
-            ->where('is_read', false)
-            ->count();
+    private function emitConversationUpdated(object $conv, ?int $candUserId, ?int $firmUserId, bool $toCandidate, bool $toFirm): void
+    {
+        if ($toCandidate && $candUserId) {
+            event(new ConversationUpdated(
+                $candUserId, (int) $conv->id, $conv->last_message_preview, $conv->last_message_at,
+                $conv->last_message_sender_type, (int) $conv->candidate_unread_count,
+                MessagingHelper::getUnreadCount($candUserId, 'student')
+            ));
+        }
+        if ($toFirm && $firmUserId) {
+            event(new ConversationUpdated(
+                $firmUserId, (int) $conv->id, $conv->last_message_preview, $conv->last_message_at,
+                $conv->last_message_sender_type, (int) $conv->firm_unread_count,
+                MessagingHelper::getUnreadCount($firmUserId, 'firm')
+            ));
+        }
+    }
 
-        // Peer info
+    /** Broadcast a new message to the thread + a list/badge update to both participants. */
+    private function broadcastMessage(int $conversationId, int $messageId, int $senderId, string $senderType, string $message): void
+    {
+        try {
+            event(new MessageSent($conversationId, $messageId, $senderId, $senderType, $message, now()->toISOString()));
+            $conv = DB::table('conversations')->where('id', $conversationId)->first();
+            if (!$conv) return;
+            [$candUserId, $firmUserId] = $this->conversationParticipantUserIds($conv);
+            $this->emitConversationUpdated($conv, $candUserId, $firmUserId, true, true);
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast (message) failed: ' . $e->getMessage());
+        }
+    }
+
+    /** Broadcast a read receipt to the thread + a badge update to the reader. */
+    private function broadcastRead(int $conversationId, string $readerRole): void
+    {
+        try {
+            $readerType = $readerRole === 'student' ? 'candidate' : 'firm';
+            event(new MessageRead($conversationId, $readerType, now()->toISOString()));
+            $conv = DB::table('conversations')->where('id', $conversationId)->first();
+            if (!$conv) return;
+            [$candUserId, $firmUserId] = $this->conversationParticipantUserIds($conv);
+            $this->emitConversationUpdated(
+                $conv, $candUserId, $firmUserId,
+                $readerRole === 'student', $readerRole === 'firm'
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast (read) failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Resolve the peer (firm for a student viewer, candidate for a firm viewer).
+     * Used for the single-conversation path; the list path injects this in bulk.
+     */
+    private function resolvePeer(object $conv, string $role): array
+    {
         if ($role === 'student') {
-            $firm    = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
-            $firmUser = $firm ? DB::table('users')->where('id', $firm->user_id)->first() : null;
-            $peer = [
+            $firm = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
+            return [
                 'id'       => $conv->firm_id,
                 'name'     => $firm->firm_name ?? 'Unknown Firm',
-                'avatar'   => $firm->logo ?? null,
+                'avatar'   => ($firm && $firm->logo_path) ? asset('/storage/' . $firm->logo_path) : null,
                 'verified' => $firm ? ($firm->verification_status === 'approved') : false,
                 'type'     => 'firm',
             ];
-        } else {
-            $candidate = DB::table('users')->where('id', $conv->candidate_id)->first();
-            $sp        = $candidate ? DB::table('student_profiles')->where('user_id', $candidate->id)->first() : null;
-            $peer = [
-                'id'       => $conv->candidate_id,
-                'name'     => $candidate->name ?? 'Unknown Candidate',
-                'avatar'   => $sp->profile_image ?? null,
-                'verified' => false,
-                'type'     => 'candidate',
-            ];
+        }
+        $candidate = DB::table('users')->where('id', $conv->candidate_id)->first();
+        return [
+            'id'       => $conv->candidate_id,
+            'name'     => $candidate->name ?? 'Unknown Candidate',
+            'avatar'   => ($candidate && $candidate->profile_image) ? asset('/storage/' . $candidate->profile_image) : null,
+            'verified' => false,
+            'type'     => 'candidate',
+        ];
+    }
+
+    /**
+     * Build the conversation payload from DENORMALIZED columns only — no per-row
+     * messages scan. $peer / $requestStatus may be injected (bulk list path);
+     * otherwise they are resolved here (single-conversation path).
+     */
+    private function formatConversation(object $conv, string $role, ?array $peer = null, ?string $requestStatus = null): array
+    {
+        $peer ??= $this->resolvePeer($conv, $role);
+        if ($requestStatus === null) {
+            $requestStatus = DB::table('message_requests')->where('conversation_id', $conv->id)->value('status');
         }
 
-        $request = DB::table('message_requests')->where('conversation_id', $conv->id)->first();
+        $unread = $role === 'student'
+            ? (int) ($conv->candidate_unread_count ?? 0)
+            : (int) ($conv->firm_unread_count ?? 0);
 
         return [
             'id'              => $conv->id,
@@ -77,13 +145,13 @@ class MessagingController extends Controller
             'last_message_at' => $conv->last_message_at,
             'created_at'      => $conv->created_at,
             'peer'            => $peer,
-            'last_message'    => $lastMsg ? [
-                'message'     => $lastMsg->message,
-                'sender_type' => $lastMsg->sender_type,
-                'created_at'  => $lastMsg->created_at,
+            'last_message'    => $conv->last_message_id ? [
+                'message'     => $conv->last_message_preview,
+                'sender_type' => $conv->last_message_sender_type,
+                'created_at'  => $conv->last_message_at,
             ] : null,
-            'unread_count'   => (int) $unread,
-            'request_status' => $request ? $request->status : null,
+            'unread_count'   => $unread,
+            'request_status' => $requestStatus ?: null,
         ];
     }
 
@@ -118,14 +186,8 @@ class MessagingController extends Controller
 
             // Tab filters
             if ($tab === 'unread') {
-                $otherType = $role === 'student' ? 'firm' : 'candidate';
-                $query->whereExists(function ($q) use ($otherType) {
-                    $q->select(DB::raw(1))
-                        ->from('messages as m')
-                        ->whereColumn('m.conversation_id', 'c.id')
-                        ->where('m.sender_type', $otherType)
-                        ->where('m.is_read', false);
-                });
+                $unreadCol = $role === 'student' ? 'c.candidate_unread_count' : 'c.firm_unread_count';
+                $query->where($unreadCol, '>', 0);
             } elseif ($tab === 'requests') {
                 $query->where('c.status', 'pending')
                     ->whereExists(function ($q) {
@@ -158,7 +220,53 @@ class MessagingController extends Controller
                 ->limit($perPage)
                 ->get();
 
-            $list = $convs->map(fn($c) => $this->formatConversation($c, $user->id, $role))->values();
+            // ── Bulk-resolve peers + request statuses to avoid N+1 across the page ──
+            $convIds = $convs->pluck('id')->all();
+            $requestMap = $convIds
+                ? DB::table('message_requests')->whereIn('conversation_id', $convIds)
+                    ->pluck('status', 'conversation_id')
+                : collect();
+
+            $peerMap = [];
+            if ($role === 'student') {
+                $firmIds = $convs->pluck('firm_id')->unique()->all();
+                $firms = $firmIds
+                    ? DB::table('firm_profiles')->whereIn('id', $firmIds)
+                        ->get(['id', 'firm_name', 'logo_path', 'verification_status'])->keyBy('id')
+                    : collect();
+                foreach ($convs as $c) {
+                    $f = $firms->get($c->firm_id);
+                    $peerMap[$c->id] = [
+                        'id'       => $c->firm_id,
+                        'name'     => $f->firm_name ?? 'Unknown Firm',
+                        'avatar'   => ($f && $f->logo_path) ? asset('/storage/' . $f->logo_path) : null,
+                        'verified' => $f ? ($f->verification_status === 'approved') : false,
+                        'type'     => 'firm',
+                    ];
+                }
+            } else {
+                $candIds = $convs->pluck('candidate_id')->unique()->all();
+                $users = $candIds
+                    ? DB::table('users')->whereIn('id', $candIds)->get(['id', 'name', 'profile_image'])->keyBy('id')
+                    : collect();
+                foreach ($convs as $c) {
+                    $u = $users->get($c->candidate_id);
+                    $peerMap[$c->id] = [
+                        'id'       => $c->candidate_id,
+                        'name'     => $u->name ?? 'Unknown Candidate',
+                        'avatar'   => ($u && $u->profile_image) ? asset('/storage/' . $u->profile_image) : null,
+                        'verified' => false,
+                        'type'     => 'candidate',
+                    ];
+                }
+            }
+
+            $list = $convs->map(fn($c) => $this->formatConversation(
+                $c,
+                $role,
+                $peerMap[$c->id] ?? null,
+                $requestMap->get($c->id),
+            ))->values();
 
             return response()->json([
                 'status'   => true,
@@ -226,15 +334,19 @@ class MessagingController extends Controller
                 ->reverse()
                 ->values();
 
-            // Mark messages from peer as read
+            // Mark messages from peer as read + zero this viewer's unread counter.
             $readerType = $user->role === 'student' ? 'firm' : 'candidate';
             DB::table('messages')
                 ->where('conversation_id', $conversationId)
                 ->where('sender_type', $readerType)
                 ->where('is_read', false)
                 ->update(['is_read' => true, 'read_at' => now(), 'updated_at' => now()]);
+            MessagingHelper::applyConversationRead($conversationId, $user->role);
+            $this->broadcastRead($conversationId, $user->role);
 
-            $convFormatted = $this->formatConversation($conv, $user->id, $user->role);
+            // Re-read so the formatted payload reflects the zeroed counter.
+            $conv = DB::table('conversations')->where('id', $conversationId)->first();
+            $convFormatted = $this->formatConversation($conv, $user->role);
 
             return response()->json([
                 'status'  => true,
@@ -337,7 +449,7 @@ class MessagingController extends Controller
                     'updated_at'      => now(),
                 ]);
 
-                DB::table('messages')->insert([
+                $msgId = DB::table('messages')->insertGetId([
                     'conversation_id' => $convId,
                     'sender_id'       => $user->id,
                     'sender_type'     => 'firm',
@@ -346,6 +458,7 @@ class MessagingController extends Controller
                     'created_at'      => now(),
                     'updated_at'      => now(),
                 ]);
+                MessagingHelper::applyMessageSent($convId, 'firm', $msgId, $message);
 
                 MessagingHelper::incrementConversationsStarted($firm->id);
 
@@ -377,9 +490,17 @@ class MessagingController extends Controller
                     return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
                 }
 
-                if (!MessagingHelper::acceptsDirectMessages($firmId)) {
+                // New-conversation gate: firm policy (premium / free-under-limit)
+                // AND the firm accepts direct messages. Failures collapse to a
+                // single "Not Accepting Direct Messages" message (no premium leak).
+                $check = MessagingHelper::canStudentMessageFirm($firmId);
+                if (!$check['allowed']) {
                     DB::rollBack();
-                    return response()->json(['status' => false, 'message' => 'This firm is not accepting direct messages'], 403);
+                    return response()->json([
+                        'status'  => false,
+                        'message' => $check['message'],
+                        'code'    => $check['reason'],
+                    ], 403);
                 }
 
                 $existing = DB::table('conversations')
@@ -417,7 +538,7 @@ class MessagingController extends Controller
                     'updated_at'      => now(),
                 ]);
 
-                DB::table('messages')->insert([
+                $msgId = DB::table('messages')->insertGetId([
                     'conversation_id' => $convId,
                     'sender_id'       => $user->id,
                     'sender_type'     => 'candidate',
@@ -426,6 +547,11 @@ class MessagingController extends Controller
                     'created_at'      => now(),
                     'updated_at'      => now(),
                 ]);
+                MessagingHelper::applyMessageSent($convId, 'candidate', $msgId, $message);
+
+                // A student-initiated conversation also counts toward the firm's
+                // lifetime free-conversation limit (the firm is a participant).
+                MessagingHelper::incrementConversationsStarted($firmId);
 
                 if ($firmUser) {
                     NotificationHelper::create(
@@ -444,6 +570,15 @@ class MessagingController extends Controller
             }
 
             DB::commit();
+
+            // Realtime: notify the recipient's list/badge + open thread.
+            $this->broadcastMessage(
+                $convId,
+                $msgId,
+                $user->id,
+                $user->role === 'student' ? 'candidate' : 'firm',
+                $message
+            );
 
             return response()->json([
                 'status'  => true,
@@ -515,7 +650,7 @@ class MessagingController extends Controller
                 }
             }
 
-            DB::table('messages')->insert([
+            $msgId = DB::table('messages')->insertGetId([
                 'conversation_id' => $conv->id,
                 'sender_id'       => $user->id,
                 'sender_type'     => $senderType,
@@ -525,14 +660,16 @@ class MessagingController extends Controller
                 'updated_at'      => now(),
             ]);
 
-            DB::table('conversations')
-                ->where('id', $conv->id)
-                ->update(['last_message_at' => now(), 'updated_at' => now()]);
+            // Refresh last-message snapshot + bump recipient's unread counter.
+            MessagingHelper::applyMessageSent($conv->id, $senderType, $msgId, $message);
 
             // Notify the other party
             $this->notifyPeer($user, $conv, $message, $senderType);
 
             DB::commit();
+
+            // Realtime (after commit so subscribers see committed state).
+            $this->broadcastMessage($conv->id, $msgId, $user->id, $senderType, $message);
 
             return response()->json([
                 'status'  => true,
@@ -599,6 +736,8 @@ class MessagingController extends Controller
                 ->where('sender_type', $peerSenderType)
                 ->where('is_read', false)
                 ->update(['is_read' => true, 'read_at' => now(), 'updated_at' => now()]);
+            MessagingHelper::applyConversationRead($conversationId, $user->role);
+            $this->broadcastRead($conversationId, $user->role);
 
             return response()->json(['status' => true, 'message' => 'Marked as read']);
         } catch (\Exception $e) {
@@ -660,9 +799,10 @@ class MessagingController extends Controller
                     'lifetime_conversations_started'  => (int) $limits->lifetime_conversations_started,
                     'lifetime_requests_unlocked'      => (int) $limits->lifetime_requests_unlocked,
                     'monthly_conversations_started'   => (int) $limits->monthly_conversations_started,
-                    'free_conversation_limit'         => MessagingHelper::FREE_LIFETIME_CONVERSATIONS,
+                    'free_conversation_limit'         => MessagingHelper::freeFirmConversationLimit(),
                     'free_request_unlock_limit'       => MessagingHelper::FREE_LIFETIME_REQUESTS_UNLOCKED,
-                    'premium_monthly_limit'           => MessagingHelper::PREMIUM_MONTHLY_CONVERSATIONS,
+                    'allow_free_firm_messaging'       => MessagingHelper::allowFreeFirmMessaging(),
+                    'premium_monthly_limit'           => 0,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -721,6 +861,9 @@ class MessagingController extends Controller
             }
 
             $accepts = MessagingHelper::acceptsDirectMessages($firmId);
+            // Effective gate for a student starting a NEW conversation: firm policy
+            // (premium / free-under-limit) AND the accept_direct_messages toggle.
+            $canStart = MessagingHelper::canStudentMessageFirm($firmId);
             $user    = $this->authUser($request);
 
             $existingConvId = null;
@@ -736,7 +879,8 @@ class MessagingController extends Controller
                 'status'  => true,
                 'message' => 'Firm messaging status',
                 'data'    => [
-                    'accept_direct_messages' => $accepts,
+                    'accept_direct_messages'   => $accepts,
+                    'can_start_conversation'   => $canStart['allowed'],
                     'existing_conversation_id' => $existingConvId,
                 ],
             ]);
@@ -808,14 +952,14 @@ class MessagingController extends Controller
     private function notifyPeer(object $sender, object $conv, string $message, string $senderType): void
     {
         try {
+            // NOTE: no per-message bell notification (NotificationHelper::create).
+            // The Messages unread badge already tracks per-message counts in realtime
+            // (ConversationUpdated), so adding a bell entry per message floods the
+            // notification bell. The one-time "new conversation request" bell still
+            // fires in startConversation. Per-message email is kept for offline reach.
             if ($senderType === 'firm') {
                 $firm      = $this->firmProfileForUser($sender->id);
                 $firmName  = $firm ? $firm->firm_name : 'A firm';
-                NotificationHelper::create(
-                    $conv->candidate_id,
-                    'New Message',
-                    $firmName . ' sent you a message.'
-                );
                 $candidate = DB::table('users')->where('id', $conv->candidate_id)->first();
                 if ($candidate) {
                     Mail::to($candidate->email)->queue(
@@ -826,11 +970,6 @@ class MessagingController extends Controller
                 $firmProfile = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
                 $firmUser    = $firmProfile ? DB::table('users')->where('id', $firmProfile->user_id)->first() : null;
                 if ($firmUser) {
-                    NotificationHelper::create(
-                        $firmUser->id,
-                        'New Message',
-                        $sender->name . ' replied to your message.'
-                    );
                     Mail::to($firmUser->email)->queue(
                         new \App\Mail\NewMessageReplyMail($firmUser, $sender->name, $message)
                     );

@@ -13,6 +13,8 @@ use App\Mail\PasswordResetMail;
 use App\Mail\FirmApprovedMail;
 use App\Mail\FirmRejectedMail;
 use App\Mail\InterviewAcceptedMail;
+use App\Mail\InterviewInviteMail;
+use App\Mail\InterviewInviteResponseMail;
 use App\Mail\InterviewRejectedMail;
 use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
@@ -149,6 +151,57 @@ class EmailNotificationService
     // -------------------------------------------------------------------------
     // Interview — Candidate emails
     // -------------------------------------------------------------------------
+
+    public function sendInterviewInvite(
+        string  $studentEmail,
+        string  $studentName,
+        string  $firmName,
+        ?string $inviteMessage
+    ): void {
+        $base       = config('app.frontend_url', config('app.url', 'https://startyourstory.in'));
+        $respondUrl = "{$base}/recruiter-actions";
+
+        $mailable = new InterviewInviteMail(
+            $studentName,
+            $firmName,
+            $inviteMessage,
+            $respondUrl
+        );
+
+        $this->queue(
+            $studentEmail,
+            'student',
+            $mailable,
+            "{$firmName} invited you for an interview — Start Your Story",
+            EmailPurpose::INTERVIEW_INVITE
+        );
+    }
+
+    public function sendInterviewInviteResponse(
+        string $firmEmail,
+        string $firmName,
+        string $candidateName,
+        bool   $accepted
+    ): void {
+        $base    = config('app.frontend_url', config('app.url', 'https://startyourstory.in'));
+        $viewUrl = "{$base}/firm-students";
+
+        $mailable = new InterviewInviteResponseMail(
+            $firmName,
+            $candidateName,
+            $accepted,
+            $viewUrl
+        );
+
+        $verb = $accepted ? 'accepted' : 'declined';
+        $this->queue(
+            $firmEmail,
+            'firm',
+            $mailable,
+            "{$candidateName} {$verb} your interview invitation — Start Your Story",
+            EmailPurpose::INTERVIEW_INVITE_RESPONSE
+        );
+    }
 
     public function sendInterviewScheduled(
         string  $studentEmail,

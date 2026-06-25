@@ -4,6 +4,111 @@
 
 ---
 
+## 2026-06-25 — Messaging Phase 3: realtime via Laravel Reverb
+
+REQUIRES: `composer require laravel/reverb` then run the Reverb server
+(`php artisan reverb:start`). Set the REVERB_* env values (a real key/secret/app_id).
+
+- **`bootstrap/app.php`** — added `channels: routes/channels.php` to `withRouting` and
+  `->withBroadcasting(routes/channels.php, ['middleware' => [ApiAuthMiddleware::class]])` so the
+  `/broadcasting/auth` endpoint runs under the app's cookie auth.
+- **`app/Http/Middleware/ApiAuthMiddleware.php`** — additionally calls
+  `$request->setUserResolver(fn () => $user)` so `$request->user()` works for broadcasting channel
+  authorization (existing `auth_user` attribute consumers unchanged).
+- **`routes/channels.php`** (new) — `user.{userId}` (self) and `conversation.{conversationId}`
+  (participant-only: candidate, or the firm's owning user). Reuses the firm↔student model.
+- **`config/broadcasting.php`** + **`config/reverb.php`** (new) — reverb connection + server config.
+- **`app/Events/`** (new, all `ShouldBroadcastNow` — no queue worker needed):
+  - `MessageSent` → `conversation.{id}` (live thread append).
+  - `MessageRead` → `conversation.{id}` (peer flips sent bubbles to "Seen").
+  - `ConversationUpdated` → `user.{id}` per participant (list reorder/preview + global badge
+    via `total_unread`).
+- **`app/Http/Controllers/API/MessagingController.php`** — dispatches after commit:
+  `sendMessage`/`startConversation` → `broadcastMessage()` (MessageSent + ConversationUpdated to
+  both participants); `getMessages`/`markRead` → `broadcastRead()` (MessageRead + ConversationUpdated
+  to the reader). All dispatches are wrapped in try/catch — if Reverb is down, messaging still works.
+- **`.env`** — `BROADCAST_CONNECTION=reverb` + REVERB_* placeholders.
+- Builds directly on Phase 2 denormalized counters (events carry preview + per-side unread, no scans).
+
+---
+
+## 2026-06-25 — Messaging Phase 2: denormalized counters for scalability (no Reverb)
+
+- **`db_changes.txt`** — `conversations` gains `last_message_id`, `last_message_preview`,
+  `last_message_sender_type`, `firm_unread_count`, `candidate_unread_count` + backfill of all
+  five from `messages`. No new index needed (existing `idx_conv_firm`/`idx_conv_candidate`
+  cover `firm_id|candidate_id + status`).
+- **`app/Helpers/MessagingHelper.php`**:
+  - `applyMessageSent()` — on every persisted message, refreshes the conversation's
+    last-message snapshot and bumps the **recipient's** unread counter (single UPDATE).
+  - `applyConversationRead()` — zeroes the **reader's** unread counter.
+  - `getUnreadCount()` rewritten to `SUM(side_unread_count)` over the user's active/pending
+    conversations — **no messages-table scan** (was a COUNT join on messages).
+- **`app/Http/Controllers/API/MessagingController.php`**:
+  - `formatConversation()` now reads denormalized columns only (dropped the per-row
+    last-message query + per-row unread COUNT). Accepts injected peer/request for bulk use.
+  - `getConversations()` **bulk-resolves** peers (firms or candidates+profiles) and request
+    statuses with `whereIn` maps — eliminates the N+1 across the page. `unread` tab filters on
+    the counter (`*_unread_count > 0`) instead of a `whereExists` messages scan.
+  - `sendMessage()` + both `startConversation()` first-message inserts now `insertGetId` +
+    `applyMessageSent()`. `getMessages()`/`markRead()` call `applyConversationRead()` after
+    marking peer messages read.
+- API response shapes unchanged (`last_message.{message,sender_type,created_at}`, `unread_count`)
+  except `last_message.message` is now a ≤255-char preview — frontend already shows a preview, so
+  no frontend change. Realtime/Reverb still deferred to Phase 3.
+
+---
+
+## 2026-06-25 — Messaging Phase 1: admin-controlled firm messaging policy
+
+- **`app/Helpers/MessagingHelper.php`** — replaced the hardcoded free-3-lifetime /
+  premium-100-monthly model with an admin-driven policy:
+  - `allowFreeFirmMessaging()` + `freeFirmConversationLimit()` read `platform_settings`
+    (`allow_free_firm_messaging` default true, `free_firm_conversation_limit` default 2).
+  - `firmCanHaveNewConversation()` — premium = unlimited; non-premium = allowed only if free
+    messaging is on AND lifetime conversations < limit.
+  - `canFirmStartConversation()` now delegates to it (firm-initiated; premium UNLIMITED — the
+    old monthly cap is gone). `canStudentMessageFirm()` = firm policy **AND** `accept_direct_messages`
+    toggle, collapsing all failures to "Not Accepting Direct Messages" (no premium leak).
+  - Premium gate applies to **new conversations only**; `sendMessage`/existing convos untouched.
+- **`app/Http/Controllers/API/MessagingController.php`** — candidate-initiated `startConversation`
+  now uses `canStudentMessageFirm()` (was bare `acceptsDirectMessages`) and increments the firm's
+  lifetime conversation counter (student-initiated convos now count toward the firm's free limit).
+  `getFirmMessagingStatus` now returns `can_start_conversation` (effective gate).
+- **`app/Http/Controllers/API/AdminSettingsController.php`** — registered
+  `allow_free_firm_messaging` + `free_firm_conversation_limit` (defaults + allowed-keys validation).
+- **`db_changes.txt`** — optional seed of the two `platform_settings` rows.
+- Existing conversations remain fully usable regardless of premium/limit (continue is never gated).
+
+---
+
+## 2026-06-25 — Premium source-of-truth + race-safe invites + dead-state transitions
+
+- **`app/Helpers/SubscriptionHelper.php`** — `isPremiumFirm()` no longer trusts the
+  denormalized `firm_profiles.is_premium` fast-path (never reset on expiry → expired
+  firms kept bypassing every free-action gate). Premium is now derived **only** from an
+  ACTIVE, non-expired `firm_subscriptions` row (plan IN premium/-monthly/-quarterly/-yearly,
+  status active, `expires_at` NULL or future). Verified all four real plan values are covered
+  (admin writes `premium`; PhonePe writes the three hyphenated tiers). Fixes expired-premium bypass (P1).
+- **`app/Http/Controllers/API/AuthController.php`** — `/me` (getCurrentUser) firm `is_premium`
+  now derives from `SubscriptionHelper::isPremiumFirm()` instead of the stale
+  `firm_profiles.is_premium` flag, so an expired-premium firm's UI (upgrade banners etc.)
+  is consistent with the now-fixed gates. Student premium logic unchanged.
+- **`app/Http/Controllers/API/InterviewInviteController.php`** —
+  - **Race-safe invites (P2):** insert now sets `active_flag = 1` and is wrapped in a
+    `QueryException` catch; a lost race hits the new unique index and returns `409 invite_exists`
+    instead of creating a duplicate. `decline` clears `active_flag` to NULL.
+  - **Dead-state transitions (P2):** new `complete()` (firm; scheduled/confirmed → completed)
+    and `cancel()` (firm OR candidate; any active state → cancelled). Both clear `active_flag`,
+    update the linked `recruiter_actions.action_status`, and free the pair for a future invite.
+    Candidate-cancel notifies the firm bell.
+- **`routes/api.php`** — `POST /interview-invites/{id}/complete` (firm group),
+  `POST /interview-invites/{id}/cancel` (shared auth group; firm or candidate).
+- **`db_changes.txt`** — `interview_invites.active_flag TINYINT NULL` + backfill +
+  `UNIQUE INDEX uq_active_invite (firm_id, student_id, active_flag)` (partial-unique via NULLs).
+
+---
+
 ## 2026-06-24 — Sitemap: add /resume-builder to static pages
 
 - **`app/Http/Controllers/API/SitemapController.php`** — added `/resume-builder`

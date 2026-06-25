@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\AuthHelper;
+use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
@@ -790,9 +791,7 @@ class JobsController extends Controller
 
                     'job_id' => (string) $item->job_id,
 
-                    'student_id' => $isLocked
-                        ? 'locked'
-                        : (string) $item->student_id,
+                    'student_id' => (string) $item->student_id,
 
                     'recruiter_status' => $item->recruiter_status ?? 'Applied',
 
@@ -816,13 +815,9 @@ class JobsController extends Controller
 
                     'student' => [
 
-                        'id' => $isLocked
-                            ? 'locked'
-                            : (string) $item->student_id,
+                        'id' => (string) $item->student_id,
 
-                        'name' => $isLocked
-                            ? 'Premium Candidate'
-                            : $item->name,
+                        'name' => $item->name,
 
                         'email' => $isLocked
                             ? null
@@ -1025,6 +1020,21 @@ class JobsController extends Controller
                     'status' => false,
                     'message' => 'Application already marked as ' . $status,
                 ]);
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Free Action Limit Check (Save = Shortlisted consumes a free action)
+        |--------------------------------------------------------------------------
+        */
+            if ($status === 'Shortlisted') {
+                $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
+                if (!$freeCheck['allowed']) {
+                    return response()->json([
+                        'status'  => false,
+                        'reason'  => 'free_limit_reached',
+                        'message' => $freeCheck['message'],
+                    ], 403);
+                }
             }
             /*
         |--------------------------------------------------------------------------
@@ -1234,6 +1244,20 @@ class JobsController extends Controller
                     'message' => 'Access denied'
                 ], 403);
             }
+            /*
+        |--------------------------------------------------------------------------
+        | Free Action Limit Check
+        |--------------------------------------------------------------------------
+        */
+            $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
+            if (!$freeCheck['allowed']) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'free_limit_reached',
+                    'message' => $freeCheck['message'],
+                ], 403);
+            }
+
             /*
         |--------------------------------------------------------------------------
         | Prevent Duplicate Interview Request
@@ -1563,6 +1587,12 @@ class JobsController extends Controller
                     '=',
                     'applications.id'
                 )
+                ->leftJoin(
+                    'interview_invites',
+                    'recruiter_actions.interview_invite_id',
+                    '=',
+                    'interview_invites.id'
+                )
                 ->select(
                     'recruiter_actions.*',
                     'firm_profiles.firm_name',
@@ -1571,7 +1601,13 @@ class JobsController extends Controller
                     'applications.interview_date',
                     'applications.interview_mode',
                     'applications.interview_note',
-                    'applications.student_interview_response'
+                    'applications.student_interview_response',
+                    'interview_invites.invite_status',
+                    'interview_invites.interview_status',
+                    'interview_invites.interview_date as invite_interview_date',
+                    'interview_invites.interview_mode as invite_interview_mode',
+                    'interview_invites.interview_note as invite_interview_note',
+                    'interview_invites.student_interview_response as invite_student_response'
                 )
                 ->where(
                     'recruiter_actions.student_id',
@@ -1653,13 +1689,30 @@ class JobsController extends Controller
                 |--------------------------------------------------------------------------
                 */
                     'interview_date' =>
-                    $item->interview_date,
+                    $item->action_type === 'interview_invite'
+                        ? $item->invite_interview_date
+                        : $item->interview_date,
                     'interview_mode' =>
-                    $item->interview_mode,
+                    $item->action_type === 'interview_invite'
+                        ? $item->invite_interview_mode
+                        : $item->interview_mode,
                     'interview_note' =>
-                    $item->interview_note,
+                    $item->action_type === 'interview_invite'
+                        ? $item->invite_interview_note
+                        : $item->interview_note,
                     'student_response' =>
-                    $item->student_interview_response,
+                    $item->action_type === 'interview_invite'
+                        ? $item->invite_student_response
+                        : $item->student_interview_response,
+                    // Invite-specific (null for non-invite actions)
+                    'interview_invite_id' =>
+                    !empty($item->interview_invite_id)
+                        ? (string) $item->interview_invite_id
+                        : null,
+                    'invite_status' =>
+                    $item->invite_status ?? null,
+                    'interview_status' =>
+                    $item->interview_status ?? null,
                 ];
             });
             /*

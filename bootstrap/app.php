@@ -13,7 +13,17 @@ return Application::configure(basePath: dirname(__DIR__))
         web: __DIR__ . '/../routes/web.php',
         api: __DIR__ . '/../routes/api.php',
         commands: __DIR__ . '/../routes/console.php',
+        channels: __DIR__ . '/../routes/channels.php',
         health: '/up',
+    )
+    // Broadcasting (Reverb). The /broadcasting/auth route is guarded by the app's
+    // cookie-based ApiAuthMiddleware (which now sets a user resolver), so channel
+    // authorization callbacks receive the authenticated user via $request->user().
+    ->withBroadcasting(
+        __DIR__ . '/../routes/channels.php',
+        // prefix 'api' so the endpoint is /api/broadcasting/auth — matches the
+        // frontend's API_BASE_URL and is covered by cors.paths (['api/*']).
+        ['prefix' => 'api', 'middleware' => [\App\Http\Middleware\ApiAuthMiddleware::class]],
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);

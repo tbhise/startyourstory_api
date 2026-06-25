@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Helpers\AuthHelper;
+use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
 use App\Helpers\SysCoinHelper;
@@ -821,6 +822,22 @@ class UserController extends Controller
             ]);
         }
     }
+    public function getFreeActionsStatus(Request $request)
+    {
+        $user = AuthHelper::resolveUser($request);
+        if (!$user) {
+            return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
+        }
+        $firm = DB::table('firm_profiles')->where('user_id', $user->id)->first();
+        if (!$firm) {
+            return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
+        }
+        return response()->json([
+            'status' => true,
+            'data'   => FreeActionsHelper::getStatus($firm->id),
+        ]);
+    }
+
     public function trackRecruiterAction(Request $request, $studentId = null)
     {
         try {
@@ -865,6 +882,19 @@ class UserController extends Controller
                 ], 404);
             }
             $actionType = $request->action_type;
+
+            // Free action limit check for non-premium firms saving candidates
+            if ($actionType === 'shortlisted') {
+                $check = FreeActionsHelper::canPerformFreeAction($firm->id);
+                if (!$check['allowed']) {
+                    return response()->json([
+                        'status'  => false,
+                        'reason'  => 'free_limit_reached',
+                        'message' => $check['message'],
+                    ], 403);
+                }
+            }
+
             $title = '';
             $message = '';
             $actionStatus = '';

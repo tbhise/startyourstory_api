@@ -42,6 +42,10 @@ class ApiAuthMiddleware
         }
 
         $request->attributes->set('auth_user', $user);
+        // Bridge for framework features that resolve the user via $request->user()
+        // (e.g. broadcasting channel authorization). Additive — existing code that
+        // reads the 'auth_user' attribute is unaffected.
+        $request->setUserResolver(fn () => $user);
 
         // Keep last_activity_at fresh for the session tracker (best-effort, no-throw)
         DB::table('user_sessions')

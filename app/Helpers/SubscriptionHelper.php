@@ -12,12 +12,10 @@ class SubscriptionHelper
             return false;
         }
 
-        // Fast path: synced flag on firm_profiles (set by payment/admin flows)
-        if ((bool) DB::table('firm_profiles')->where('id', $firmId)->value('is_premium')) {
-            return true;
-        }
-
-        // Fallback: check firm_subscriptions directly for firms not yet backfilled
+        // Single source of truth: an ACTIVE, non-expired premium subscription.
+        // We intentionally do NOT trust firm_profiles.is_premium — that denormalized
+        // flag is never reset on expiry, which let expired-premium firms keep
+        // bypassing every paywall. Premium is now always derived dynamically.
         return DB::table('firm_subscriptions')
             ->where('firm_id', $firmId)
             ->whereIn('plan', ['premium', 'premium-monthly', 'premium-quarterly', 'premium-yearly'])

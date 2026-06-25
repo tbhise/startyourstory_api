@@ -47,6 +47,13 @@ class AdminSettingsController extends Controller
         if (!isset($settings['show_students_to_firms'])) {
             $settings['show_students_to_firms'] = 'true';
         }
+        // Messaging policy (Phase 1)
+        if (!isset($settings['allow_free_firm_messaging'])) {
+            $settings['allow_free_firm_messaging'] = 'true';
+        }
+        if (!isset($settings['free_firm_conversation_limit'])) {
+            $settings['free_firm_conversation_limit'] = '2';
+        }
 
         return response()->json(['status' => true, 'data' => $settings]);
     }
@@ -60,7 +67,7 @@ class AdminSettingsController extends Controller
         $admin = $this->admin($request);
         if (!$admin) return response()->json(['status' => false, 'message' => 'Unauthorized'], 401);
 
-        $allowed = ['show_companies_to_students', 'free_applications_limit', 'online_payments_enabled', 'show_students_to_firms'];
+        $allowed = ['show_companies_to_students', 'free_applications_limit', 'online_payments_enabled', 'show_students_to_firms', 'allow_free_firm_messaging', 'free_firm_conversation_limit'];
         if (!in_array($key, $allowed)) {
             return response()->json(['status' => false, 'message' => 'Unknown setting key.'], 422);
         }

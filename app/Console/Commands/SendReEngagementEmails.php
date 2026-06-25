@@ -31,6 +31,7 @@ use Throwable;
  *   php artisan mail:reengagement --limit=1       # send to a single recipient
  *   php artisan mail:reengagement --sleep=2       # pause 2s between sends
  *   php artisan mail:reengagement --queue         # hand off to DispatchMailJob
+ *   php artisan mail:reengagement --type=firm --profile=0
  */
 class SendReEngagementEmails extends Command
 {

@@ -2534,3 +2534,147 @@ ALTER TABLE `users` DROP COLUMN `token_expires_at`;
 
 
 =============================================== On Live :- 24/06/2026====================
+
+-- UI: Platform Version section added to student + firm profile dropdowns (student-shell.tsx, firm-shell.tsx)
+-- Version sourced from VITE_APP_VERSION env var — 25/06/2026
+
+-- Feature: Free Action Limit for Non-Premium Firms (no DB migration — counts from recruiter_actions)
+-- Non-premium firms: 2 free actions shared across Save Candidate + Schedule Interview
+-- Premium firms: unlimited, no change
+-- New file: app/Helpers/FreeActionsHelper.php
+-- New endpoint: GET /firm/free-actions/status (UserController::getFreeActionsStatus)
+-- Enforced in: UserController::trackRecruiterAction (shortlisted) + JobsController::scheduleInterview
+-- Frontend: firm-students.$studentId.tsx + firm-jobs.$id.applications.tsx
+-- 25/06/2026
+
+-- UI: Locked candidate cards simplified on firm-jobs/:jobId/applications (non-premium firms)
+-- Locked cards now show only [View Profile] + [Upgrade to Schedule Interview]; Save/Reject/Schedule hidden
+-- Locked candidates now show real name (was "Premium Candidate") + real student_id for working View Profile link
+--   (sensitive PII still gated on the candidate detail page's existing premium overlay; list fields email/city/qualification stay masked)
+-- Removed the bottom "Unlock More Candidates" upgrade card (CTA now lives in each locked card)
+-- Backend: JobsController::getApplications — name + student_id no longer masked for locked rows
+-- Frontend: firm-jobs.$id.applications.tsx
+-- 25/06/2026
+
+-- Fix: Inconsistent locked-card buttons on firm-jobs/:jobId/applications
+-- Cause: 2-button collapse was gated only on app.is_locked (visible-limit paywall);
+--   visible candidates with free actions exhausted still rendered Save/Reject + Upgrade.
+-- Fix: unified condition showUpgradeOnly = is_locked || (freeActionsExhausted && !hasInterview)
+--   so every locked/limit-reached non-premium card shows only [View Profile][Upgrade to Schedule Interview].
+-- Frontend: firm-jobs.$id.applications.tsx (ApplicationCard)
+-- 25/06/2026
+
+-- Fix: Free actions are now a SHARED USAGE POOL, not pre-assigned by candidate order
+-- Problem: button rendering was gated on backend `is_locked` (order-based visible-candidate
+--   paywall: first N candidates unlocked, rest locked), so the firm couldn't choose which
+--   candidates to spend its 2 free actions on.
+-- Fix (frontend): showUpgradeOnly = freeActionsExhausted && recruiter_status === "Applied".
+--   While pool > 0, ALL candidates across ALL jobs show full buttons (View Profile / Save /
+--   Schedule Interview / Reject). Once pool = 0, untouched (Applied) candidates collapse to
+--   [View Profile][Upgrade to Schedule Interview]. Already-engaged cards (saved/rejected/interview) keep their layout.
+-- Live update: page refetches GET /firm/free-actions/status after each Save/Schedule so the
+--   CTA flips exactly when the 2nd free action is consumed (not on render).
+-- Fix (backend): JobsController::updateApplicationStatus now enforces the free-action limit
+--   for status='Shortlisted' (the applications-page "Save"), which already logged a
+--   recruiter_actions 'shortlisted' row but was previously ungated.
+-- Fix (frontend infra): ApiError type + normalizeAxiosError now carry `reason`, so the
+--   'free_limit_reached' 403 from the backend is detectable client-side (previously dropped).
+-- Premium firms: unaffected (freeActions never fetched; showUpgradeOnly always false).
+-- Files: firm-jobs.$id.applications.tsx, services/api.ts, JobsController.php
+-- 25/06/2026
+
+-- Feature: Invite to Interview (from firm-students/:id) — candidate-profile-scoped interview invite
+-- Separate status fields (cleaner workflow): invite_status + interview_status
+-- Reuses recruiter_actions (in-app notification), EmailNotificationService, ScheduleInterviewDialog
+-- Flow: firm invites -> candidate accept/decline -> on accept firm schedules -> candidate confirm/reschedule
+-- 25/06/2026
+
+CREATE TABLE interview_invites (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    firm_id BIGINT NOT NULL,
+    student_id BIGINT NOT NULL,
+    message VARCHAR(500) NULL,
+    invite_status ENUM('pending','accepted','declined') NOT NULL DEFAULT 'pending',
+    interview_status ENUM('not_scheduled','scheduled','confirmed','completed','cancelled') NOT NULL DEFAULT 'not_scheduled',
+    interview_date DATETIME NULL,
+    interview_mode VARCHAR(50) NULL,
+    interview_note TEXT NULL,
+    student_interview_response VARCHAR(50) NULL,
+    student_response_note TEXT NULL,
+    reschedule_date DATETIME NULL,
+    invited_at TIMESTAMP NULL,
+    responded_at TIMESTAMP NULL,
+    scheduled_at TIMESTAMP NULL,
+    created_at TIMESTAMP NULL,
+    updated_at TIMESTAMP NULL,
+    KEY idx_firm (firm_id),
+    KEY idx_student (student_id),
+    KEY idx_active (firm_id, student_id, invite_status, interview_status)
+);
+
+-- Link recruiter_actions notifications to the invite so the candidate feed can Accept/Decline inline
+ALTER TABLE recruiter_actions ADD COLUMN interview_invite_id BIGINT NULL AFTER application_id;
+--
+
+-- Fix (P2): race-safe duplicate-invite prevention via a partial-unique pattern.
+-- active_flag = 1 while the invite is active (pending/accepted OR scheduled/confirmed),
+-- NULL once inactive (declined/completed/cancelled). MySQL treats NULLs as distinct,
+-- so many historical inactive rows are allowed but only ONE active row per pair.
+ALTER TABLE interview_invites ADD COLUMN active_flag TINYINT NULL AFTER interview_status;
+
+-- Backfill existing rows BEFORE adding the unique index.
+UPDATE interview_invites
+SET active_flag = 1
+WHERE invite_status IN ('pending','accepted')
+   OR interview_status IN ('scheduled','confirmed');
+
+-- Only one active invite per (firm_id, student_id). If this ALTER fails with a
+-- duplicate-key error, clean up pre-existing duplicate active rows first.
+ALTER TABLE interview_invites
+  ADD UNIQUE INDEX uq_active_invite (firm_id, student_id, active_flag);
+-- 25/06/2026
+--
+
+-- Messaging Phase 1 — admin-controlled messaging policy (no schema change; uses platform_settings key/value).
+-- Defaults are also applied in code (AdminSettingsController/MessagingHelper) so these seeds are optional.
+INSERT INTO platform_settings (`key`, `value`, `updated_at`) VALUES
+  ('allow_free_firm_messaging',     'true', NOW()),
+  ('free_firm_conversation_limit',  '2',    NOW())
+ON DUPLICATE KEY UPDATE `key` = `key`;
+-- 25/06/2026
+
+-- Messaging Phase 2 — denormalize conversations for unread-count + list scalability.
+-- Adds last-message snapshot + per-side unread counters so the unread badge and the
+-- conversation list never scan the messages table. Maintained in code on send/read.
+ALTER TABLE conversations
+  ADD COLUMN last_message_id          BIGINT NULL                   AFTER last_message_at,
+  ADD COLUMN last_message_preview     VARCHAR(255) NULL             AFTER last_message_id,
+  ADD COLUMN last_message_sender_type ENUM('candidate','firm') NULL AFTER last_message_preview,
+  ADD COLUMN firm_unread_count        INT NOT NULL DEFAULT 0,
+  ADD COLUMN candidate_unread_count   INT NOT NULL DEFAULT 0;
+
+-- Backfill: last-message snapshot (latest message id per conversation).
+UPDATE conversations c
+JOIN (
+  SELECT m.conversation_id, m.id, m.message, m.sender_type
+  FROM messages m
+  JOIN (SELECT conversation_id, MAX(id) AS max_id FROM messages GROUP BY conversation_id) x
+    ON x.conversation_id = m.conversation_id AND x.max_id = m.id
+) lm ON lm.conversation_id = c.id
+SET c.last_message_id          = lm.id,
+    c.last_message_preview     = LEFT(lm.message, 255),
+    c.last_message_sender_type = lm.sender_type;
+
+-- Backfill: per-side unread counters.
+--   firm_unread_count      = unread messages sent BY candidate (firm hasn't read)
+--   candidate_unread_count = unread messages sent BY firm (candidate hasn't read)
+UPDATE conversations c SET
+  firm_unread_count = (
+    SELECT COUNT(*) FROM messages m
+    WHERE m.conversation_id = c.id AND m.sender_type = 'candidate' AND m.is_read = 0
+  ),
+  candidate_unread_count = (
+    SELECT COUNT(*) FROM messages m
+    WHERE m.conversation_id = c.id AND m.sender_type = 'firm' AND m.is_read = 0
+  );
+-- 25/06/2026

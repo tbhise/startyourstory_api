@@ -10,6 +10,8 @@ enum EmailPurpose: string
     case FIRM_REJECTED         = 'firm_rejected';
     case MESSAGE_REQUEST       = 'message_request';
     case MESSAGE_REPLY         = 'message_reply';
+    case INTERVIEW_INVITE          = 'interview_invite';
+    case INTERVIEW_INVITE_RESPONSE = 'interview_invite_response';
     case INTERVIEW_SCHEDULED   = 'interview_scheduled';
     case INTERVIEW_ACCEPTED    = 'interview_accepted';
     case INTERVIEW_REJECTED    = 'interview_rejected';
@@ -34,6 +36,8 @@ enum EmailPurpose: string
             self::FIRM_REJECTED          => 'default',
             self::MESSAGE_REQUEST        => 'support',
             self::MESSAGE_REPLY          => 'support',
+            self::INTERVIEW_INVITE              => 'interview',
+            self::INTERVIEW_INVITE_RESPONSE     => 'interview',
             self::INTERVIEW_SCHEDULED           => 'interview',
             self::INTERVIEW_ACCEPTED            => 'interview',
             self::INTERVIEW_REJECTED            => 'interview',
@@ -56,6 +60,7 @@ enum EmailPurpose: string
         return match ($this) {
             self::INTERVIEW_ACCEPTED,
             self::INTERVIEW_REJECTED,
+            self::INTERVIEW_INVITE_RESPONSE,
             self::APPLICATION_DIGEST,
             self::FIRM_APPROVED,
             self::FIRM_REJECTED,

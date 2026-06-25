@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\AuthHelper;
+use App\Helpers\SubscriptionHelper;
 
 class AuthController extends Controller
 {
@@ -243,7 +244,10 @@ class AuthController extends Controller
                 $parentFirmId       = $firmProfile->parent_firm_id ?? null;
                 $parentFrn          = $firmProfile->parent_frn ?? null;
                 $firmCity           = $firmProfile->city ?? null;
-                if ($firmProfile && $firmProfile->is_premium) {
+                // Single source of truth: derive premium from an ACTIVE, non-expired
+                // subscription (NOT the stale firm_profiles.is_premium flag, which is
+                // never reset on expiry). Keeps /me consistent with SubscriptionHelper.
+                if ($firmProfile && SubscriptionHelper::isPremiumFirm($firmProfile->id)) {
                     $isPremium = true;
                     $firmSub = DB::table('firm_subscriptions')
                         ->where('firm_id', $firmProfile->id)

@@ -12,6 +12,7 @@ use App\Http\Controllers\API\ResumeController;
 use App\Http\Middleware\ApiAuthMiddleware;
 use App\Http\Controllers\API\MasterController;
 use App\Http\Controllers\API\JobsController;
+use App\Http\Controllers\API\InterviewInviteController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\PhonePeFirmController;
@@ -97,6 +98,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/resume/preview-html',  [ResumeController::class, 'previewHtml'])->middleware('throttle:resume-pdf');
     Route::delete('/resume',             [ResumeController::class, 'deleteResume']);
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
+    Route::get('/firm/free-actions/status',              [UserController::class, 'getFreeActionsStatus']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
     Route::post('/student/directory-visibility',        [UserController::class, 'updateDirectoryVisibility']);
@@ -125,6 +127,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getAppliedJobs',                           [JobsController::class, 'getAppliedJobs']);
     Route::post('/getSavedJobs',                             [JobsController::class, 'getSavedJobs']);
     Route::post('/applications/{id}/respondInterview',       [JobsController::class, 'respondInterview']);
+
+    // Interview invites — student responds (accept/decline) and confirms/reschedules
+    Route::post('/interview-invites/{id}/respond',           [InterviewInviteController::class, 'respond']);
+    Route::post('/interview-invites/{id}/confirm',           [InterviewInviteController::class, 'confirm']);
+    // Cancel — allowed for the firm OR the invited candidate
+    Route::post('/interview-invites/{id}/cancel',            [InterviewInviteController::class, 'cancel']);
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
     Route::get('/referrals', [ReferralController::class, 'index']);
@@ -166,6 +174,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
         Route::post('/getApplications/{id}',                 [JobsController::class, 'getApplications']);
         Route::post('/applications/{id}/updateStatus',         [JobsController::class, 'updateApplicationStatus']);
         Route::post('/applications/{id}/schedule-interview',  [JobsController::class, 'scheduleInterview']);
+
+        // Interview invites (from candidate profile) — firm side
+        Route::post('/candidates/{id}/invite-interview',      [InterviewInviteController::class, 'invite']);
+        Route::get('/candidates/{id}/interview-invite',       [InterviewInviteController::class, 'candidateInvite']);
+        Route::post('/interview-invites/{id}/schedule',       [InterviewInviteController::class, 'schedule']);
+        Route::post('/interview-invites/{id}/complete',       [InterviewInviteController::class, 'complete']);
         Route::post('/applications/{id}/accept-reschedule',   [JobsController::class, 'acceptReschedule']);
         Route::post('/getRecruiterActions',                  [JobsController::class, 'getRecruiterActions']);
     });

@@ -33,12 +33,23 @@ class FirmDashboardController extends Controller
                     'student_profiles.availability_status',
                     'student_profiles.experience_years',
                     'users.profile_image',
-                    DB::raw("
-                    CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE recruiter_actions.student_id = users.id AND recruiter_actions.firm_id = {$firm->id}
-                            AND recruiter_actions.action_type = 'candidate_saved') THEN 1 ELSE 0 END as is_saved"),
+                    // is_saved: derived from a 1:1 LEFT JOIN (saved_actions below)
+                    // instead of a per-row correlated EXISTS subquery. Same value,
+                    // same column position — byte-identical output, no dependent
+                    // subquery in EXPLAIN.
+                    DB::raw('IF(saved_actions.student_id IS NOT NULL, 1, 0) as is_saved'),
                     DB::raw('IF(users.email_verified_at IS NOT NULL, 1, 0) as is_verified')
                 )
                 ->leftJoin('student_profiles', 'users.id', '=', 'student_profiles.user_id')
+                // Pre-aggregated saved-candidate ids for THIS firm. GROUP BY student_id
+                // makes the derived table 1:1 with users, so this LEFT JOIN cannot
+                // multiply rows or affect pagination/ordering. Powers is_saved above.
+                ->leftJoin(
+                    DB::raw('(SELECT student_id FROM recruiter_actions WHERE firm_id = ' . (int) $firm->id . " AND action_type = 'candidate_saved' GROUP BY student_id) AS saved_actions"),
+                    'saved_actions.student_id',
+                    '=',
+                    'users.id'
+                )
                 ->where('users.is_deleted', false)
                 // Hide students who have requested account deletion (30-day grace).
                 // Reversible: a login clears deletion_requested_at and they reappear.

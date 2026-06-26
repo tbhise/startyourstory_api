@@ -4,6 +4,282 @@
 
 ---
 
+## 2026-06-26 — admin/firms: server-side pagination (approved response-shape change)
+
+Converts `getFirms` (POST /admin/firms) from an unbounded `.get()` to
+`paginate()`. **Approved breaking change to the response shape** (additive: adds
+page/per_page/has_more; `firms` is now the current page). Filters, search, sorting,
+and all firm fields are unchanged. Only the "All Firms" admin tab uses this endpoint;
+the verification tabs use a separate route (GET /admin/firms → `getPendingFirms`).
+
+- **`app/Http/Controllers/API/AdminController.php`** — `getFirms()`:
+  - `->get()` → `->paginate($pageSize)`; `$pageSize = min(max((int) per_page, 1), 100)`,
+    default 25 (same clamp pattern as `getStudents`). Page resolved from `?page=`.
+  - Response now: `data: { firms, total, page, per_page, has_more }` (was `{ firms, total }`).
+  - The `select` column list, all `where`/search filters, and `orderByDesc('fp.created_at')`
+    are untouched.
+
+**Validation (temp `perf:firms2` command, then deleted):**
+- 24 firms; `per_page=5` → 5 pages, **no duplicate ids across pages**, concatenated
+  order **== created_at DESC truth**, `has_more` correct on every page (true×4, false on last).
+- `per_page=100` returns the full set, `has_more=false`.
+- Filter totals match direct COUNTs: city=PUNE 17, verified 20, completed 15.
+
+[PERFORMANCE — median of 5 runs, page 1]
+```
+Stage   Route         Response   Queries  DB time   Payload   Note
+BEFORE  admin/firms   0.7 ms     2        0.54 ms   6.9 KB    unbounded .get() (returns ALL)
+AFTER   admin/firms   1.0 ms     3        0.79 ms   6.9 KB    paginate(25); +1 COUNT query
+```
+At 24 firms both return the same rows (24 < 25 → one page), so payload is identical
+today; the win is structural — payload/rows are now bounded to per_page regardless of
+firm count, instead of growing unboundedly. The extra query is the paginator's COUNT.
+
+Rollback: restore `->get()` and the `{ firms, total }` response in `getFirms()`, and
+revert the frontend (see frontend changelog). `idx_fp_user_id` can stay.
+
+---
+
+## 2026-06-26 — Performance: admin/firms (getFirms) — firm_profiles.user_id index
+
+Performance-only change. **No change to response structure, JSON payload, filters,
+sorting, or business logic** — validated byte-identical across 5 payloads (empty /
+search / city / verified / completed). The route's main scaling risk (unbounded
+`.get()` returning ALL firms) is a **response-shape change (pagination) and was NOT
+implemented** — escalated for sign-off instead (see below).
+
+**Index added** (`db_changes.txt`, 26/06/2026, forward + rollback):
+- `firm_profiles (user_id)` `idx_fp_user_id` — `firm_profiles` had no index on
+  `user_id`. Backs the admin/firms join (`users.id = firm_profiles.user_id`) and,
+  more importantly, the app-wide `DB::table('firm_profiles')->where('user_id',$id)->first()`
+  lookup used by nearly every firm-authenticated endpoint. `user_id` verified unique
+  (30/30 distinct, 0 null); kept as plain INDEX (not UNIQUE) to avoid future-insert risk.
+
+**Audit / EXPLAIN:** `fp type=ALL` + `Using filesort` on `ORDER BY fp.created_at`;
+`users` joined by PK (eq_ref, 1:1 — no row expansion). At 30 rows the optimizer still
+scans `fp` (cheaper than switching join order), so `idx_fp_user_id` appears in
+`possible_keys` but isn't chosen yet — it activates at scale and already serves the
+per-request firm-by-user_id seeks elsewhere. The `filesort` is inherent to returning
+the full ordered set and is not addressed by indexing.
+
+[PERFORMANCE — median of 5 runs, empty payload]
+```
+Stage   Route         Response   Queries  DB time   Slowest   Payload
+BEFORE  admin/firms   0.7 ms     2        0.54 ms   0.35 ms   6.9 KB
+AFTER   admin/firms   0.8 ms     2        0.65 ms   0.44 ms   6.9 KB
+```
+Caveat: delta is noise at current volume. Index benefit is structural / app-wide.
+
+**ESCALATED — NOT implemented (pagination):** `getFirms` returns every firm in one
+unbounded `.get()`. The only real fix for large firm counts is pagination, which
+changes the response from `{firms:[...all...], total}` to a paged shape and requires
+admin-UI changes. Per task rules this is reported, not applied. Recommended approach
+when approved: mirror the existing `getContactSubmissions` pattern in the same
+controller — `paginate($pageSize)` returning `{firms, total, page, has_more}` — and
+update the admin firms table to send `page`/`page_size` and consume `has_more`.
+
+Rollback: `ALTER TABLE firm_profiles DROP INDEX idx_fp_user_id;` (db_changes.txt).
+
+---
+
+## 2026-06-26 — Performance: getCandidates (POST /candidates) indexes + is_saved rewrite
+
+Performance-only change to the firm candidate-search feed. **No change to response
+structure, JSON payload, filters, sorting, pagination, or business logic** —
+validated byte-identical across 5 payloads (empty / search / saved_only / sort_name
+/ page 2), including `is_saved` values and the `saved_only` result.
+
+**Indexes added** (`db_changes.txt`, 26/06/2026, forward + rollback):
+- `users (role, is_deleted, profile_completed)` `idx_users_role_deleted_completed`
+- `student_profiles (user_id)` `idx_sp_user_id`, `(created_at)` `idx_sp_created_at`
+- `recruiter_actions (firm_id, action_type, student_id)` `idx_ra_firm_action_student`
+- `applications (applied_at)` `idx_applications_applied_at`
+
+**Code change** — `app/Http/Controllers/API/FirmDashboardController.php` `getCandidates()`:
+- **Old:** `is_saved` was a per-row correlated subquery in the SELECT
+  `CASE WHEN EXISTS (SELECT 1 FROM recruiter_actions WHERE ... student_id = users.id AND firm_id = {id} AND action_type='candidate_saved') THEN 1 ELSE 0 END`
+  — EXPLAIN showed `DEPENDENT SUBQUERY` (re-run per result row).
+- **New:** a pre-aggregated derived table joined 1:1:
+  `LEFT JOIN (SELECT student_id FROM recruiter_actions WHERE firm_id = {id} AND action_type = 'candidate_saved' GROUP BY student_id) AS saved_actions ON saved_actions.student_id = users.id`
+  selected as `IF(saved_actions.student_id IS NOT NULL, 1, 0) as is_saved` — kept in
+  the **same SELECT position** so output bytes are unchanged. `GROUP BY student_id`
+  makes the join 1:1, so it cannot multiply rows or affect pagination/ordering.
+- The `saved_only` `whereExists` filter and all other filters/sorts were left untouched.
+
+**EXPLAIN before → after:**
+- `users`: `type=ALL` (full scan, key=NULL) → `type=ref` `idx_users_role_deleted_completed`.
+- `student_profiles`: `type=ALL` (hash join) → `type=ref` `idx_sp_user_id`.
+- `recruiter_actions`: `DEPENDENT SUBQUERY` (per row) → `DERIVED` materialized once,
+  covering `idx_ra_firm_action_student` (`Using index`).
+- Residual (known, low-impact): `Using filesort` on `ORDER BY student_profiles.created_at`
+  remains because `users` drives the join; removing it would require making
+  `student_profiles` the leading table (out of scope / behaviour risk). It now sorts
+  the filtered set, not the full table.
+
+[PERFORMANCE — median of 5 runs, empty payload, firm_id=30]
+```
+Stage   Endpoint             Response   Queries  DB time   Slowest
+BEFORE  POST /candidates     1.4 ms     3        1.14 ms   0.56 ms
+AFTER   POST /candidates     1.5 ms     3        1.21 ms   0.52 ms
+```
+Caveat: at current volume (users=88, students=64) the wall-clock delta is noise; the
+gains are structural — two full scans and a per-row dependent subquery eliminated, so
+the route now scales with index seeks instead of O(students) scans + O(rows) subquery
+executions. Query count unchanged (firm lookup + paginate count + paginate select).
+
+Rollback: (1) restore the correlated-subquery SELECT and remove the `saved_actions`
+LEFT JOIN in `getCandidates()`; (2) run the DROP INDEX statements in `db_changes.txt`.
+
+---
+
+## 2026-06-26 — AUDIT ONLY: Hot-route fetching bottleneck audit (no code changed)
+
+Read-only audit of major data-fetching routes, ranked by **structural scaling
+risk** (EXPLAIN + query-count), not current dev-DB speed. No code or schema was
+changed. Structured per-route markers also written to `storage/logs/laravel.log`.
+Current volume is tiny (users=88, jobs=12, firm_profiles=30, conversations=4,
+messages=49) so live timings are sub-5ms noise — the findings below are about how
+each route degrades as data grows.
+
+### Top routes by scaling risk
+
+| Rank | Route | Method | Severity | Gain | Risk to fix |
+|---|---|---|---|---|---|
+| 1 | POST /candidates | FirmDashboardController@getCandidates | **Critical** | Very High | Medium |
+| 2 | POST /admin/firms | AdminController@getFirms | High | High | Medium |
+| 3 | GET /admin/dashboard-stats | AdminAnalyticsController@dashboard | High | High | Low–Med |
+| 4 | POST /admin/students | AdminController@getStudents | High | Medium | Low |
+| 5 | GET /messaging/conversations | MessagingController@getConversations | Medium | Medium | Low |
+| 6 | GET /admin/revenue-analytics | AdminAnalyticsController@revenue | Medium | Medium | Low |
+| 7 | GET /getJobs | FirmController@getJobs | Medium | Medium | Low |
+| 8 | GET /messaging/messages | MessagingController@getMessages | Low–Med | Low | Low |
+| 9 | GET /blogs/public/{slug} | BlogController@getPublishedBlogBySlug | Low | Low | Low |
+| 10 | POST /getCompanyDetails/{id} | FirmController@getCompanyDetails | Low | Low | Low |
+
+### #1 getCandidates — the dominant structural bottleneck
+EXPLAIN (firm scoped): `users type=ALL` (full scan), `student_profiles type=ALL`
+(full scan, hash join), `recruiter_actions = DEPENDENT SUBQUERY` (the `is_saved`
+`CASE WHEN EXISTS` re-evaluates per result row), `Using temporary; Using filesort`.
+Root causes:
+- No index serves `WHERE role='student' AND is_deleted=0 AND profile_completed=1`.
+- Join `users.id = student_profiles.user_id` is **unindexed** (`student_profiles`
+  has no `user_id` index) → hash join / scan.
+- `ORDER BY student_profiles.created_at` has no index → filesort + temp table.
+- `is_saved` correlated `EXISTS` + `saved_only` `whereExists` on `recruiter_actions`
+  (no composite `(student_id, firm_id, action_type)` index).
+- City/category filters use `whereJsonContains` (non-indexable); search uses
+  leading-wildcard `LIKE '%..%'` (non-indexable).
+
+### Other notable findings
+- **admin/firms**: `.get()` with **no pagination** — returns *all* firms every call.
+- **admin/dashboard-stats**: **14 sequential queries** (10 COUNT/SUM + 4 recent
+  feeds). Not row-N+1, but several COUNT(*) scans over `users`/`applications`
+  /`firm_subscriptions`/`wallet_recharges` that grow with the tables;
+  `applications.applied_at` and `firm_subscriptions.created_at` are unindexed.
+- **getConversations**: correctly bulk-fetches peers/requests (no N+1); minor:
+  `select c.*` over-fetch + offset pagination + per-row `whereExists`.
+- **getMessages / getCompanyDetails / candidateDetail / blogs**: bounded
+  single-entity reads, low risk; a few `SELECT *` over-fetches (candidateDetail,
+  admin blog detail).
+
+### Recommended fixes (NOT applied — audit only)
+**Quick wins (Low risk — indexes only, no logic/response change):**
+- `users (role, is_deleted, profile_completed)` — getCandidates / admin students / dashboard counts.
+- `student_profiles (user_id)` (join) and `student_profiles (created_at)` (sort).
+- `recruiter_actions (student_id, firm_id, action_type)` — is_saved / saved_only.
+- `applications (applied_at)`, `firm_subscriptions (status, created_at)`,
+  `blogs (status, published_at)` — dashboard/analytics ranges.
+
+**Medium-risk improvements (need validation / minor shape coordination):**
+- Convert getCandidates `is_saved` correlated `EXISTS` → `LEFT JOIN recruiter_actions`
+  (or batch-fetch saved IDs like getConversations does) to kill the per-row subquery.
+- Paginate admin/firms (response-shape coordination with admin UI).
+- Consolidate dashboard-stats COUNTs into fewer grouped queries.
+
+**High-risk refactors (defer until volume justifies):**
+- Replace `whereJsonContains` city/category filters with normalized columns or
+  generated columns + indexes (schema + write-path change).
+- Full-text index for search instead of leading-wildcard LIKE.
+
+---
+
+## 2026-06-26 — Performance: getCompanies current_openings via pre-aggregated derived table
+
+Performance-only change to **`current_openings` calculation in `getCompanies` only**.
+No change to filters, sorting, GROUP BY, GROUP_CONCAT, pagination, or response
+shape. Validated byte-identical across 5 payloads (empty / city / search / premium
+sort / page 2).
+
+- **`app/Http/Controllers/API/FirmController.php`** — `getCompanies()`:
+  - **Old:** per-row correlated subquery in the SELECT
+    `(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings`
+    — re-executed once per result row.
+  - **New:** a pre-aggregated derived table joined 1:1 on `firm_id`:
+    `LEFT JOIN (SELECT firm_id, COUNT(*) AS current_openings FROM jobs WHERE is_active = 1 GROUP BY firm_id) AS job_counts ON job_counts.firm_id = firm_profiles.id`
+    selected as `COALESCE(MAX(job_counts.current_openings), 0) AS current_openings`.
+  - The derived table is GROUP BY firm_id (one row per firm) so the join is strictly
+    1:1 — it does **not** multiply rows or duplicate the existing
+    `GROUP_CONCAT(firm_departments.department_name)`.
+  - `MAX()` is required (not the bare column) for MySQL `only_full_group_by`
+    compatibility; since the join is 1:1 the value is constant within each group, so
+    `MAX()` returns exactly the count. `COALESCE` preserves the prior 0-for-no-jobs.
+  - `EXPLAIN` confirms the derived table is materialized once (`select_type=DERIVED`)
+    rather than evaluated per row — the gain that scales as jobs/firms grow.
+
+[PERFORMANCE — median of 5 runs, empty payload]
+```
+Stage   Endpoint            Response   Queries  DB time   Slowest
+BEFORE  POST /getCompanies  2.6 ms     2        1.47 ms   0.75 ms
+AFTER   POST /getCompanies  2.5 ms     2        1.41 ms   0.75 ms
+```
+Caveat: at current volume (firm_profiles=30 approved=18, jobs=12) the delta is
+within run-to-run noise — the benefit is structural (one aggregation vs N
+subquery executions) and materializes as data grows. No DB schema change; the
+`idx_jobs_active_status_created` index (added 2026-06-26) now serves the derived
+table's `WHERE is_active=1 GROUP BY firm_id`.
+Rollback: restore the correlated subquery SELECT and remove the job_counts LEFT JOIN.
+
+---
+
+## 2026-06-26 — Performance: hot-endpoint indexes (getCompanies / getJobs)
+
+Performance-only change. **No business logic, query structure, filter, sort,
+pagination, field, or response-shape change.** Query count is identical
+before/after (getCompanies=2, getJobs=3).
+
+- **`db_changes.txt`** — added 5 indexes (forward + rollback documented):
+  - `firm_profiles (verification_status, is_premium, created_at)` `idx_fp_verif_premium_created`
+    — matches `WHERE verification_status='approved'` + `ORDER BY is_premium DESC, created_at DESC`.
+  - `firm_profiles (firm_name)` `idx_fp_firm_name`.
+  - `jobs (firm_id, is_active)` `idx_jobs_firm_active` — covers the `current_openings`
+    correlated subquery and firm-scoped job lookups.
+  - `jobs (is_active, status, created_at)` `idx_jobs_active_status_created` — matches
+    the public job-feed `WHERE` + `ORDER BY`.
+  - `firm_departments (firm_id)` `idx_fd_firm` — covers the `leftJoin`.
+- **`current_openings` correlated subquery: intentionally NOT rewritten.** A grouped
+  JOIN would fan out the existing `GROUP_CONCAT(firm_departments.department_name)` and
+  corrupt the response. The subquery + `idx_jobs_firm_active` is the safe choice.
+- **No controller code changed.** A temporary `app/Console/Commands/PerfBench.php`
+  was used to capture the benchmarks below, then deleted.
+
+[PERFORMANCE — median of 5 runs, identical empty payloads]
+```
+Stage   Endpoint            Response   Queries  DB time   Slowest
+BEFORE  POST /getCompanies  2.9 ms     2        1.80 ms   0.92 ms
+AFTER   POST /getCompanies  2.7 ms     2        1.60 ms   0.81 ms
+BEFORE  GET  /getJobs       1.4 ms     3        0.76 ms   0.31 ms
+AFTER   GET  /getJobs       1.5 ms     3        0.84 ms   0.35 ms
+```
+Caveat: at current data volume (firm_profiles=30, jobs=12) the delta is within
+run-to-run noise — these indexes are **preventative future-proofing**, not a fix
+for present slowness. `EXPLAIN` confirms getCompanies already selects
+`idx_fp_verif_premium_created` + `idx_fd_firm`; getJobs still full-scans 12 rows
+(below the optimizer's index threshold) but now lists the new indexes in
+`possible_keys`, so it switches automatically as the table grows.
+Rollback: `DROP INDEX` statements in `db_changes.txt` under the 26/06/2026 block.
+
+---
+
 ## 2026-06-25 — Messaging: expose firm is_premium in firm messaging status
 
 - **`app/Http/Controllers/API/MessagingController.php`** — `getFirmMessagingStatus`

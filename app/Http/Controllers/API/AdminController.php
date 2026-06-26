@@ -1401,6 +1401,11 @@ class AdminController extends Controller
                 });
             }
 
+            // Server-side pagination. Default 25, clamped to [1, 100]. The page
+            // number is resolved from the request's `page` query param by Laravel's
+            // paginator. Filters/search/sorting above are unchanged.
+            $pageSize = min(max((int) $request->input('per_page', 25), 1), 100);
+
             $firms = $query
                 ->select(
                     'fp.user_id as id',
@@ -1418,11 +1423,17 @@ class AdminController extends Controller
                     DB::raw("CASE WHEN fp.is_premium = 1 THEN 'premium' ELSE 'free' END as plan")
                 )
                 ->orderByDesc('fp.created_at')
-                ->get();
+                ->paginate($pageSize);
 
             return response()->json([
                 'status' => true,
-                'data' => ['firms' => $firms, 'total' => $firms->count()]
+                'data' => [
+                    'firms'    => $firms->items(),
+                    'total'    => $firms->total(),
+                    'page'     => $firms->currentPage(),
+                    'per_page' => $firms->perPage(),
+                    'has_more' => $firms->hasMorePages(),
+                ],
             ]);
         } catch (\Exception $e) {
             Log::error('getFirms Error', ['message' => $e->getMessage()]);

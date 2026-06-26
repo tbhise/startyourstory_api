@@ -2694,3 +2694,101 @@ UPDATE `messaging_settings` SET `accept_direct_messages` = 1;
 --   ALTER TABLE `messaging_settings`
 --     MODIFY COLUMN `accept_direct_messages` TINYINT(1) NOT NULL DEFAULT 0;
 -- 25/06/2026
+-- ================Live : 250626=====================================================
+
+-- ============================================================================
+-- PERFORMANCE: hot-endpoint indexes (getCompanies / getJobs)
+-- Purpose: future-proof the public companies directory and job feed before the
+--   firm_profiles / jobs tables grow. Index columns match the live queries'
+--   WHERE/JOIN/ORDER BY exactly. Adding indexes does NOT alter any data,
+--   response shape, or result ordering (all ORDER BY clauses are explicit).
+-- NOTE: at current volume (firm_profiles=30, jobs=12) these have no measurable
+--   effect; they are preventative. The current_openings correlated subquery was
+--   intentionally NOT rewritten (a grouped JOIN would fan out the existing
+--   GROUP_CONCAT(firm_departments.department_name) and corrupt the output).
+-- 26/06/2026
+
+-- FORWARD:
+-- getCompanies: WHERE verification_status='approved' + ORDER BY is_premium DESC, created_at DESC
+ALTER TABLE firm_profiles
+  ADD INDEX idx_fp_verif_premium_created (verification_status, is_premium, created_at),
+  ADD INDEX idx_fp_firm_name (firm_name);
+
+-- getCompanies current_openings subquery (jobs.firm_id = ? AND jobs.is_active = 1)
+-- getJobs feed: WHERE is_active=1 AND status='Active' ORDER BY created_at DESC, id DESC
+ALTER TABLE jobs
+  ADD INDEX idx_jobs_firm_active (firm_id, is_active),
+  ADD INDEX idx_jobs_active_status_created (is_active, status, created_at);
+
+-- getCompanies leftJoin firm_departments ON firm_departments.firm_id = firm_profiles.id
+ALTER TABLE firm_departments
+  ADD INDEX idx_fd_firm (firm_id);
+
+-- ROLLBACK:
+--   ALTER TABLE firm_profiles
+--     DROP INDEX idx_fp_verif_premium_created,
+--     DROP INDEX idx_fp_firm_name;
+--   ALTER TABLE jobs
+--     DROP INDEX idx_jobs_firm_active,
+--     DROP INDEX idx_jobs_active_status_created;
+--   ALTER TABLE firm_departments
+--     DROP INDEX idx_fd_firm;
+-- 26/06/2026
+
+
+-- ============================================================================
+-- PERFORMANCE: getCandidates (POST /candidates) indexes
+-- Purpose: remove the full scans + filesort identified by EXPLAIN on the firm
+--   candidate-search feed, and back the is_saved/saved_only lookups against
+--   recruiter_actions. Index-only; no data, response, filter, sort, or
+--   pagination change. Preventative at current volume (users=88).
+-- 26/06/2026
+
+-- FORWARD:
+-- users: serves WHERE role='student' AND is_deleted=0 AND profile_completed=1
+ALTER TABLE users
+  ADD INDEX idx_users_role_deleted_completed (role, is_deleted, profile_completed);
+
+-- student_profiles: (user_id) backs the join users.id = student_profiles.user_id;
+-- (created_at) backs ORDER BY student_profiles.created_at (kills filesort)
+ALTER TABLE student_profiles
+  ADD INDEX idx_sp_user_id (user_id),
+  ADD INDEX idx_sp_created_at (created_at);
+
+-- recruiter_actions: backs is_saved derived join + saved_only whereExists
+ALTER TABLE recruiter_actions
+  ADD INDEX idx_ra_firm_action_student (firm_id, action_type, student_id);
+
+-- applications: backs admin dashboard COUNT/recent ORDER BY applied_at
+ALTER TABLE applications
+  ADD INDEX idx_applications_applied_at (applied_at);
+
+-- ROLLBACK:
+--   ALTER TABLE users DROP INDEX idx_users_role_deleted_completed;
+--   ALTER TABLE student_profiles
+--     DROP INDEX idx_sp_user_id,
+--     DROP INDEX idx_sp_created_at;
+--   ALTER TABLE recruiter_actions DROP INDEX idx_ra_firm_action_student;
+--   ALTER TABLE applications DROP INDEX idx_applications_applied_at;
+-- 26/06/2026
+
+
+-- ============================================================================
+-- PERFORMANCE: firm_profiles.user_id index (admin/firms + app-wide firm lookup)
+-- Purpose: firm_profiles had NO index on user_id. That column backs (a) the
+--   admin/firms join users.id = firm_profiles.user_id, and (b) the extremely
+--   common "resolve firm by user_id" lookup
+--   DB::table('firm_profiles')->where('user_id', $authUser->id)->first()
+--   used by nearly every firm-authenticated endpoint. Index-only; no data,
+--   response, filter, sort, or pagination change. user_id verified unique
+--   (30/30 distinct, 0 null) but kept as a plain INDEX (not UNIQUE) to avoid
+--   any future-insert risk.
+-- 26/06/2026
+
+-- FORWARD:
+ALTER TABLE firm_profiles
+  ADD INDEX idx_fp_user_id (user_id);
+
+-- ROLLBACK:
+--   ALTER TABLE firm_profiles DROP INDEX idx_fp_user_id;
+-- 26/06/2026

@@ -638,13 +638,21 @@ class FirmController extends Controller
                 // soft-deleted never surface on the public companies page.
                 ->join('users', 'firm_profiles.user_id', '=', 'users.id')
                 ->where('users.is_deleted', false)
-                // Only admin-approved firms appear in the public companies directory.
+
                 ->where('firm_profiles.verification_status', 'approved')
                 ->leftJoin('firm_departments', 'firm_profiles.id', '=', 'firm_departments.firm_id')
+
+                ->leftJoin(
+                    DB::raw('(SELECT firm_id, COUNT(*) AS current_openings FROM jobs WHERE is_active = 1 GROUP BY firm_id) AS job_counts'),
+                    'job_counts.firm_id',
+                    '=',
+                    'firm_profiles.id'
+                )
                 ->select(
                     'firm_profiles.*',
                     DB::raw('GROUP_CONCAT(firm_departments.department_name) as departments'),
-                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true) as current_openings')
+                    
+                    DB::raw('COALESCE(MAX(job_counts.current_openings), 0) as current_openings')
                 )
                 ->groupBy('firm_profiles.id');
             if (!empty($request->search)) {
@@ -806,7 +814,7 @@ class FirmController extends Controller
             $companies = $query->paginate(12);
 
 
-            
+
             $formattedCompanies = [];
             foreach ($companies->items() as $company) {
                 $formattedCompanies[] = [

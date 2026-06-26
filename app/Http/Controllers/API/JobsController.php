@@ -1977,7 +1977,7 @@ class JobsController extends Controller
 
                     if ($firmUser && $jobRecord) {
                         $base        = config('app.frontend_url', 'https://startyourstory.in');
-                        $viewUrl     = "{$base}/firm/applications";
+                        $viewUrl     = "{$base}/firm-jobs";
                         $emailSvc    = app(EmailNotificationService::class);
 
                         if ($request->response === 'Accepted') {

@@ -69,7 +69,7 @@ class SendApplicationDigestJob implements ShouldQueue
         $count   = count($formatted);
         $noun    = $count === 1 ? 'New Application' : 'New Applications';
         $base    = config('app.frontend_url', 'https://startyourstory.in');
-        $viewUrl = "{$base}/firm/applications";
+        $viewUrl = "{$base}/firm-jobs";
 
         $mailable = new ApplicationDigestMail($this->firmName, $formatted, $viewUrl);
 

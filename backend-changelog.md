@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-06-27 — Re-engagement campaign: browser trigger route (temporary)
+
+Lets the existing `mail:reengagement` command be fired from a URL (small base,
+≤100 users, short-term internal use) instead of only the CLI. The command's
+`handle()` is **untouched** — the route just maps query params onto its options.
+
+- **`routes/web.php`** — added `GET /admin/send-reengagement` (mirrors the
+  existing `/admin/cls` `Artisan::call` pattern). Added `Illuminate\Http\Request`
+  import.
+  - **Gate:** requires `?key=<secret>` (`env('REENGAGEMENT_MAIL_KEY')`, falling
+    back to a hardcoded constant since `env()` is null under `config:cache`); 403
+    otherwise.
+  - **Safe by default:** without `?confirm=SEND` it forces `--dry-run` (sends
+    nothing) — so an accidental/prefetched hit can't blast the base.
+  - **Param → option map:** `type|verified|profile|limit` → `--type|...`,
+    `test=1` → `--test` (redirects to TEST_EMAIL). The command still validates values.
+  - **Synchronous by default:** `Artisan::call('mail:reengagement', $opts)`,
+    returns `Artisan::output()` (the per-segment Sent/Failed summary). Lifts PHP's
+    time limit (`set_time_limit(0)` + `ignore_user_abort(true)`) since the command
+    pauses ~1s/email (~100s for 100 users).
+  - **`background=1`** (only with `confirm=SEND`): `Artisan::queue(...)` runs the
+    whole command on the queue worker and returns instantly — escape hatch if the
+    FPM/nginx request timeout cuts off the synchronous run. Results land in `email_logs`.
+- No change to `SendReEngagementEmails`, `ReEngagementMail`, the Blade view, or
+  the `/e/click` tracking route. ⚠️ Temporary tool — remove or harden (admin auth)
+  before long-term use; the secret rides in the query string (appears in access logs).
+
+---
+
 ## 2026-06-26 — admin/firms: server-side pagination (approved response-shape change)
 
 Converts `getFirms` (POST /admin/firms) from an unbounded `.get()` to

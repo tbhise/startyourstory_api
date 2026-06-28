@@ -2452,11 +2452,6 @@ ALTER TABLE `email_logs`
 --   DROP COLUMN `click_count`;
 
 
-
-
-
-
-
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 2026-06-24 — Centralized payout details (user_payout_details)
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -2792,3 +2787,55 @@ ALTER TABLE firm_profiles
 -- ROLLBACK:
 --   ALTER TABLE firm_profiles DROP INDEX idx_fp_user_id;
 -- 26/06/2026
+
+
+======================
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 2026-06-27 — Admin Campaign module: campaigns table + email_logs.campaign_id
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Per-run record for the re-engagement campaign (replaces the fire-and-forget GET
+-- trigger). One row per executed campaign: filter set, who/where it ran from, status,
+-- and live counters. Recipients link back via email_logs.campaign_id so per-campaign
+-- clicked_count can be rolled up by the click-tracker.
+--
+-- Migration files:
+--   database/migrations/2026_06_27_100001_create_campaigns_table.php
+--   database/migrations/2026_06_27_100002_add_campaign_id_to_email_logs.php
+
+CREATE TABLE `campaigns` (
+  `id`                        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `campaign_type`             VARCHAR(50)  NOT NULL DEFAULT 'reengagement',
+  `campaign_name`             VARCHAR(255) NULL,
+  `target_type`               VARCHAR(20)  NOT NULL,                 -- student | creator | firm
+  `verification_status`       VARCHAR(20)  NOT NULL DEFAULT 'all',   -- all | verified | unverified
+  `profile_completion_status` VARCHAR(20)  NOT NULL DEFAULT 'all',   -- all | completed | incomplete
+  `filters`                   JSON         NOT NULL,
+  `eligible_count`            INT UNSIGNED NOT NULL DEFAULT 0,
+  `sent_count`                INT UNSIGNED NOT NULL DEFAULT 0,
+  `failed_count`              INT UNSIGNED NOT NULL DEFAULT 0,
+  `opened_count`              INT UNSIGNED NOT NULL DEFAULT 0,       -- reserved (needs open-pixel)
+  `clicked_count`             INT UNSIGNED NOT NULL DEFAULT 0,       -- bumped by GET /e/click
+  `status`                    ENUM('pending','running','completed','failed') NOT NULL DEFAULT 'pending',
+  `initiated_from`            ENUM('admin','cli','scheduler') NOT NULL DEFAULT 'admin',
+  `executed_by_admin_id`      BIGINT UNSIGNED NULL,                 -- nullable: CLI/scheduler have no admin
+  `started_at`                TIMESTAMP NULL,
+  `completed_at`              TIMESTAMP NULL,
+  `created_at`                TIMESTAMP NULL,
+  `updated_at`                TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_campaign_filters_created` (`campaign_type`,`target_type`,`verification_status`,`profile_completion_status`,`created_at`),
+  KEY `campaigns_status_index` (`status`),
+  KEY `campaigns_executed_by_admin_id_index` (`executed_by_admin_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE `email_logs`
+  ADD COLUMN `campaign_id` BIGINT UNSIGNED NULL AFTER `id`,
+  ADD KEY `email_logs_campaign_id_index` (`campaign_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `email_logs` DROP KEY `email_logs_campaign_id_index`, DROP COLUMN `campaign_id`;
+-- DROP TABLE `campaigns`;
+
+

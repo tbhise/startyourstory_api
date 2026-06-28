@@ -61,6 +61,8 @@ class AdminActivityLogger
     public const WARNING_ISSUED           = 'warning_issued';
     public const PROFILE_RESTRICTED       = 'profile_restricted';
     public const PROFILE_RESTORED         = 'profile_restored';
+    // Campaigns (re-engagement / bulk mail)
+    public const CAMPAIGN_EXECUTED        = 'campaign_executed';
     // Settings
     public const PLATFORM_SETTINGS_UPDATED = 'platform_settings_updated';
     public const PAYMENT_SETTINGS_UPDATED  = 'payment_settings_updated';

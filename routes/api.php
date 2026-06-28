@@ -28,6 +28,7 @@ use App\Http\Controllers\API\MessagingController;
 use App\Http\Controllers\API\AdminMessagingController;
 use App\Http\Controllers\API\ErrorLogController;
 use App\Http\Controllers\API\EmailLogController;
+use App\Http\Controllers\API\CampaignController;
 use App\Http\Controllers\API\AdminPayoutsController;
 use App\Http\Controllers\API\CreatorMarketplaceController;
 use App\Http\Controllers\API\PublicController;
@@ -468,6 +469,14 @@ Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']
 Route::get('/admin/email-logs',           [EmailLogController::class, 'index']);
 Route::get('/admin/email-logs/stats',     [EmailLogController::class, 'stats']);
 Route::delete('/admin/email-logs',        [EmailLogController::class, 'destroy']);
+
+// Admin — Campaigns (re-engagement; replaces the old public web.php trigger).
+// AdminAuthMiddleware guards all /admin/* paths; no public trigger exists.
+Route::post('/admin/campaigns/dry-run',   [CampaignController::class, 'dryRun']);
+Route::post('/admin/campaigns/test',      [CampaignController::class, 'test']);
+Route::post('/admin/campaigns/send',      [CampaignController::class, 'send']);
+Route::get('/admin/campaigns/stats',      [CampaignController::class, 'stats']);
+Route::get('/admin/campaigns',            [CampaignController::class, 'index']);
 
 // ── Admin — Blog Module (Phase 1) ─────────────────────────────────────────────
 Route::prefix('admin/blog')->group(function () {

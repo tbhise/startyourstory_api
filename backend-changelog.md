@@ -4,6 +4,156 @@
 
 ---
 
+## 2026-06-28 — Admin subscriptions/premium-requests pagination + server-side filtering
+
+Performance fixes for the `/admin/subscriptions` page (audit follow-up). Auth and
+existing response keys preserved.
+
+- **`app/Http/Controllers/API/AdminController.php`**
+  - `getAdminSubscriptions()` — now reads `page` / `per_page` (default 20, clamped 1–100)
+    from the request body and returns a paginated slice via `forPage()`. Total is computed
+    with `(clone $query)->count()` **after** the search WHERE so pagination math respects the
+    filter. Response keeps `subscriptions` and `total`, and adds `page` / `per_page` /
+    `last_page`. NOTE: `total` previously held the `firm_profiles` count (never read by the
+    UI); it now holds the real matching-subscription total. Search via `$request->search`
+    unchanged — it now actually receives a value (see frontend fix).
+  - `getPremiumRequests()` — now filters `WHERE pr.status = 'pending'` **server-side**
+    (previously returned every status and let the client discard non-pending) and paginates
+    (`page` / `per_page`, default 20). Response keeps `requests`, adds `total` / `page` /
+    `per_page` / `last_page`. Manual admin-token auth block left intact.
+- Verified: `php -l` clean; live runtime check — subscriptions `total=1/last_page=1`;
+  premium pending `total=0` (the one existing request is `approved`, correctly excluded by
+  the new filter vs. all-status count of 1).
+
+---
+
+## 2026-06-27 — Campaign stats endpoint (Phase 4)
+
+- **`app/Http/Controllers/API/CampaignController.php`** — added `stats()`:
+  `GET /admin/campaigns/stats` returns `{ total, pending, running, completed, failed }`
+  (status counts over `campaigns`) for the Campaign page header cards.
+- **`routes/api.php`** — registered `GET /admin/campaigns/stats` (admin-guarded; verified
+  via `route:list` → 5 campaign routes). `php -l` clean. No other backend changes —
+  the existing `GET /admin/campaigns` already returns `sent_count`/`failed_count`/
+  `eligible_count`/`status`, so the UI's running-campaign polling needs no new fields.
+
+---
+
+## 2026-06-27 — Admin dashboard stats: student registrations + admin activity feed (Phase 3)
+
+Additive backend support for the dashboard's reworked Recent Activity (no existing
+fields removed → no breaking change for any consumer).
+
+- **`app/Http/Controllers/API/AdminAnalyticsController.php`** — `dashboard()` now also
+  returns under `recent`:
+  - `students` — latest 5 student registrations (`users` role=student, not deleted):
+    id, name, email, created_at.
+  - `activity` — latest 6 rows from `admin_activity_logs` (id, action_type, description,
+    admin_name, created_at). This is the curated admin audit feed, so it naturally
+    surfaces **"Payment approved"** (subscription/wallet/creator approvals) and the new
+    **`campaign_executed`** entries written in Phase 2.
+  Existing `recent.{firms,premium,applications,recharges}` and all KPIs are unchanged
+  (the frontend simply stops rendering some of them). `php -l` clean.
+
+---
+
+## 2026-06-27 — Admin Campaign module: backend refactor + APIs (Phase 2)
+
+Refactors the re-engagement campaign out of the console command into a reusable
+service, adds a queued campaign engine, secure admin APIs, and a `campaigns` run
+record. Existing mail stack (ReEngagementMail, emails.reengagement view, EmailLog,
+click tracking, EmailSenderResolver, DispatchMailJob) is untouched. **Run
+`php artisan migrate` to apply the two new migrations.**
+
+- **`database/migrations/2026_06_27_100001_create_campaigns_table.php`** (new) — `campaigns`
+  run table: `campaign_type`, `campaign_name`, `target_type`, `verification_status`,
+  `profile_completion_status`, `filters` (JSON, NOT NULL), counters
+  (`eligible/sent/failed/opened/clicked_count`), `status`
+  (pending|running|completed|failed), `initiated_from` (admin|cli|scheduler),
+  nullable `executed_by_admin_id`, `started_at`/`completed_at`, indexes for the 24h
+  duplicate guard + history.
+- **`database/migrations/2026_06_27_100002_add_campaign_id_to_email_logs.php`** (new) —
+  nullable `email_logs.campaign_id` (+ index) so per-campaign clicks roll up. Additive;
+  existing transactional logs unaffected.
+- **`app/Models/Campaign.php`** (new) — model + status/initiated_from constants; `filters`
+  cast to array.
+- **`app/Models/EmailLog.php`** — added `campaign_id` to `$fillable`.
+- **`app/Services/Campaign/ReEngagementCampaignService.php`** (new) — single source of
+  truth: `normalizeFilters`, `buildEligibilityQuery` (**users-only base + whereExists
+  subqueries — no join**, so `lazyById` can't skip/duplicate; `student_profiles.user_id`
+  has no unique key), `dryRun`, `recentDuplicate` (24h), `createCampaign`, `run`
+  (chunked `lazyById(500,'users.id')`, **no sleep()**, per-recipient try/catch updates
+  sent/failed + status), `sendTest`, and the segment `subjectFor` lifted from the command.
+- **`app/Jobs/ProcessCampaignJob.php`** (new) — queued runner (`tries=1`, `timeout=3600`);
+  idempotent (only runs a `pending` campaign); `failed()` marks the campaign failed.
+- **`app/Http/Controllers/API/CampaignController.php`** (new) — `dryRun`, `test`, `send`,
+  `index`. `send` enforces: 24h duplicate block (override `force=true`), server-side
+  eligibility recount, >500 large-campaign `confirm=true` gate, then creates the campaign +
+  dispatches the job + writes an `AdminActivityLogger::CAMPAIGN_EXECUTED` audit row.
+- **`app/Services/AdminActivityLogger.php`** — new `CAMPAIGN_EXECUTED` action constant.
+- **`routes/api.php`** — `POST /admin/campaigns/{dry-run,test,send}` + `GET /admin/campaigns`
+  (auto-guarded by AdminAuthMiddleware; verified via `route:list`).
+- **`app/Console/Commands/SendReEngagementEmails.php`** — now a **thin wrapper** over the
+  service. Options: `--type`, `--verified`, `--profile`, `--dry-run`, **`--sync`** (default
+  is queue). Creates a `campaigns` row per target type (`initiated_from=cli`) + audit log.
+  Dropped `--queue/--limit/--sleep/--test` (queue is now default; per-recipient sleep removed).
+- **`routes/web.php`** — **deleted** the public `GET /admin/send-reengagement` trigger
+  (hardcoded `?key=` secret) entirely; removed its now-unused `Request` import. The
+  `GET /e/click/{emailLog}` tracker now bumps `campaigns.clicked_count` on the first click
+  of a campaign-linked log.
+- **`db_changes.txt`** — DDL for the above.
+
+Security: campaign execution is now admin-auth-only (no public/CLI-secret trigger).
+Scalability: queue-based, chunked, no `sleep()`, no `$query->get()` of the whole base.
+All files pass `php -l`; routes + command verified via artisan; eligibility SQL verified
+via `toSql()` for all three target types. Open-tracking (`opened_count`) is reserved
+(no open-pixel infra yet). **Not run:** `php artisan migrate` (left for you to apply).
+
+---
+
+## 2026-06-27 — Re-engagement campaign audit (NO code changes)
+
+Pre-work audit for a future admin Campaign module. **No code, routes, or auth were
+modified.** Findings recorded here for traceability:
+
+- **Trigger:** single Artisan command `mail:reengagement`
+  (`app/Console/Commands/SendReEngagementEmails.php`), reachable from the browser via
+  `GET /admin/send-reengagement` (`routes/web.php`). No `CampaignController`, no campaign
+  DB entity.
+- **Auth gap:** that web route is gated **only** by a hardcoded `?key=sys-7f3a9` on a GET
+  request — `AdminAuthMiddleware` is applied to the `api` group only (`bootstrap/app.php`),
+  so the trigger has **no admin authentication**. (The `/api/admin/email-logs` viewer IS
+  admin-guarded.)
+- **Filters:** one query over `users ⟕ student_profiles`; base filter is only
+  `is_deleted=0` + valid email. `email_verified_at` / `profile_completed` / type
+  (student|firm|creator) are **opt-in** via `--verified/--profile/--type` (default targets
+  the whole base — contradicts the class docblock). Firm verification/subscription state is
+  **not** considered (no `firm_profiles` join).
+- **Delivery:** synchronous `Mail::to()->send()` loop (or whole-command-on-queue via
+  `&background=1`); **no chunking** (`$query->get()` loads all rows), hardcoded `sleep(1)`
+  per recipient (~60/min). Synchronous run risks proxy timeout at scale (~83 min/5k users).
+- **Logging:** per-recipient `email_logs` rows only (purpose `reengagement`); **no
+  campaign-run record, no admin identity, no batch timestamp/aggregate**.
+- **Recommendation:** Option C — extract logic into a `CampaignService` shared by the
+  command + a new authenticated `POST /api/admin/campaigns/*`; add a `campaigns` table
+  (admin_id, filters, counts, status, timestamps); move to chunked/batched queue jobs;
+  retire the keyed GET trigger. Implementation deferred.
+
+Scoped **only** to the student profile-image endpoint. Resume, certificate, and all
+other uploads are untouched.
+
+- **`app/Http/Controllers/API/UserController.php`** — `updateProfileImage()` validation
+  tightened from `'profile_image' => 'required|image'` to
+  `'required|image|mimes:jpg,jpeg,png,webp|max:4096'` (4096 KB = 4 MB), with custom
+  messages: `max` → **"Profile image size must be less than 4 MB."**, `mimes`/`image` →
+  "Profile image must be a JPG, PNG, or WEBP file.", `required` → "Please select a profile
+  image to upload." The method's existing `try/catch (\Exception)` returns
+  `$e->getMessage()`, and `ValidationException::getMessage()` surfaces the first (custom)
+  rule message, so the frontend toast shows the exact text. Upload/move/DB-update flow and
+  auth (`auth_user`) unchanged.
+
+---
+
 ## 2026-06-27 — Re-engagement campaign: browser trigger route (temporary)
 
 Lets the existing `mail:reengagement` command be fired from a URL (small base,

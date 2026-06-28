@@ -9,6 +9,7 @@ class EmailLog extends Model
     protected $table = 'email_logs';
 
     protected $fillable = [
+        'campaign_id',
         'recipient_email',
         'recipient_type',
         'email_purpose',

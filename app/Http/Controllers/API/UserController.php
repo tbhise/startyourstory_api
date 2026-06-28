@@ -788,8 +788,14 @@ class UserController extends Controller
         try {
             $user = $request->attributes->get('auth_user');
             $userId = $user->id;
+            // Student profile image only: jpg/jpeg/png/webp, max 4 MB (4096 KB).
             $request->validate([
-                'profile_image' => 'required|image',
+                'profile_image' => 'required|image|mimes:jpg,jpeg,png,webp|max:4096',
+            ], [
+                'profile_image.required' => 'Please select a profile image to upload.',
+                'profile_image.image'    => 'Profile image must be a JPG, PNG, or WEBP file.',
+                'profile_image.mimes'    => 'Profile image must be a JPG, PNG, or WEBP file.',
+                'profile_image.max'      => 'Profile image size must be less than 4 MB.',
             ]);
             $imagePath = null;
             if ($request->hasFile('profile_image')) {

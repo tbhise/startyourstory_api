@@ -214,10 +214,14 @@ class AdminController extends Controller
                         ->orWhere('u_pid.email', 'LIKE', $like);
                 });
             }
-            $subscriptions = $query->get();
+            $page = max(1, (int) $request->input('page', 1));
+            $perPage = (int) $request->input('per_page', 20);
+            $perPage = ($perPage > 0 && $perPage <= 100) ? $perPage : 20;
 
-
-            $totalFirms = DB::table('firm_profiles')->count();
+            // Total matching rows (pre-limit) for pagination metadata. Cloning
+            // keeps the search WHERE + joins; count() drops the SELECT/ORDER BY.
+            $total = (clone $query)->count();
+            $subscriptions = $query->forPage($page, $perPage)->get();
 
 
             $formatted =
@@ -242,7 +246,13 @@ class AdminController extends Controller
                 'Subscriptions fetched successfully',
                 'data' => [
                     'subscriptions' => $formatted,
-                    'total' => $totalFirms,
+                    // `total` was previously the firm_profiles count (unused by the
+                    // UI); it now reflects the real matching-subscription total so
+                    // pagination math is correct. Key name kept for compatibility.
+                    'total' => $total,
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'last_page' => (int) max(1, ceil($total / $perPage)),
                 ]
             ]);
         } catch (\Exception $e) {
@@ -568,8 +578,20 @@ class AdminController extends Controller
             //         'message' => 'Only admin can access premium requests'
             //     ], 403);
             // }
-            $requests = DB::table('premium_requests as pr')
+            $page = max(1, (int) $request->input('page', 1));
+            $perPage = (int) $request->input('per_page', 20);
+            $perPage = ($perPage > 0 && $perPage <= 100) ? $perPage : 20;
+
+            // Only pending requests are actionable on the admin screen. Filter
+            // server-side instead of returning every historical (approved/rejected)
+            // request and discarding them on the client.
+            $base = DB::table('premium_requests as pr')
                 ->leftJoin('firm_profiles as fp', 'fp.id', '=', 'pr.firm_id')
+                ->where('pr.status', 'pending');
+
+            $total = (clone $base)->count();
+
+            $requests = $base
                 ->select(
                     'pr.id',
                     'pr.firm_id',
@@ -587,6 +609,7 @@ class AdminController extends Controller
                     'fp.city',
                 )
                 ->orderByDesc('pr.created_at')
+                ->forPage($page, $perPage)
                 ->get()
                 ->map(function ($item) {
                     $item->id =
@@ -600,7 +623,11 @@ class AdminController extends Controller
                 'message' =>
                 'Premium requests fetched successfully',
                 'data' => [
-                    'requests' => $requests
+                    'requests' => $requests,
+                    'total' => $total,
+                    'page' => $page,
+                    'per_page' => $perPage,
+                    'last_page' => (int) max(1, ceil($total / $perPage)),
                 ]
             ]);
         } catch (\Exception $e) {

@@ -2,297 +2,109 @@
 
 namespace App\Console\Commands;
 
-use App\Enums\EmailPurpose;
-use App\Jobs\DispatchMailJob;
-use App\Mail\ReEngagementMail;
-use App\Models\EmailLog;
-use App\Services\Email\EmailSenderResolver;
+use App\Jobs\ProcessCampaignJob;
+use App\Models\Campaign;
+use App\Services\AdminActivityLogger;
+use App\Services\Campaign\ReEngagementCampaignService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\URL;
-use Throwable;
+use InvalidArgumentException;
 
 /**
- * Re-engagement email campaign.
+ * Re-engagement campaign — CLI entry point.
  *
- * Sweeps the whole user base in a single run and emails every user who has NOT
- * completed their profile, auto-detecting each user's segment (student / firm /
- * creator × verified / unverified) and sending the matching copy + CTA set.
+ * Thin wrapper around ReEngagementCampaignService (the same engine the admin
+ * Campaign API uses). Creates a `campaigns` row per target type and, by default,
+ * dispatches it to the queue (ProcessCampaignJob). Pass --sync to run inline.
  *
- * Backend-only marketing tool, triggered manually from the terminal. Reuses the
- * existing mail stack (ReEngagementMail + emails.reengagement view + EmailLog
- * tracking + the database queue when --queue is passed).
+ *   php artisan mail:reengagement                       # ALL types, queued
+ *   php artisan mail:reengagement --sync                # ALL types, inline
+ *   php artisan mail:reengagement --type=firm           # one type
+ *   php artisan mail:reengagement --profile=0           # incomplete profiles only
+ *   php artisan mail:reengagement --dry-run             # count only, sends nothing
  *
- *   php artisan mail:reengagement                 # send to ALL eligible users
- *   php artisan mail:reengagement --dry-run       # preview, send nothing
- *   php artisan mail:reengagement --type=firm     # narrow to one type
- *   php artisan mail:reengagement --verified=0    # narrow to unverified only
- *   php artisan mail:reengagement --limit=1       # send to a single recipient
- *   php artisan mail:reengagement --sleep=2       # pause 2s between sends
- *   php artisan mail:reengagement --queue         # hand off to DispatchMailJob
- *   php artisan mail:reengagement --type=firm --profile=0
+ * The legacy public GET trigger (web.php /admin/send-reengagement) has been removed;
+ * campaigns run only via this command or the admin API.
  */
 class SendReEngagementEmails extends Command
 {
     protected $signature = 'mail:reengagement
-        {--type=    : Restrict to a single user type: student|firm|creator}
-        {--verified= : Restrict to a verification state: 0 (unverified) or 1 (verified)}
-        {--profile= : Restrict to a profile state: 0 (incomplete) or 1 (completed)}
-        {--dry-run  : List eligible recipients and counts without sending}
-        {--limit=   : Cap the number of emails sent}
-        {--sleep=0  : Seconds to pause between sends (SMTP rate-limit safety)}
-        {--queue    : Dispatch via the database queue instead of sending synchronously}
-        {--test     : Redirect ALL emails to TEST_EMAIL instead of the real recipients}';
+        {--type=     : Restrict to a single target type: student|creator|firm (default: all three)}
+        {--verified= : Verification state: 0 (unverified) or 1 (verified). Omit for all}
+        {--profile=  : Profile state: 0 (incomplete) or 1 (completed). Omit for all}
+        {--dry-run   : Count eligible recipients without sending}
+        {--sync      : Run inline instead of dispatching to the queue}';
 
-    protected $description = 'Send re-engagement emails across all 6 segments (student|firm × unverified|incomplete|completed). Narrow with --type/--verified/--profile.';
+    protected $description = 'Run the re-engagement campaign (per target type) via the shared campaign service. Queued by default; --sync to run inline.';
 
-    private const TYPES = ['student', 'firm', 'creator'];
+    private const TYPES = ['student', 'creator', 'firm'];
 
-    /**
-     * Test inbox used when --test is passed. All emails are delivered here
-     * instead of the real recipients. Change this address as needed.
-     */
-    private const TEST_EMAIL = 'tusharbhise908@gmail.com';
-
-    public function handle(): int
+    public function handle(ReEngagementCampaignService $service): int
     {
         $type     = $this->option('type');
         $verified = $this->option('verified');
         $profile  = $this->option('profile');
         $dryRun   = (bool) $this->option('dry-run');
-        $useQueue = (bool) $this->option('queue');
-        $useTest  = (bool) $this->option('test');
-        $limit    = $this->option('limit') !== null ? (int) $this->option('limit') : null;
-        $sleep    = (int) $this->option('sleep');
+        $sync     = (bool) $this->option('sync');
 
-        // --- Validate options -------------------------------------------------
+        // ── Validate + map options onto the service's filter contract ──────────
         if ($type !== null && !in_array($type, self::TYPES, true)) {
-            $this->error("Invalid --type \"{$type}\". Allowed: " . implode(', ', self::TYPES) . '.');
+            $this->error('Invalid --type. Allowed: ' . implode(', ', self::TYPES) . '.');
             return self::FAILURE;
         }
         if ($verified !== null && !in_array($verified, ['0', '1'], true)) {
-            $this->error('Invalid --verified value. Use 0 (unverified) or 1 (verified).');
+            $this->error('Invalid --verified. Use 0 (unverified) or 1 (verified).');
             return self::FAILURE;
         }
         if ($profile !== null && !in_array($profile, ['0', '1'], true)) {
-            $this->error('Invalid --profile value. Use 0 (incomplete) or 1 (completed).');
+            $this->error('Invalid --profile. Use 0 (incomplete) or 1 (completed).');
             return self::FAILURE;
         }
 
-        // --- Build the single eligibility query -------------------------------
-        // Covers all 6 segments. profile_completed is selected (not hard-filtered)
-        // so verified+completed users are reachable; narrow with --profile.
-        $query = DB::table('users')
-            ->leftJoin('student_profiles', 'student_profiles.user_id', '=', 'users.id')
-            ->where('users.is_deleted', 0)
-            ->whereNotNull('users.email')
-            ->where('users.email', '<>', '')
-            ->select([
-                'users.id',
-                'users.name',
-                'users.email',
-                'users.role',
-                'users.email_verified_at',
-                'users.profile_completed',
-                'student_profiles.looking_for',
-            ]);
+        $verification = $verified === null ? 'all' : ($verified === '1' ? 'verified' : 'unverified');
+        $profileState = $profile === null ? 'all' : ($profile === '1' ? 'completed' : 'incomplete');
+        $targets      = $type ? [$type] : self::TYPES;
 
-        if ($verified === '1') {
-            $query->whereNotNull('users.email_verified_at');
-        } elseif ($verified === '0') {
-            $query->whereNull('users.email_verified_at');
-        }
-
-        if ($profile === '1') {
-            $query->where('users.profile_completed', 1);
-        } elseif ($profile === '0') {
-            $query->where('users.profile_completed', 0);
-        }
-
-        if ($type === 'firm') {
-            $query->where('users.role', 'firm');
-        } elseif ($type === 'creator') {
-            $query->where('users.role', 'student')->where('student_profiles.looking_for', 'creator');
-        } elseif ($type === 'student') {
-            $query->where('users.role', 'student')->where(function ($q) {
-                $q->whereNull('student_profiles.looking_for')
-                  ->orWhere('student_profiles.looking_for', '<>', 'creator');
-            });
-        }
-
-        $query->orderBy('users.id');
-        if ($limit !== null && $limit > 0) {
-            $query->limit($limit);
-        }
-
-        // --- Fetch + filter for valid emails ----------------------------------
-        $rows = $query->get()->filter(
-            fn ($row) => filter_var($row->email, FILTER_VALIDATE_EMAIL) !== false
-        )->values();
-
-        $total = $rows->count();
-        $this->info("Total eligible users: {$total}");
-
-        if ($useTest && !$dryRun) {
-            $this->warn('TEST MODE: all emails will be delivered to ' . self::TEST_EMAIL . ' (real recipients are NOT emailed).');
-        }
-
-        if ($total === 0) {
-            $this->warn('Nothing to do.');
-            return self::SUCCESS;
-        }
-
-        // --- Dry run ----------------------------------------------------------
-        if ($dryRun) {
-            $bySegment = [];
-            foreach ($rows as $row) {
-                $seg = $this->segmentOf($row);
-                $bySegment[$seg] = ($bySegment[$seg] ?? 0) + 1;
-                $this->line("  [{$seg}] {$row->email}");
-            }
-            $this->newLine();
-            $this->info('Per-segment breakdown:');
-            foreach ($bySegment as $seg => $count) {
-                $this->line("  {$seg}: {$count}");
-            }
-            $this->newLine();
-            $this->comment('Dry run — no emails were sent.');
-            return self::SUCCESS;
-        }
-
-        // --- Send -------------------------------------------------------------
-        $sender  = EmailSenderResolver::resolve(EmailPurpose::REENGAGEMENT);
-        $success = [];
-        $failed  = [];
-
-        foreach ($rows as $row) {
-            $userType    = $this->typeOf($row);
-            $isVerified  = !is_null($row->email_verified_at);
-            $isCompleted = (bool) $row->profile_completed;
-            $state       = !$isVerified ? 'unverified' : ($isCompleted ? 'completed' : 'incomplete');
-            $segment     = "{$state} {$userType}";
-            $deliverTo   = $useTest ? self::TEST_EMAIL : $row->email;
-
-            $label = $useTest ? "{$deliverTo} (test → {$row->email}, {$segment})" : "{$row->email} ({$segment})";
-            $this->output->write("Sending email to {$label} ... ");
-
-            // Reset per-iteration so a prior row's log can't be reused by the catch.
-            $log = null;
+        foreach ($targets as $target) {
+            $filters = [
+                'target_type'               => $target,
+                'verification_status'        => $verification,
+                'profile_completion_status'  => $profileState,
+            ];
 
             try {
-                $subject = $this->subjectFor($userType, $isVerified, $isCompleted);
+                if ($dryRun) {
+                    $res = $service->dryRun($filters);
+                    $this->info("[{$target}] eligible: {$res['eligible_count']}");
+                    continue;
+                }
 
-                // Create the log FIRST so its id can be embedded in the signed
-                // click-tracking URL that becomes the single CTA target.
-                $log = EmailLog::create([
-                    'recipient_email' => $row->email,
-                    'recipient_type'  => $userType === 'firm' ? 'firm' : 'student',
-                    'email_purpose'   => EmailPurpose::REENGAGEMENT->value,
-                    'template_name'   => 'ReEngagementMail',
-                    'sender_identity' => EmailPurpose::REENGAGEMENT->senderKey(),
-                    'subject'         => $subject,
-                    'status'          => 'pending',
-                ]);
+                $campaign = $service->createCampaign($filters, Campaign::FROM_CLI, null, null);
 
-                $trackingUrl = URL::signedRoute('email.click', ['emailLog' => $log->id]);
-
-                $mailable = new ReEngagementMail(
-                    $row->name ?: 'there',
-                    $userType,
-                    $isVerified,
-                    $isCompleted,
-                    $subject,
-                    $trackingUrl
-                );
-
-                if ($useQueue) {
-                    DispatchMailJob::dispatch($deliverTo, $mailable, $log->id);
-                    $this->line('<info>Queued</info>');
+                if ($sync) {
+                    $service->run($campaign);
+                    $campaign->refresh();
+                    $this->info("[{$target}] sent: {$campaign->sent_count}  failed: {$campaign->failed_count}  (campaign #{$campaign->id})");
                 } else {
-                    $mailable->from = [['address' => $sender['address'], 'name' => $sender['name']]];
-                    Mail::to($deliverTo)->send($mailable);
-                    $log->markSent();
-                    $this->line('<info>Sent</info>');
+                    ProcessCampaignJob::dispatch($campaign->id);
+                    $this->info("[{$target}] queued campaign #{$campaign->id} ({$campaign->eligible_count} recipients). Run a queue worker to process it.");
                 }
 
-                $success[$segment] = ($success[$segment] ?? 0) + 1;
-                sleep(1); // brief pause to avoid overwhelming the SMTP server
-            } catch (Throwable $e) {
-                if (isset($log)) {
-                    $log->markFailed(mb_substr($e->getMessage(), 0, 500));
-                }
-                $failed[$segment] = ($failed[$segment] ?? 0) + 1;
-                $this->line("<fg=red>Failed: {$row->email} — {$e->getMessage()}</>");
-            }
-
-            if ($sleep > 0) {
-                sleep($sleep);
+                // Audit trail (admin null = CLI-initiated).
+                AdminActivityLogger::log(
+                    null,
+                    AdminActivityLogger::CAMPAIGN_EXECUTED,
+                    'campaign',
+                    $campaign->id,
+                    "Re-engagement campaign '{$campaign->campaign_name}' "
+                        . ($sync ? 'sent' : 'queued') . " via CLI → {$campaign->eligible_count} recipients."
+                );
+            } catch (InvalidArgumentException $e) {
+                $this->error("[{$target}] {$e->getMessage()}");
+                return self::FAILURE;
             }
         }
 
-        // --- Summary ----------------------------------------------------------
-        $this->newLine();
         $this->info('Done.');
-        $totalSuccess = array_sum($success);
-        $totalFailed  = array_sum($failed);
-        $verb = $useQueue ? 'Queued' : 'Sent';
-
-        $this->line("Per-segment {$verb}:");
-        foreach ($success as $segment => $count) {
-            $this->line("  {$segment}: {$count}");
-        }
-        if ($totalFailed > 0) {
-            $this->line('Per-segment Failed:');
-            foreach ($failed as $segment => $count) {
-                $this->line("  {$segment}: {$count}");
-            }
-        }
-        $this->newLine();
-        $this->info("{$verb}: {$totalSuccess}   Failed: {$totalFailed}   Total: {$total}");
-
-        return $totalFailed > 0 ? self::FAILURE : self::SUCCESS;
-    }
-
-    /** Derive the user type for a fetched row. */
-    private function typeOf(object $row): string
-    {
-        if ($row->role === 'firm') {
-            return 'firm';
-        }
-        return $row->looking_for === 'creator' ? 'creator' : 'student';
-    }
-
-    /** Human-readable "state type" label for dry-run grouping (3 states). */
-    private function segmentOf(object $row): string
-    {
-        $state = is_null($row->email_verified_at)
-            ? 'unverified'
-            : ((bool) $row->profile_completed ? 'completed' : 'incomplete');
-        return "{$state} {$this->typeOf($row)}";
-    }
-
-    /** Subject line per segment (userType × 3 lifecycle states). */
-    private function subjectFor(string $userType, bool $verified, bool $completed): string
-    {
-        $state = !$verified ? 'unverified' : ($completed ? 'completed' : 'incomplete');
-
-        return match ($userType) {
-            'firm' => match ($state) {
-                'unverified' => 'Verify your email to start hiring',
-                'incomplete' => 'Complete your firm profile and start hiring',
-                default      => 'Start posting jobs and reaching candidates',
-            },
-            'creator' => match ($state) {
-                'unverified' => 'Verify your email to get discovered',
-                'incomplete' => 'Complete your creator profile to get discovered',
-                default      => 'Get discovered for new content projects',
-            },
-            default => match ($state) {
-                'unverified' => 'Verify your email to start applying',
-                'incomplete' => 'Complete your profile and start applying',
-                default      => 'New jobs and firms are waiting for you',
-            },
-        };
+        return self::SUCCESS;
     }
 }

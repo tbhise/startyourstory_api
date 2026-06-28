@@ -236,6 +236,33 @@ class AdminAnalyticsController extends Controller
                     'created_at'   => $r->created_at ? date('d M Y h:i A', strtotime($r->created_at)) : null,
                 ]);
 
+            // New student registrations (powers the "New student registered" activity).
+            $recentStudents = DB::table('users')
+                ->where('role', 'student')->where('is_deleted', false)
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get(['id', 'name', 'email', 'created_at'])
+                ->map(fn($r) => [
+                    'id'         => (int) $r->id,
+                    'name'       => $r->name,
+                    'email'      => $r->email,
+                    'created_at' => $r->created_at ? date('d M Y h:i A', strtotime($r->created_at)) : null,
+                ]);
+
+            // Curated admin audit feed (already only important write actions) — surfaces
+            // "Payment approved" + "Campaign executed" (campaign_executed) on the dashboard.
+            $recentActivity = DB::table('admin_activity_logs')
+                ->orderByDesc('id')
+                ->limit(6)
+                ->get(['id', 'action_type', 'description', 'admin_name', 'created_at'])
+                ->map(fn($r) => [
+                    'id'          => (int) $r->id,
+                    'action_type' => $r->action_type,
+                    'description' => $r->description,
+                    'admin_name'  => $r->admin_name,
+                    'created_at'  => $r->created_at ? date('d M Y h:i A', strtotime($r->created_at)) : null,
+                ]);
+
             return response()->json([
                 'status' => true,
                 'data'   => [
@@ -250,10 +277,12 @@ class AdminAnalyticsController extends Controller
                         'unread_notifications'        => $unreadNotifications,
                     ],
                     'recent' => [
+                        'students'     => $recentStudents,
                         'firms'        => $recentFirms,
                         'premium'      => $recentPremium,
                         'applications' => $recentApplications,
                         'recharges'    => $recentRecharges,
+                        'activity'     => $recentActivity,
                     ],
                 ],
             ]);

@@ -761,6 +761,12 @@ class FirmController extends Controller
                 !empty($request->exposure_type) &&
                 is_array($request->exposure_type)
             ) {
+                // TECH DEBT (2026-06-29): exposure_type stores a JSON ARRAY as text
+                // (e.g. ["overall","domain wise"]), so whereIn() — which matches the
+                // WHOLE column against a single scalar — effectively never matches a
+                // multi-value firm. Should use whereJsonContains() / JSON_CONTAINS
+                // (and ideally migrate the column to native JSON). Left as-is per the
+                // current task scope; see backend-audit.txt "Technical Debt".
                 $query->whereIn(
                     'firm_profiles.exposure_type',
                     $request->exposure_type

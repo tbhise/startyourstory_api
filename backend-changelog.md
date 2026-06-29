@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-06-29 — exposure_type TEXT widen + error_summary stops storing SQL
+
+Follow-up to the column/ErrorLogRecorder audit (this date). Two independent fixes.
+
+- **`database/migrations/2026_06_29_000002_widen_exposure_type_to_text_on_firm_profiles.php`** (new)
+  - `firm_profiles.exposure_type` `VARCHAR(500)` → **`TEXT`** (raw `ALTER ... MODIFY`,
+    `Schema::hasColumn` guarded). Removes the truncation / "Data too long" (SQLSTATE[22001])
+    risk on the JSON-array-as-text value. **Intentionally NOT migrated to native JSON yet**
+    (would require refactoring the LIKE/whereIn filters — deferred). Run:
+    `php artisan migrate --path=database/migrations/2026_06_29_000002_widen_exposure_type_to_text_on_firm_profiles.php`.
+  - `down()` narrows back to `VARCHAR(500)` (truncates >500-char rows).
+- **`app/Services/ErrorLogRecorder.php`** — `error_summary` no longer stores the SQL query.
+  - Root cause was `error_summary` being sourced from `rawMessage()`/`redactSecrets()`, which
+    kept the `(Connection: …, SQL: …)` tail. Now both `message` and `error_summary` store the
+    **sanitized** message (`safeMessage()` → `sanitize()`: SQL/Connection tail stripped, secrets
+    redacted), e.g. `SQLSTATE[22001]: Data too long for column 'exposure_type'`.
+  - Cap aligned to the live `VARCHAR(1000)` column: new `SUMMARY_MAX = 1000`; removed the
+    stale `RAW_MAX = 10000` (which silently truncated, or under STRICT mode threw → dropped the
+    whole error row). **Column datatype left as VARCHAR(1000) per decision** (no migration).
+  - `writeRow()` simplified to a single `$summary` param (writes it to both columns); `recordLog()`
+    updated to match; unused `rawMessage()` removed. **`stack` storage kept unchanged** (full
+    secret-redacted trace, TEXT, capped 15000) — still useful for debugging.
+- **`app/Http/Controllers/API/FirmController.php`** — added an inline `// TECH DEBT` marker at the
+  `whereIn('firm_profiles.exposure_type', …)` filter in `getCompanies()` (does not match a
+  JSON-array text column). No behavior change — documented only.
+- **`backend-audit.txt`** — new "TECHNICAL DEBT / KNOWN ISSUES" section (TD-1) describing the
+  whereIn/exposure_type bug and the correct `whereJsonContains` + native-JSON fix for later.
+- Verified: `php -l` clean on ErrorLogRecorder, FirmController, and the new migration.
+
+---
+
+## 2026-06-29 — "Last Login" tracking (denormalized last_login_at) for admin Students/Firms
+
+Audit (this date) found student/firm logins were reliably recorded in the append-only
+`login_history` table, but the admin listings had no cheap per-row "Last Login" value,
+and **admins had no login tracking at all**. Decision: denormalize a `last_login_at`
+column rather than join `MAX(login_history)` in list queries. `login_history` is unchanged
+and remains the source-of-truth audit trail.
+
+- **`database/migrations/2026_06_29_000001_add_last_login_at_to_users_and_admin_users.php`** (new)
+  - `users.last_login_at` DATETIME NULL (after `email_verified_at`), index `idx_users_last_login_at`.
+  - `admin_users.last_login_at` DATETIME NULL (after `is_active`), index `idx_admin_users_last_login_at`.
+  - Idempotent (`Schema::hasColumn` guards); `down()` drops indexes + columns. Run:
+    `php artisan migrate --path=database/migrations/2026_06_29_000001_add_last_login_at_to_users_and_admin_users.php`.
+- **`app/Http/Controllers/API/AuthController.php`** — `login()` now stamps
+  `users.last_login_at = now()` in the same block that inserts `login_history` (success only;
+  NOT touched on profile edits). `updated_at` intentionally left alone.
+- **`app/Http/Controllers/API/AdminController.php`**
+  - `login()` now sets `admin_users.last_login_at = now()` explicitly alongside `api_token`
+    (NOT reusing `updated_at`, which drifts on any admin row change).
+  - `getStudents()` / `getFirms()` — select `u.last_login_at`; added an `activity` filter and
+    a `sort` option via two new private helpers:
+    - `applyActivityFilter($q, $col, $activity)` — buckets relative to `now()`:
+      `active` ≤3d · `warm` 4–15d · `inactive` 16–45d · `dormant` >45d · `never` (NULL).
+      Unknown/empty = no-op.
+    - `applyLastLoginSort($q, $col, $sort, $defaultCol)` — `recent_login` / `oldest_login`
+      (NULLs pushed last in both directions); otherwise default `$defaultCol DESC`
+      (students `u.created_at`, firms `fp.created_at`).
+  - `getPendingFirms()` — added `u.last_login_at` to the select so the firm verification tabs
+    can display the column too.
+- Verified: `php -l` clean on AuthController, AdminController, and the migration.
+
+---
+
 ## 2026-06-28 — Admin subscriptions/premium-requests pagination + server-side filtering
 
 Performance fixes for the `/admin/subscriptions` page (audit follow-up). Auth and

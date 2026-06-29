@@ -2838,4 +2838,51 @@ ALTER TABLE `email_logs`
 -- ALTER TABLE `email_logs` DROP KEY `email_logs_campaign_id_index`, DROP COLUMN `campaign_id`;
 -- DROP TABLE `campaigns`;
 
+-- ======= Live : 290626
+-- ============================================================
+-- 2026-06-29 — "Last Login" tracking (denormalized last_login_at)
+-- ============================================================
+-- Denormalized per-row last-login timestamp for the admin Students/Firms lists.
+-- Students/firms: stamped in AuthController::login (login_history stays the audit
+-- trail). Admins: stamped in AdminController::login (admins had NO prior tracking).
+-- Indexed because the admin panel sorts (Recent/Oldest Login) and filters
+-- (active/warm/inactive/dormant) on the column.
+-- Applied via migration 2026_06_29_000001_add_last_login_at_to_users_and_admin_users
+-- (php artisan migrate --path=database/migrations/2026_06_29_000001_add_last_login_at_to_users_and_admin_users.php).
+
+ALTER TABLE `users`
+  ADD COLUMN `last_login_at` DATETIME NULL AFTER `email_verified_at`,
+  ADD KEY `idx_users_last_login_at` (`last_login_at`);
+
+ALTER TABLE `admin_users`
+  ADD COLUMN `last_login_at` DATETIME NULL AFTER `is_active`,
+  ADD KEY `idx_admin_users_last_login_at` (`last_login_at`);
+
+-- ROLLBACK:
+-- ALTER TABLE `users` DROP KEY `idx_users_last_login_at`, DROP COLUMN `last_login_at`;
+-- ALTER TABLE `admin_users` DROP KEY `idx_admin_users_last_login_at`, DROP COLUMN `last_login_at`;
+
+
+-- ============================================================
+-- 2026-06-29 — Widen firm_profiles.exposure_type 500 -> TEXT
+-- ============================================================
+-- exposure_type stores a JSON ARRAY as text (e.g. ["overall","domain wise"]),
+-- written/read via json_encode/json_decode. VARCHAR(500) could truncate a growing
+-- array into invalid JSON (json_decode -> null/[]) and throws "Data too long"
+-- (SQLSTATE[22001]) under STRICT mode. Widen to TEXT — no query refactor.
+-- NOT converted to native JSON yet (sibling student_profiles.exposure_type is JSON;
+-- converging firm_profiles requires fixing the LIKE/whereIn filters first — deferred,
+-- see backend-audit.txt TD-1).
+-- Applied via migration 2026_06_29_000002_widen_exposure_type_to_text_on_firm_profiles
+-- (php artisan migrate --path=database/migrations/2026_06_29_000002_widen_exposure_type_to_text_on_firm_profiles.php).
+--
+-- NOTE: error_logs.error_summary datatype is intentionally UNCHANGED (stays
+-- VARCHAR(1000)); the ErrorLogRecorder code was aligned to the 1000-char cap and
+-- now strips SQL from the stored summary — no DB change for that fix.
+
+ALTER TABLE `firm_profiles` MODIFY `exposure_type` TEXT NULL;
+
+-- ROLLBACK (truncates rows longer than 500 chars):
+-- ALTER TABLE `firm_profiles` MODIFY `exposure_type` VARCHAR(500) NULL;
+
 

@@ -59,6 +59,9 @@ class AdminController extends Controller
                 ->where('id', $admin->id)
                 ->update([
                     'api_token' => $token,
+                    // Denormalized "Last Login" — set EXPLICITLY on successful login.
+                    // (Do NOT rely on updated_at; it drifts on any admin row change.)
+                    'last_login_at' => now(),
                     'updated_at' => now(),
                 ]);
             return response()->json([
@@ -1085,6 +1088,7 @@ class AdminController extends Controller
                     'u.mobile',
                     'u.email_verified_at',
                     'u.profile_completed',
+                    'u.last_login_at',
                     DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified'),
                     DB::raw("CASE WHEN fp.logo_path IS NOT NULL THEN CONCAT('" . url('/storage') . "/', fp.logo_path) ELSE NULL END as logo_url")
                 )
@@ -1428,6 +1432,13 @@ class AdminController extends Controller
                 });
             }
 
+            // Login-activity filter (denormalized users.last_login_at — same buckets
+            // as the Students listing): active / warm / inactive / dormant / never.
+            $this->applyActivityFilter($query, 'u.last_login_at', $request->input('activity'));
+
+            // Sort: default newest-registered first; admin can switch to login recency.
+            $this->applyLastLoginSort($query, 'u.last_login_at', $request->input('sort'), 'fp.created_at');
+
             // Server-side pagination. Default 25, clamped to [1, 100]. The page
             // number is resolved from the request's `page` query param by Laravel's
             // paginator. Filters/search/sorting above are unchanged.
@@ -1443,13 +1454,13 @@ class AdminController extends Controller
                     'fp.city',
                     'fp.verification_status',
                     'fp.created_at',
+                    'u.last_login_at',
                     'u.email',
                     'u.mobile',
                     'u.profile_completed',
                     DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified'),
                     DB::raw("CASE WHEN fp.is_premium = 1 THEN 'premium' ELSE 'free' END as plan")
                 )
-                ->orderByDesc('fp.created_at')
                 ->paginate($pageSize);
 
             return response()->json([
@@ -1522,6 +1533,17 @@ class AdminController extends Controller
                 });
             }
 
+            // Login-activity filter (denormalized users.last_login_at):
+            //   active   → logged in within the last 3 days
+            //   warm     → 4–15 days ago
+            //   inactive → 16–45 days ago
+            //   dormant  → more than 45 days ago
+            //   never    → never logged in (NULL)
+            $this->applyActivityFilter($query, 'u.last_login_at', $request->input('activity'));
+
+            // Sort: default newest-registered first; admin can switch to login recency.
+            $this->applyLastLoginSort($query, 'u.last_login_at', $request->input('sort'), 'u.created_at');
+
             $students = $query
                 ->select(
                     'u.id',
@@ -1530,6 +1552,7 @@ class AdminController extends Controller
                     'u.mobile',
                     'u.profile_completed',
                     'u.created_at',
+                    'u.last_login_at',
                     'u.is_deleted',
                     'u.deletion_requested_at',
                     'u.scheduled_deletion_at',
@@ -1537,7 +1560,6 @@ class AdminController extends Controller
                     'sp.city',
                     DB::raw('IF(u.email_verified_at IS NOT NULL, 1, 0) as is_verified')
                 )
-                ->orderByDesc('u.created_at')
                 ->paginate($pageSize);
 
             return response()->json([
@@ -1995,6 +2017,57 @@ class AdminController extends Controller
         $token = $request->cookie('admin_token');
         if (! $token) return null;
         return DB::table('admin_users')->where('api_token', $token)->where('is_active', true)->first();
+    }
+
+    /**
+     * Constrain a query by login-activity bucket on the given last-login column.
+     *
+     * Buckets (relative to now): active ≤3d · warm 4–15d · inactive 16–45d ·
+     * dormant >45d · never (NULL). Unknown/empty values are a no-op so the
+     * caller's existing result set is unchanged.
+     */
+    private function applyActivityFilter($query, string $column, $activity): void
+    {
+        if (!in_array($activity, ['active', 'warm', 'inactive', 'dormant', 'never'], true)) {
+            return;
+        }
+
+        $now = now();
+        switch ($activity) {
+            case 'active':
+                $query->where($column, '>=', $now->copy()->subDays(3));
+                break;
+            case 'warm':
+                $query->where($column, '<', $now->copy()->subDays(3))
+                      ->where($column, '>=', $now->copy()->subDays(15));
+                break;
+            case 'inactive':
+                $query->where($column, '<', $now->copy()->subDays(15))
+                      ->where($column, '>=', $now->copy()->subDays(45));
+                break;
+            case 'dormant':
+                $query->where($column, '<', $now->copy()->subDays(45));
+                break;
+            case 'never':
+                $query->whereNull($column);
+                break;
+        }
+    }
+
+    /**
+     * Apply the admin-list sort. `recent_login` / `oldest_login` order by the
+     * last-login column with never-logged-in rows (NULL) pushed to the end in
+     * both directions; any other value falls back to the default column DESC.
+     */
+    private function applyLastLoginSort($query, string $column, $sort, string $defaultColumn): void
+    {
+        if ($sort === 'recent_login') {
+            $query->orderByRaw("$column IS NULL ASC")->orderByDesc($column);
+        } elseif ($sort === 'oldest_login') {
+            $query->orderByRaw("$column IS NULL ASC")->orderBy($column, 'asc');
+        } else {
+            $query->orderByDesc($defaultColumn);
+        }
     }
 
     /**

@@ -336,3 +336,32 @@ List cards need ~8 fields but the query pulls every column including large TEXT 
 Bottom line: the slowness is real and structural, not a feeling. The dominant causes are missing indexes on jobs.firm_id / firm_profiles.verification_status+is_premium+created_at and the per-row current_openings subquery. Findings #1–#3 alone likely account for most of the regression, and all three are low-risk to fix.
 
 Want me to execute the fix: add the indexes to db_changes.txt (with rollback) and refactor current_openings from a correlated subquery into a single grouped JOIN in getCompanies?
+
+
+================================================================================
+TECHNICAL DEBT / KNOWN ISSUES (correctness — track for later)
+================================================================================
+
+TD-1  exposure_type filter uses whereIn() against JSON-array text  [2026-06-29]
+------------------------------------------------------------------------------
+Location: app/Http/Controllers/API/FirmController.php  (getCompanies, ~line 760)
+Code:     $query->whereIn('firm_profiles.exposure_type', $request->exposure_type)
+
+Problem:  firm_profiles.exposure_type stores a JSON ARRAY as a text string, e.g.
+          ["overall","domain wise"]. whereIn() compares the ENTIRE column value
+          against each scalar in the array, so it only matches a firm whose stored
+          value is EXACTLY one element with no other entries / JSON punctuation —
+          i.e. for any multi-value firm it matches nothing. The filter is silently
+          broken (returns too few / no results when an exposure_type filter is set).
+
+          Note the nearby department filters DO work because they use
+          LIKE '%"overall"%' / LIKE '%$department%' against the same text column.
+
+Correct fix (NOT in this task, by decision):
+  - Use whereJsonContains('firm_profiles.exposure_type', $value) per requested
+    value (OR-combined), or raw JSON_CONTAINS(...).
+  - Ideally migrate firm_profiles.exposure_type from TEXT to native JSON first
+    (student_profiles.exposure_type is already JSON) so the column is validated and
+    JSON functions are first-class. (2026-06-29 migration only widened 500->TEXT.)
+
+Status:   Documented only. Inline // TECH DEBT marker added at the call site.

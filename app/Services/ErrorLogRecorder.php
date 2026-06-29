@@ -17,17 +17,19 @@ use Throwable;
  * COMPLETE exception (message + stack trace) is still written to
  * storage/logs/laravel.log by the framework's default reporter.
  *
- * Two columns are stored per row:
- *   - `error_summary`: the RAW exception message (e.g. "Base table or view not
- *     found ... Table 'x' doesn't exist"), so an admin can see what ACTUALLY
- *     happened from the dashboard without opening laravel.log. Capped at 1000
- *     chars. Passwords/tokens/secrets are still redacted; SQL is kept.
- *   - `message`: a SHORT, sanitized one-liner (SQL tail stripped, secrets
- *     redacted) — safe to surface anywhere.
+ * Columns stored per row:
+ *   - `message` / `error_summary`: the sanitized exception message — the `(SQL:
+ *     ...)` / `(Connection: ...)` tail is stripped and passwords/tokens/secrets
+ *     are redacted, so NO SQL query, bindings or credentials are persisted (e.g.
+ *     "SQLSTATE[22001]: Data too long for column 'exposure_type'"). Capped at
+ *     1000 chars to match the VARCHAR(1000) column.
+ *   - `stack`: the full (secret-redacted) stack trace, capped to the TEXT column
+ *     — kept because it is useful for debugging.
  *
- * This recorder NEVER stores stack traces, SQL bindings, passwords, tokens,
- * secrets or session identifiers, and never throws (a logging failure must not
- * break the request it is reporting on).
+ * The COMPLETE error (incl. the SQL) still goes to storage/logs/laravel.log via
+ * the framework's default reporter. This recorder never stores SQL bindings,
+ * passwords, tokens, secrets or session identifiers in message/error_summary,
+ * and never throws (a logging failure must not break the host request).
  */
 class ErrorLogRecorder
 {
@@ -45,8 +47,9 @@ class ErrorLogRecorder
     /** Re-entrancy guard: never record a row while we are already recording one. */
     private static bool $writing = false;
 
-    /** Max chars stored for the raw message / stack trace (TEXT column, secret-redacted). */
-    private const RAW_MAX   = 10000;
+    /** Max chars stored for message / error_summary — matches the VARCHAR(1000) column. */
+    private const SUMMARY_MAX = 1000;
+    /** Max chars stored for the stack trace (TEXT column, secret-redacted). */
     private const STACK_MAX = 15000;
 
     public static function record(Throwable $e, ?Request $request = null): void
@@ -59,7 +62,6 @@ class ErrorLogRecorder
 
         self::writeRow(
             self::safeMessage($e),
-            self::rawMessage($e),
             self::statusFor($e),
             $request,
             self::stackTrace($e),
@@ -91,21 +93,18 @@ class ErrorLogRecorder
             return;
         }
 
-        // Raw = original log line with secrets redacted but SQL kept.
         // No exception object here, so there is no stack trace to store.
-        $raw = self::redactSecrets($message);
-
-        self::writeRow($safe, $raw, 500);
+        self::writeRow($safe, 500);
     }
 
     /**
      * Insert one row into `error_logs`. NON-THROWING and re-entrant-safe.
      *
-     * @param string      $safe  Short, sanitized one-liner → `message`.
-     * @param string      $raw   Full raw (secret-redacted) error → `error_summary`.
-     * @param string|null $stack Full (secret-redacted) stack trace → `stack`.
+     * @param string      $summary Sanitized one-liner (SQL/Connection tail stripped,
+     *                             secrets redacted) → both `message` and `error_summary`.
+     * @param string|null $stack   Full (secret-redacted) stack trace → `stack`.
      */
-    private static function writeRow(string $safe, string $raw, int $status, ?Request $request = null, ?string $stack = null): void
+    private static function writeRow(string $summary, int $status, ?Request $request = null, ?string $stack = null): void
     {
         if (self::$writing) {
             return;
@@ -118,11 +117,14 @@ class ErrorLogRecorder
 
             [$userId, $userRole] = self::resolveUser($request);
 
+            // Capped to the VARCHAR(1000) column — never stores SQL/bindings (those
+            // were stripped by sanitize()); full detail stays in laravel.log.
+            $summary = mb_substr($summary, 0, self::SUMMARY_MAX);
+
             DB::table('error_logs')->insert([
                 'source'        => 'api',
-                'message'       => mb_substr($safe, 0, 1000),
-                // FULL raw error — what actually happened (SQL kept, secrets redacted).
-                'error_summary' => mb_substr($raw !== '' ? $raw : $safe, 0, self::RAW_MAX),
+                'message'       => $summary,
+                'error_summary' => $summary,
                 'status'        => $status,
                 'url'           => $url ? '/' . ltrim($url, '/') : null,
                 // Full stack trace, secret-redacted and capped (TEXT column).
@@ -142,24 +144,12 @@ class ErrorLogRecorder
     }
 
     /**
-     * Produce a safe, single-line message free of SQL/bindings and secrets.
+     * Produce a safe, single-line message free of SQL/bindings and secrets —
+     * stored in both `message` and `error_summary`.
      */
     private static function safeMessage(Throwable $e): string
     {
         $msg = self::sanitize($e->getMessage());
-
-        return $msg !== '' ? $msg : class_basename($e);
-    }
-
-    /**
-     * Produce the RAW exception message for `error_summary` — SQL is KEPT (that
-     * is the point: admins need to see "Table 'x' doesn't exist" etc.), but
-     * passwords/tokens/secrets are still redacted so credentials never land in
-     * the DB. Single-lined. Falls back to the class name when empty.
-     */
-    private static function rawMessage(Throwable $e): string
-    {
-        $msg = self::redactSecrets($e->getMessage());
 
         return $msg !== '' ? $msg : class_basename($e);
     }

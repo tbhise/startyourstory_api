@@ -122,6 +122,13 @@ class AuthController extends Controller
                 'logged_in_at' => $now,
                 'created_at'   => $now,
             ]);
+
+            // Denormalized "Last Login" for the admin panel (Students/Firms lists).
+            // login_history above remains the audit trail; this is the cheap per-row
+            // read. Stamped on successful login ONLY — never on profile edits.
+            DB::table('users')
+                ->where('id', $user->id)
+                ->update(['last_login_at' => $now]);
             // ── End session tracking ──────────────────────────────────────
 
             $verificationStatus = null;

@@ -12,6 +12,8 @@ use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 
 class FirmController extends Controller
 {
@@ -1193,6 +1195,12 @@ class FirmController extends Controller
         */
             $job = DB::table('jobs')->where('id', $jobId)->first();
             DB::commit();
+
+            // Activity log (async, non-blocking — never affects job creation).
+            ActivityTracker::log(ActivityTracker::FIRM, $userId, ActivityType::JOB_POSTED, [
+                'job_id'    => $jobId,
+                'job_title' => $request->title,
+            ]);
             /*
         |--------------------------------------------------------------------------
         | Response

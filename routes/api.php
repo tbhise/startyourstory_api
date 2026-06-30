@@ -220,9 +220,13 @@ Route::post('/admin/system-settings/{key}',  [\App\Http\Controllers\API\AdminSys
 Route::post('/admin/payment-settings/qr',    [PaymentSettingsController::class, 'uploadQr']);
 Route::delete('/admin/payment-settings/qr',  [PaymentSettingsController::class, 'deleteQr']);
 
-// Admin — Activity Logs (audit trail). READ-ONLY: no store/update/delete by design.
+// Admin — Activity Logs (admin audit trail). READ-ONLY: no store/update/delete by design.
 Route::get('/admin/activity-logs',          [\App\Http\Controllers\API\AdminActivityLogController::class, 'index']);
 Route::get('/admin/activity-logs/filters',  [\App\Http\Controllers\API\AdminActivityLogController::class, 'filters']);
+
+// Admin — Activity Tracker (firm/student business actions). READ-ONLY by design.
+Route::get('/admin/activity-tracker/stats', [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'stats']);
+Route::get('/admin/activity-tracker',       [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'index']);
 
 // Admin — resume template management (CRUD; drives the Resume PDF rendering)
 Route::get('/admin/resume-templates',                    [\App\Http\Controllers\API\ResumeTemplateController::class, 'index']);

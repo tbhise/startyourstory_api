@@ -3540,3 +3540,164 @@ user_id AND user_type — a student can never reach a firm ticket and vice-versa
 - `index()` — now filters by `user_id` AND `user_type` (a user only ever sees their own type's tickets).
 - `show()` / `addMessage()` — ownership check is now `user_id === auth id AND user_type === auth type` (403 otherwise).
 - Auth itself unchanged: all routes already require ApiAuthMiddleware (unauthenticated → 401).
+
+## 2026-06-30 — Lightweight activity tracking (firm/student business actions)
+
+Async, fail-safe activity log for important firm/student business actions, written
+off the request path via a queue job so logging can never slow down or break the
+host operation. Single table, centralized helper, no admin UI yet (backend only).
+
+### Added: `database/migrations/2026_06_30_000003_create_activity_logs_table.php`
+- One table `activity_logs`: `id`, `actor_type` ENUM('firm','student'), `actor_id`
+  (= acting account's `users.id`), `action_type` VARCHAR(64), `meta` JSON NULL,
+  `created_at`. Indexes: `(actor_type,actor_id)`, `action_type`, `created_at`.
+  Append-only; no FKs (matches the rest of the schema). NOTE: applied directly
+  (Schema::create) + recorded in `migrations` because this DB was seeded from a
+  SQL dump and `artisan migrate` would otherwise try to recreate dump-only tables.
+
+### Added: `app/Enums/ActivityType.php`
+- Backed string enum — the canonical, ONLY tracked actions: `JOB_POSTED`,
+  `INTERVIEW_INVITE_SENT`, `INTERVIEW_SCHEDULED`, `CONTENT_CREATION_POSTED`,
+  `SUBSCRIPTION_PURCHASED` (firm); `INTERVIEW_ACCEPTED`, `CONTENT_SUBMITTED`,
+  `WALLET_RECHARGED` (student). Extend freely — no schema change needed.
+
+### Added: `app/Jobs/LogActivityJob.php`
+- Queued (`ShouldQueue`) single-row writer. `tries=3`, backoff [30,60,120].
+  `handle()` wraps the INSERT in try/catch and swallows errors (logs a warning);
+  `failed()` is a final backstop. A lost activity row can never surface to a user.
+
+### Added: `app/Services/ActivityTracker.php`
+- Central reusable entry point: `ActivityTracker::log($actorType, $actorId, $actionType, $meta=[])`.
+  Dispatches `LogActivityJob` inside try/catch (non-blocking — a queue/dispatch
+  failure never reaches the caller); skips null/≤0 actor ids. `::FIRM` / `::STUDENT`
+  constants + `::actorFromRole()` helper. Always called AFTER the host op succeeds
+  (after `DB::commit`).
+
+### Modified: controllers — one non-blocking `ActivityTracker::log(...)` per success path
+- `FirmController@createJob` → `JOB_POSTED` (after commit) `{job_id, job_title}`.
+- `InterviewInviteController@invite` → `INTERVIEW_INVITE_SENT` `{invite_id, student_id}`.
+- `InterviewInviteController@schedule` → `INTERVIEW_SCHEDULED` `{invite_id, student_id, interview_date}`.
+- `InterviewInviteController@respond` (accepted only) → `INTERVIEW_ACCEPTED` `{invite_id, firm_id}`.
+- `JobsController@scheduleInterview` → `INTERVIEW_SCHEDULED` `{application_id, job_id, student_id, interview_date}`
+  (job-application interview flow — both interview flows are instrumented so the feed is complete).
+- `JobsController@respondInterview` (accepted only) → `INTERVIEW_ACCEPTED` `{application_id, job_id}`.
+- `CreatorMarketplaceController@createProject` (published only) → `CONTENT_CREATION_POSTED` `{project_id, title}`.
+- `CreatorMarketplaceController@submitDeliverable` (after commit) → `CONTENT_SUBMITTED` `{engagement_id, submission_id, round}`.
+- `PhonePeFirmController@verify` + `@webhook` (on fresh activation) → `SUBSCRIPTION_PURCHASED` `{subscription_id, plan, amount}`.
+  Webhook resolves the firm's `user_id` from `firm_profiles` (no auth context in S2S).
+- `PhonePeWalletController@verify` + `@webhook` (only on a fresh credit) → `WALLET_RECHARGED` `{recharge_id, amount}`.
+  Existing idempotency guards ensure exactly one log per recharge across verify/webhook races.
+
+### Failure safety (verified)
+- `ActivityTracker::log` and `LogActivityJob::handle` are both fully non-throwing.
+  Tested: invalid enum (job INSERT fails) → swallowed, no exception; oversized payload
+  → caller returns normally + worker drains with 0 failed jobs; null/0 actor → skipped,
+  nothing queued; business return value preserved regardless of logging outcome.
+
+### Impact
+- Purely additive: 1 new table, 1 enum, 1 job, 1 service, 10 success-path call sites.
+  No existing table/route/auth flow changed; no behavior change to any host operation.
+  Logging is async (DB queue, table `queue_jobs`) and best-effort. Requires a running
+  queue worker (`php artisan queue:work`) to flush rows — already used by the app's
+  email/digest jobs.
+
+## 2026-06-30 — Activity Tracker: admin read-only viewer API
+
+Backend for the admin "Activity Tracker" page — lists/filters the firm/student
+`activity_logs` written by ActivityTracker (above). READ-ONLY: no store/update/delete.
+
+### Added: `app/Http/Controllers/API/AdminActivityTrackerController.php`
+- `index()` — GET `/admin/activity-tracker` — paginated (50/page), newest first.
+  Filters: `actor_type` (firm|student), `action_type`, `date_from`, `date_to`, `search`.
+  Left-joins `users` + `firm_profiles` off `activity_logs.actor_id` so each row carries a
+  resolved `actor_name` (firm → `firm_name`, student → user `name`, graceful fallback),
+  `actor_email`, and decoded `meta`. Search matches user name / firm name / email / action_type.
+- `stats()` — GET `/admin/activity-tracker/stats` — headline counts for the stat cards:
+  `total`, `firm`, `student`, `today` (single aggregate query).
+- Defense-in-depth admin check (`admin_token` → `admin_users`) mirroring AdminActivityLogController.
+
+### Modified: `routes/api.php`
+- Registered the two GET routes next to the existing `/admin/activity-logs` block
+  (stats route declared before the base route). Both auto-guarded by AdminAuthMiddleware
+  (all `/admin/*` paths). The existing admin audit-trail routes are untouched.
+
+### Testing (HTTP, via `artisan serve`)
+- No `admin_token` → **401**. With token: `stats` → `{total,firm,student,today}` correct;
+  list returns resolved `actor_name`/`actor_email` + decoded `meta`; `actor_type`,
+  `action_type`, `date_from`, and `search` filters each return the expected subset.
+- Test rows seeded then truncated; `php -l` clean.
+
+### Impact
+- Purely additive: 1 new controller, 2 new GET routes. No existing route/controller/auth
+  changed. New route path (`/admin/activity-tracker`) deliberately avoids the existing
+  `/admin/activity-logs` audit endpoint.
+
+## 2026-06-30 — Two new reminder flows: pending interview response + applicants awaiting review
+
+Adds the two missing reminder workflows identified in the scheduled-jobs audit, reusing
+the existing scheduler (`routes/console.php`), notification helper, and email service.
+Both are async (database queue), fully fail-isolated, and change no existing behavior.
+
+### New scheduled jobs (registered in `routes/console.php`)
+- `send-interview-response-reminders` — **hourly** — `Schedule::job(new SendInterviewResponseReminderJob())->withoutOverlapping()`.
+- `send-firm-applicant-reminders` — **daily @ 09:00** — `Schedule::job(new SendFirmApplicantReminderJob())->withoutOverlapping()`.
+
+### Added: `app/Jobs/SendInterviewResponseReminderJob.php` (Reminder Flow 1)
+- Reminds students with an interview invitation still awaiting accept/reject.
+- Source: `interview_invites` where `invite_status='pending' AND active_flag=1`, student not deleted.
+- Escalation off `invited_at`: **≥24h → R1, ≥72h → R2, ≥120h(5d) → R3 (final)**, then stop.
+- Persists progress in `interview_invites.response_reminders_sent` (0–3) + `last_response_reminder_at`,
+  computed from a "due count" so missed scheduler runs catch up and never double-send.
+- Channels: in-app (`NotificationHelper::create`) **and** email
+  (`EmailNotificationService::sendInterviewResponseReminder` → `DispatchMailJob`, queued + logged).
+- Per-invite try/catch; counter advanced only after a successful pass (failed iteration retries next run).
+- Elapsed time computed from raw timestamps (`strtotime`), not `Carbon::diffInHours`, because
+  Laravel 13 ships **Carbon 3** whose `diff*` is **signed** (a past date returns negative).
+
+### Added: `app/Jobs/SendFirmApplicantReminderJob.php` (Reminder Flow 2)
+- Reminds firms of applicants awaiting review on their **active** jobs.
+- "Awaiting review" = `applications.recruiter_status='Applied'` (the untouched default before the
+  firm shortlists/rejects/requests an interview) on `jobs.is_active=1`.
+- **Anti-spam:** per-job cooldown via `jobs.last_applicant_reminder_at` — a job recurs only if NULL
+  or older than **3 days**. One email + one in-app notification **per firm**, summarising all its
+  jobs needing review; included jobs are stamped only after a successful send.
+- Channels: in-app + email (`EmailNotificationService::sendFirmApplicantReminder` → `DispatchMailJob`).
+- Per-firm try/catch isolates failures.
+
+### Added: emails
+- `app/Mail/InterviewResponseReminderMail.php` + `resources/views/emails/interview/response-reminder.blade.php`.
+- `app/Mail/FirmApplicantReminderMail.php` + `resources/views/emails/firm/applicant-reminder.blade.php`.
+- Both implement `HasEmailPurpose`, sent via the existing `EmailNotificationService::queue()` primitive.
+
+### Modified
+- `app/Enums/EmailPurpose.php` — added `INTERVIEW_RESPONSE_REMINDER` (senderKey `interview`, recipient student)
+  and `FIRM_APPLICANT_REMINDER` (senderKey `support`, recipient firm).
+- `app/Services/Notifications/EmailNotificationService.php` — added `sendInterviewResponseReminder()`
+  and `sendFirmApplicantReminder()` (reuse the shared `queue()` primitive → email_logs + DispatchMailJob).
+- `routes/console.php` — 2 new imports + 2 new `Schedule::job(...)` registrations.
+
+### DB changes (additive; no data migration)
+- `database/migrations/2026_06_30_000004_add_response_reminder_tracking_to_interview_invites.php`
+  — `interview_invites`: `response_reminders_sent` TINYINT UNSIGNED default 0, `last_response_reminder_at` TIMESTAMP NULL.
+- `database/migrations/2026_06_30_000005_add_applicant_reminder_tracking_to_jobs.php`
+  — `jobs`: `last_applicant_reminder_at` TIMESTAMP NULL.
+- Applied directly (Schema::table) + recorded in `migrations` — `artisan migrate` is unusable on this
+  dump-seeded DB (it would try to recreate dump-only tables). Also appended to `db_changes.txt`.
+
+### Failure safety (verified)
+- Neither job throws to its caller; `NotificationHelper::create` is internally non-throwing; email send
+  runs in `DispatchMailJob` (3 retries, marks `email_logs` sent/failed). A reminder failure never affects
+  any business operation, and un-advanced tracking columns mean the next run retries cleanly.
+
+### Testing (tinker, seeded then fully cleaned up)
+- **Flow 1:** 25h→sent=1, re-run→no double-send, 73h→sent=2, 121h→sent=3 (final), max→stop, accepted invite→skipped;
+  in-app + email created each stage with correct copy.
+- **Flow 2:** firm with 2 active jobs (2+1 pending, 1 Shortlisted excluded) → one summary "3 applicants across
+  2 job postings", email + notification; immediate re-run → cooldown blocks (no spam); jobs stamped.
+- **Failure:** notification huge-input → returns false, no throw; simulated mail outage → job doesn't throw,
+  counter not advanced; next run recovers and sends. `php -l` clean on all files; `schedule:list` shows both
+  new tasks; `failed_jobs`=0.
+
+### Impact
+- Purely additive: 2 jobs, 2 mailables + 2 blades, 2 service methods, 2 enum cases, 3 columns across 2 tables,
+  2 scheduler entries. No existing table/route/controller/auth/job altered; existing reminders + digest untouched.

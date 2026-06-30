@@ -4,6 +4,8 @@ use App\Jobs\AutoApproveEngagementsJob;
 use App\Jobs\SendHourlyApplicationDigestJob;
 use App\Jobs\SendInterviewReminder1HourJob;
 use App\Jobs\SendInterviewReminder24HoursJob;
+use App\Jobs\SendInterviewResponseReminderJob;
+use App\Jobs\SendFirmApplicantReminderJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -240,3 +242,31 @@ Schedule::call(function () {
             'updated_at'       => now(),
         ]);
 })->dailyAt('03:00')->name('finalize-student-account-deletions')->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Remind students of a PENDING interview-invite response
+|--------------------------------------------------------------------------
+| Runs hourly. Sends escalating reminders (24h / 72h / 5 days after the invite)
+| to students who have an active, still-pending interview invitation. Both
+| in-app + email. Catch-up safe and never double-sends via
+| interview_invites.response_reminders_sent. See SendInterviewResponseReminderJob.
+*/
+Schedule::job(new SendInterviewResponseReminderJob())
+    ->hourly()
+    ->name('send-interview-response-reminders')
+    ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Remind firms of applicants AWAITING REVIEW on active jobs
+|--------------------------------------------------------------------------
+| Runs daily at 09:00. Sends one in-app + email reminder per firm summarising
+| active jobs that have applications still in 'Applied' (un-reviewed) status.
+| Anti-spam: a job won't recur within 3 days (jobs.last_applicant_reminder_at).
+| See SendFirmApplicantReminderJob.
+*/
+Schedule::job(new SendFirmApplicantReminderJob())
+    ->dailyAt('09:00')
+    ->name('send-firm-applicant-reminders')
+    ->withoutOverlapping();

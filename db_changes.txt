@@ -2939,3 +2939,45 @@ CREATE TABLE `support_ticket_messages` (
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `support_ticket_messages`;
 -- DROP TABLE IF EXISTS `support_tickets`;
+
+-- =====================================================================
+-- 2026-06-30 — Lightweight activity tracking (firm/student business actions)
+-- Migration: 2026_06_30_000003_create_activity_logs_table.php
+-- Single, append-only table. Rows are written async via LogActivityJob (queue).
+-- actor_id = acting account's users.id; actor_type mirrors users.role.
+-- =====================================================================
+
+CREATE TABLE `activity_logs` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `actor_type`  ENUM('firm','student') NOT NULL,
+  `actor_id`    BIGINT UNSIGNED NOT NULL,
+  `action_type` VARCHAR(64) NOT NULL,
+  `meta`        JSON NULL,
+  `created_at`  TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_al_actor` (`actor_type`,`actor_id`),
+  KEY `idx_al_action` (`action_type`),
+  KEY `idx_al_created` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `activity_logs`;
+
+-- =====================================================================
+-- 2026-06-30 — Reminder flows: pending interview response + applicants awaiting review
+-- Migrations: 2026_06_30_000004 (interview_invites), 2026_06_30_000005 (jobs)
+-- Additive tracking columns only. No data migration.
+-- =====================================================================
+
+-- Flow 1: student pending interview-invite response reminders (escalating 24h/72h/5d).
+ALTER TABLE `interview_invites`
+  ADD COLUMN `response_reminders_sent`   TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `responded_at`,
+  ADD COLUMN `last_response_reminder_at` TIMESTAMP NULL AFTER `response_reminders_sent`;
+
+-- Flow 2: firm "applicants awaiting review" daily reminder throttle (3-day per-job cooldown).
+ALTER TABLE `jobs`
+  ADD COLUMN `last_applicant_reminder_at` TIMESTAMP NULL AFTER `updated_at`;
+
+-- ROLLBACK:
+-- ALTER TABLE `interview_invites` DROP COLUMN `response_reminders_sent`, DROP COLUMN `last_response_reminder_at`;
+-- ALTER TABLE `jobs` DROP COLUMN `last_applicant_reminder_at`;

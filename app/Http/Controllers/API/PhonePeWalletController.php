@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\AuthHelper;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 
 class PhonePeWalletController extends Controller
 {
@@ -200,6 +202,14 @@ class PhonePeWalletController extends Controller
                 return 'failed';
             });
 
+            if ($outcome === 'credited') {
+                // Activity log (async, non-blocking) — only a fresh credit is tracked.
+                ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::WALLET_RECHARGED, [
+                    'recharge_id' => (int) $recharge->id,
+                    'amount'      => (float) $recharge->amount,
+                ]);
+            }
+
             if ($outcome === 'credited' || $outcome === 'already') {
                 $wallet = WalletHelper::getOrCreate($user->id);
                 return response()->json([
@@ -310,6 +320,14 @@ class PhonePeWalletController extends Controller
                     ]);
                 return false;
             });
+
+            // Activity log (async, non-blocking) — only a fresh credit is tracked.
+            if ($credited) {
+                ActivityTracker::log(ActivityTracker::STUDENT, $recharge->user_id, ActivityType::WALLET_RECHARGED, [
+                    'recharge_id' => (int) $recharge->id,
+                    'amount'      => (float) $recharge->amount,
+                ]);
+            }
 
             return response()->json(['message' => 'OK'], 200);
         } catch (\Exception $e) {

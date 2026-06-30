@@ -7,6 +7,8 @@ use App\Helpers\AuthHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Services\Notifications\EmailNotificationService;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -156,6 +158,12 @@ class InterviewInviteController extends Controller
                 ]);
             }
 
+            // Activity log (async, non-blocking).
+            ActivityTracker::log(ActivityTracker::FIRM, $firm->user_id, ActivityType::INTERVIEW_INVITE_SENT, [
+                'invite_id'  => $inviteId,
+                'student_id' => (int) $studentId,
+            ]);
+
             return response()->json([
                 'status'  => true,
                 'message' => 'Interview invitation sent',
@@ -263,6 +271,14 @@ class InterviewInviteController extends Controller
                 }
             }
 
+            // Activity log (async, non-blocking) — only the accept is a tracked action.
+            if ($newStatus === 'accepted') {
+                ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::INTERVIEW_ACCEPTED, [
+                    'invite_id' => (int) $inviteId,
+                    'firm_id'   => (int) $invite->firm_id,
+                ]);
+            }
+
             return response()->json([
                 'status'  => true,
                 'message' => $newStatus === 'accepted' ? 'Invitation accepted' : 'Invitation declined',
@@ -330,6 +346,13 @@ class InterviewInviteController extends Controller
                 'message'             => $firm->firm_name . ' scheduled your interview. Please confirm your availability.',
                 'action_status'       => 'scheduled',
                 'created_at'          => now(),
+            ]);
+
+            // Activity log (async, non-blocking).
+            ActivityTracker::log(ActivityTracker::FIRM, $firm->user_id, ActivityType::INTERVIEW_SCHEDULED, [
+                'invite_id'      => (int) $inviteId,
+                'student_id'     => (int) $invite->student_id,
+                'interview_date' => $request->interview_date,
             ]);
 
             return response()->json([

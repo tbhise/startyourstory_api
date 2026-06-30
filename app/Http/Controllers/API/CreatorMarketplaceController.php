@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Validator;
 use App\Helpers\SubscriptionHelper;
 use App\Models\UserPayoutDetail;
 use App\Services\PayoutDetailsService;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 use Illuminate\Support\Str;
 
 class CreatorMarketplaceController extends Controller
@@ -147,6 +149,14 @@ class CreatorMarketplaceController extends Controller
                 'created_at'      => now(),
                 'updated_at'      => now(),
             ]);
+
+            // Activity log (async, non-blocking) — only a published project is "posted".
+            if ($status === 'published') {
+                ActivityTracker::log(ActivityTracker::FIRM, $user->id, ActivityType::CONTENT_CREATION_POSTED, [
+                    'project_id' => (int) $id,
+                    'title'      => $request->title,
+                ]);
+            }
 
             return response()->json([
                 'status'  => true,
@@ -1794,6 +1804,14 @@ class CreatorMarketplaceController extends Controller
             }
 
             DB::commit();
+
+            // Activity log (async, non-blocking — never affects deliverable submission).
+            ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::CONTENT_SUBMITTED, [
+                'engagement_id' => (int) $id,
+                'submission_id' => (int) $submissionId,
+                'round'         => (int) $round,
+            ]);
+
             return response()->json(['status' => true, 'message' => 'Work submitted successfully.']);
         } catch (\Exception $e) {
             DB::rollBack();

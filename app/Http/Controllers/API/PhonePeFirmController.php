@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 
 class PhonePeFirmController extends Controller
 {
@@ -209,6 +211,14 @@ class PhonePeFirmController extends Controller
                 ]);
 
                 DB::commit();
+
+                // Activity log (async, non-blocking — never affects subscription activation).
+                ActivityTracker::log(ActivityTracker::FIRM, $user->id, ActivityType::SUBSCRIPTION_PURCHASED, [
+                    'subscription_id' => (int) $subscription->id,
+                    'plan'            => $subscription->plan,
+                    'amount'          => (float) $subscription->amount,
+                ]);
+
                 return response()->json(['status' => true, 'message' => 'Payment verified successfully']);
             }
 
@@ -308,6 +318,15 @@ class PhonePeFirmController extends Controller
                 ReferralHelper::onFirmPremiumActivated((int) $subscription->firm_id);
 
                 DB::commit();
+
+                // Activity log (async, non-blocking). No auth context in a S2S
+                // webhook, so resolve the firm's account id from firm_profiles.
+                $firmUserId = DB::table('firm_profiles')->where('id', $subscription->firm_id)->value('user_id');
+                ActivityTracker::log(ActivityTracker::FIRM, $firmUserId, ActivityType::SUBSCRIPTION_PURCHASED, [
+                    'subscription_id' => (int) $subscription->id,
+                    'plan'            => $subscription->plan,
+                    'amount'          => (float) $subscription->amount,
+                ]);
             } else {
                 DB::table('firm_subscriptions')
                     ->where('id', $subscription->id)

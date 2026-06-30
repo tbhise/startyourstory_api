@@ -18,6 +18,8 @@ use App\Mail\InterviewInviteResponseMail;
 use App\Mail\InterviewRejectedMail;
 use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
+use App\Mail\InterviewResponseReminderMail;
+use App\Mail\FirmApplicantReminderMail;
 use App\Mail\ReferralPayoutRequestMail;
 use App\Mail\SupportTicketClosedMail;
 use App\Models\EmailLog;
@@ -384,6 +386,63 @@ class EmailNotificationService
             $mailable,
             "{$count} {$noun} Received — Start Your Story",
             EmailPurpose::APPLICATION_DIGEST
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Reminders — pending interview-invite response (student) + applicants
+    // awaiting review (firm). Called by the scheduled reminder jobs.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Remind a student that a firm is still waiting for their interview-invite
+     * response. $isFinal marks the last (5-day) reminder.
+     */
+    public function sendInterviewResponseReminder(
+        string $studentEmail,
+        string $studentName,
+        string $firmName,
+        bool   $isFinal = false
+    ): int {
+        $base       = config('app.frontend_url', config('app.url', 'https://startyourstory.in'));
+        $respondUrl = "{$base}/recruiter-actions";
+
+        $mailable = new InterviewResponseReminderMail($studentName, $firmName, $respondUrl, $isFinal);
+
+        return $this->queue(
+            $studentEmail,
+            'student',
+            $mailable,
+            'Interview Response Pending',
+            EmailPurpose::INTERVIEW_RESPONSE_REMINDER
+        );
+    }
+
+    /**
+     * Remind a firm that one or more of its active jobs have applicants awaiting
+     * review.
+     *
+     * @param array<int,array{title:string,count:int}> $jobs
+     */
+    public function sendFirmApplicantReminder(
+        string $firmEmail,
+        string $firmName,
+        array  $jobs,
+        int    $totalCount
+    ): int {
+        $base    = config('app.frontend_url', 'https://startyourstory.in');
+        $viewUrl = "{$base}/firm-jobs";
+
+        $mailable = new FirmApplicantReminderMail($firmName, $jobs, $totalCount, $viewUrl);
+
+        $noun = $totalCount === 1 ? 'applicant is' : 'applicants are';
+
+        return $this->queue(
+            $firmEmail,
+            'firm',
+            $mailable,
+            "{$totalCount} {$noun} waiting for your review — Start Your Story",
+            EmailPurpose::FIRM_APPLICANT_REMINDER
         );
     }
 

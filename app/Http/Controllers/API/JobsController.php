@@ -14,6 +14,8 @@ use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
 use App\Helpers\SysCoinHelper;
 use App\Exceptions\InsufficientFundsException;
+use App\Services\ActivityTracker;
+use App\Enums\ActivityType;
 use Illuminate\Database\QueryException;
 
 
@@ -1502,6 +1504,15 @@ class JobsController extends Controller
         |--------------------------------------------------------------------------
         */
             DB::commit();
+
+            // Activity log (async, non-blocking — never affects interview scheduling).
+            ActivityTracker::log(ActivityTracker::FIRM, $user->id, ActivityType::INTERVIEW_SCHEDULED, [
+                'application_id' => (int) $application->id,
+                'job_id'         => (int) $application->job_id,
+                'student_id'     => (int) $application->student_id,
+                'interview_date' => $request->interview_date,
+            ]);
+
             return response()->json([
                 'status' => true,
                 'message' =>
@@ -2016,6 +2027,15 @@ class JobsController extends Controller
         |--------------------------------------------------------------------------
         */
             DB::commit();
+
+            // Activity log (async, non-blocking) — only the accept is a tracked action.
+            if ($request->response === 'Accepted') {
+                ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::INTERVIEW_ACCEPTED, [
+                    'application_id' => (int) $application->id,
+                    'job_id'         => (int) $application->job_id,
+                ]);
+            }
+
             return response()->json([
                 'status' => true,
                 'message' =>

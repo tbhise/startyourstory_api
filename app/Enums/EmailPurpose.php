@@ -27,6 +27,8 @@ enum EmailPurpose: string
     case REENGAGEMENT          = 'reengagement';
     case REFERRAL_PAYOUT_REQUEST = 'referral_payout_request';
     case SUPPORT_TICKET_CLOSED = 'support_ticket_closed';
+    case INTERVIEW_RESPONSE_REMINDER = 'interview_response_reminder';
+    case FIRM_APPLICANT_REMINDER     = 'firm_applicant_reminder';
 
     public function senderKey(): string
     {
@@ -54,6 +56,8 @@ enum EmailPurpose: string
             self::REENGAGEMENT           => 'marketing',
             self::REFERRAL_PAYOUT_REQUEST => 'support',
             self::SUPPORT_TICKET_CLOSED  => 'support',
+            self::INTERVIEW_RESPONSE_REMINDER => 'interview',
+            self::FIRM_APPLICANT_REMINDER     => 'support',
         };
     }
 
@@ -66,7 +70,8 @@ enum EmailPurpose: string
             self::APPLICATION_DIGEST,
             self::FIRM_APPROVED,
             self::FIRM_REJECTED,
-            self::CREATOR_ACCEPTED       => 'firm',
+            self::CREATOR_ACCEPTED,
+            self::FIRM_APPLICANT_REMINDER => 'firm',
             self::BILLING,
             self::MARKETING              => 'user',
             default                      => 'student',

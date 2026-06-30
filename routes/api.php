@@ -39,6 +39,8 @@ use App\Http\Controllers\API\SessionController;
 use App\Http\Controllers\API\FreeContentController;
 use App\Http\Controllers\API\AdminBlogController;
 use App\Http\Controllers\API\BlogController;
+use App\Http\Controllers\API\SupportTicketController;
+use App\Http\Controllers\API\AdminSupportTicketController;
 use App\Http\Controllers\API\PhonePeWalletController;
 use App\Http\Controllers\API\SysCoinController;
 use App\Http\Controllers\API\AdminReferralController;
@@ -394,6 +396,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // Bid detail + earnings (creator)
     Route::get('/creator-marketplace/bids/{bidId}/details',               [CreatorMarketplaceController::class, 'getBidDetail']);
     Route::get('/creator-marketplace/my-earnings',                        [CreatorMarketplaceController::class, 'getMyEarnings']);
+
+    // Support tickets (students & firms) — ownership enforced in the controller.
+    Route::get('/support-tickets',                  [SupportTicketController::class, 'index']);
+    Route::post('/support-tickets',                 [SupportTicketController::class, 'create']);
+    Route::get('/support-tickets/{id}',             [SupportTicketController::class, 'show']);
+    Route::post('/support-tickets/{id}/messages',   [SupportTicketController::class, 'addMessage']);
 });
 
 // Firm-verified — project management + payments
@@ -507,4 +515,13 @@ Route::prefix('admin/blog')->group(function () {
     Route::get('/topics/{id}',             [AdminBlogController::class, 'getTopic']);
     Route::post('/topics/{id}',            [AdminBlogController::class, 'updateTopic']);
     Route::delete('/topics/{id}',          [AdminBlogController::class, 'deleteTopic']);
+});
+
+// Admin — Support tickets (auto-guarded by AdminAuthMiddleware on all /admin/* paths).
+Route::prefix('admin/support-tickets')->group(function () {
+    Route::get('/',                  [AdminSupportTicketController::class, 'index']);
+    Route::get('/{id}',              [AdminSupportTicketController::class, 'show']);
+    Route::post('/{id}/assign',      [AdminSupportTicketController::class, 'assign']);
+    Route::post('/{id}/status',      [AdminSupportTicketController::class, 'updateStatus']);
+    Route::post('/{id}/messages',    [AdminSupportTicketController::class, 'addMessage']);
 });

@@ -19,6 +19,7 @@ use App\Mail\InterviewRejectedMail;
 use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
 use App\Mail\ReferralPayoutRequestMail;
+use App\Mail\SupportTicketClosedMail;
 use App\Models\EmailLog;
 use App\Models\User;
 use Illuminate\Mail\Mailable;
@@ -408,6 +409,28 @@ class EmailNotificationService
             $mailable,
             'Action needed: add your payout details — Start Your Story',
             EmailPurpose::REFERRAL_PAYOUT_REQUEST
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Support tickets — sent ONLY when a ticket is closed (with resolution note)
+    // -------------------------------------------------------------------------
+
+    public function sendSupportTicketClosed(
+        string $email,
+        string $userName,
+        string $ticketNo,
+        string $ticketCategory,
+        string $resolutionNote
+    ): int {
+        $mailable = new SupportTicketClosedMail($userName, $ticketNo, $ticketCategory, $resolutionNote);
+
+        return $this->queue(
+            $email,
+            'user',
+            $mailable,
+            "Your Support Ticket {$ticketNo} Has Been Resolved — Start Your Story",
+            EmailPurpose::SUPPORT_TICKET_CLOSED
         );
     }
 }

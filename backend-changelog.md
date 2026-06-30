@@ -3480,3 +3480,63 @@ badges) — the issues that dogged mPDF are gone.
   this), so no `composer require` is needed to roll back. The `premium_resume` `@media
   print` block is harmless under mPDF (mPDF ignores `@media print`) and can stay.
 - Optional cleanup once Browsershot is confirmed in production: `composer remove mpdf/mpdf`.
+
+## 2026-06-30 — Support Ticket system (students, firms & admin)
+
+New help-desk module. Students and firms can raise tickets, attach files, and chat
+with the support team in a threaded conversation; admins triage from the admin panel
+(stats, filters, assign-to-me, status changes, threaded replies, close-with-resolution).
+
+### Added: Database (applied via `php artisan migrate --path=...`)
+- `database/migrations/2026_06_30_000001_create_support_tickets_table.php` — `support_tickets`
+  (ticket_no, user_id, user_type[student|firm], ticket_category, issue_brief, attachments JSON,
+  status[submitted|in_process|closed], assigned_to_admin_id, resolution_note, closed_at, timestamps).
+  Indexes: (user_id,user_type,created_at), status, assigned_to_admin_id, ticket_category; unique ticket_no.
+- `database/migrations/2026_06_30_000002_create_support_ticket_messages_table.php` — `support_ticket_messages`
+  (ticket_id, sender_type[student|firm|admin|system], sender_id, message, attachment_path, created_at).
+  Index: (ticket_id, created_at).
+- `db_changes.txt` — appended FORWARD/ROLLBACK SQL for both tables.
+
+### Added: `app/Helpers/SupportTicketHelper.php`
+- Category whitelist, status labels, `ticketNo()` (SYS-TKT-000001), `fileUrl()`, `decodeAttachments()`.
+
+### Added: `app/Http/Controllers/API/SupportTicketController.php` (user-facing)
+- `index()`  — GET /support-tickets — current user's tickets (paginated, newest first).
+- `create()` — POST /support-tickets — validate + insert (status=submitted), generate ticket_no,
+  store up to 3 attachments (jpg/jpeg/png/pdf/txt, ≤5MB), seed thread with opening message,
+  notify user (in-app) + admin (in-app + FCM).
+- `show()` — GET /support-tickets/{id} — ticket + thread (ownership enforced; 403 otherwise).
+- `addMessage()` — POST /support-tickets/{id}/messages — user reply + optional attachment (blocked when closed).
+
+### Added: `app/Http/Controllers/API/AdminSupportTicketController.php`
+- `index()` — GET /admin/support-tickets — stats (total/submitted/in_process/closed/unassigned)
+  + filters (status, category, user_type, assigned/unassigned, search by ticket_no/id/name/email) + pagination.
+- `show()` — GET /admin/support-tickets/{id} — full detail incl. user info, attachments, thread.
+- `assign()` — POST /admin/support-tickets/{id}/assign — assign to acting admin; submitted→in_process.
+- `updateStatus()` — POST /admin/support-tickets/{id}/status — change status; close REQUIRES resolution_note
+  (required_if), stamps closed_at, sends close email; system message + user notification per transition.
+- `addMessage()` — POST /admin/support-tickets/{id}/messages — admin reply; notifies the ticket owner.
+
+### Modified: `routes/api.php`
+- Added 4 user routes under `Route::middleware([ApiAuthMiddleware::class])`.
+- Added 5 admin routes under `Route::prefix('admin/support-tickets')` (auto-guarded by AdminAuthMiddleware).
+
+### Modified: Notifications & Email (additive)
+- `app/Services/Notifications/AdminNotificationService.php` — added `TYPE_SUPPORT_TICKET`.
+- `app/Enums/EmailPurpose.php` — added `SUPPORT_TICKET_CLOSED` case + senderKey('support').
+- `app/Mail/SupportTicketClosedMail.php` + `resources/views/emails/support-ticket-closed.blade.php` — close email (Ticket ID, Category, Resolution Note).
+- `app/Services/Notifications/EmailNotificationService.php` — added `sendSupportTicketClosed()`.
+
+### Impact
+- Purely additive: 2 new tables, 2 new controllers, 9 new routes, 1 new mailable + helper. No existing
+  table, route, controller, or auth flow modified. Existing notification/email pipelines reused unchanged.
+
+## 2026-06-30 — Support tickets: stricter ownership (user_type)
+
+Hardened the user-facing support endpoints so access requires BOTH the matching
+user_id AND user_type — a student can never reach a firm ticket and vice-versa.
+
+### Modified: `app/Http/Controllers/API/SupportTicketController.php`
+- `index()` — now filters by `user_id` AND `user_type` (a user only ever sees their own type's tickets).
+- `show()` / `addMessage()` — ownership check is now `user_id === auth id AND user_type === auth type` (403 otherwise).
+- Auth itself unchanged: all routes already require ApiAuthMiddleware (unauthenticated → 401).

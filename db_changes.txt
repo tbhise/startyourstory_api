@@ -2886,3 +2886,56 @@ ALTER TABLE `firm_profiles` MODIFY `exposure_type` TEXT NULL;
 -- ALTER TABLE `firm_profiles` MODIFY `exposure_type` VARCHAR(500) NULL;
 
 
+
+
+-- ============================================================
+-- 2026-06-30 — Support Ticket system (support_tickets, support_ticket_messages)
+-- ============================================================
+-- New help-desk feature for students & firms. Tickets carry a human-facing
+-- ticket_no (SYS-TKT-000001, derived from id post-insert), a category, the issue
+-- brief, an optional JSON array of attachments, and a status
+-- ('submitted'|'in_process'|'closed'). assigned_to_admin_id references admin_users.id
+-- (no DB-level FK, matching the rest of the schema). The conversation thread lives in
+-- support_ticket_messages (sender_type student|firm|admin|system; 'system' rows are
+-- auto status-change notes with sender_id NULL).
+-- Applied via:
+--   php artisan migrate --path=database/migrations/2026_06_30_000001_create_support_tickets_table.php
+--   php artisan migrate --path=database/migrations/2026_06_30_000002_create_support_ticket_messages_table.php
+
+CREATE TABLE `support_tickets` (
+  `id`                   BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `ticket_no`            VARCHAR(30) NULL,
+  `user_id`              BIGINT UNSIGNED NOT NULL,
+  `user_type`            ENUM('student','firm') NOT NULL,
+  `ticket_category`      VARCHAR(100) NOT NULL,
+  `issue_brief`          TEXT NOT NULL,
+  `attachments`          JSON NULL,
+  `status`               ENUM('submitted','in_process','closed') NOT NULL DEFAULT 'submitted',
+  `assigned_to_admin_id` BIGINT UNSIGNED NULL,
+  `resolution_note`      TEXT NULL,
+  `closed_at`            TIMESTAMP NULL,
+  `created_at`           TIMESTAMP NULL,
+  `updated_at`           TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `support_tickets_ticket_no_unique` (`ticket_no`),
+  KEY `idx_st_user` (`user_id`,`user_type`,`created_at`),
+  KEY `idx_st_status` (`status`),
+  KEY `idx_st_assigned` (`assigned_to_admin_id`),
+  KEY `idx_st_category` (`ticket_category`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE `support_ticket_messages` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `ticket_id`       BIGINT UNSIGNED NOT NULL,
+  `sender_type`     ENUM('student','firm','admin','system') NOT NULL,
+  `sender_id`       BIGINT UNSIGNED NULL,
+  `message`         TEXT NOT NULL,
+  `attachment_path` VARCHAR(500) NULL,
+  `created_at`      TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_stm_ticket` (`ticket_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `support_ticket_messages`;
+-- DROP TABLE IF EXISTS `support_tickets`;

@@ -33,6 +33,7 @@ class AdminNotificationService
     public const TYPE_CONTACT              = 'contact_submission';
     public const TYPE_SYSTEM_ALERT         = 'system_alert';
     public const TYPE_PROFILE_REPORT       = 'profile_report';
+    public const TYPE_SUPPORT_TICKET       = 'support_ticket';
 
     /**
      * Create an admin notification. Returns the model, or null on failure.

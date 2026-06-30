@@ -26,6 +26,7 @@ enum EmailPurpose: string
     case MARKETING             = 'marketing';
     case REENGAGEMENT          = 'reengagement';
     case REFERRAL_PAYOUT_REQUEST = 'referral_payout_request';
+    case SUPPORT_TICKET_CLOSED = 'support_ticket_closed';
 
     public function senderKey(): string
     {
@@ -52,6 +53,7 @@ enum EmailPurpose: string
             self::MARKETING              => 'marketing',
             self::REENGAGEMENT           => 'marketing',
             self::REFERRAL_PAYOUT_REQUEST => 'support',
+            self::SUPPORT_TICKET_CLOSED  => 'support',
         };
     }
 

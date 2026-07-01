@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-07-01 — Dedicated lightweight Career Status update API
+
+The Career Status modal previously reused `POST /updateProfile`, which runs full-profile
+validation. Changing status (e.g. to Qualified CA) could fail on an unrelated field with
+errors like *"Please select your core domain."* New dedicated endpoint updates only
+`student_profiles.looking_for` and recomputes `profile_completed` — no full-profile validation.
+
+- **`app/Helpers/ProfileCompletionHelper.php`** (new)
+  - `ProfileCompletionHelper::isComplete(array $f): bool` — extracted, single source of truth
+    for the student `profile_completed` calculation. Same branch logic previously inlined in
+    `UserController@updateProfile` (articleship / already_doing_articleship / semi-qualified /
+    qualified / creator + creator opt-in extension). Caller normalises its own data source
+    (request vs. stored DB row) into a flat array; the helper owns only the decision.
+- **`app/Http/Controllers/API/UserController.php`** (modified)
+  - `updateProfile()` — completion block refactored to call `ProfileCompletionHelper::isComplete()`.
+    **No behavioural change** — identical inputs/result; only de-duplicated. External API contract
+    (route, request, response, rewards) unchanged.
+  - `updateCareerStatus()` (new) — handler for the new endpoint. Validates
+    `looking_for ∈ {articleship, already_doing_articleship, semi-qualified, qualified}`, updates
+    **only** `looking_for` on `student_profiles`, recomputes `profile_completed` from the stored
+    profile (JSON columns normalised) via the shared helper, and mirrors updateProfile's idempotent
+    SYS-coin grant on completion. No full-profile validation is performed.
+- **`routes/api.php`** (modified)
+  - Added `PATCH /student/career-status → UserController@updateCareerStatus` in the authenticated
+    (no firm-verification gate) group. As a PATCH it is auto-blocked during admin impersonation by
+    the existing `BlockImpersonationWrites` verb rule (parity with `updateProfile`).
+
+---
+
 ## 2026-06-29 — exposure_type TEXT widen + error_summary stops storing SQL
 
 Follow-up to the column/ErrorLogRecorder audit (this date). Two independent fixes.

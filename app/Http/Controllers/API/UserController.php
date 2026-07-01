@@ -17,6 +17,7 @@ use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
 use App\Helpers\SysCoinHelper;
+use App\Helpers\ProfileCompletionHelper;
 
 class UserController extends Controller
 {
@@ -395,128 +396,36 @@ class UserController extends Controller
 
             $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
 
-            $isProfileComplete = false;
             // Resume is optional — it is intentionally NOT part of the completion criteria.
-            $preferredLocationExists =
-                !empty($preferredLocations);
             // Gender is optional in the wizard — do not gate completion on it.
-            $basicInfoComplete =
-                !empty($request->city);
-            // if ($request->looking_for === 'articleship') {
-            //     $isProfileComplete =
-            //         $basicInfoComplete &&
-            //         !empty($request->srn) &&
-            //         $preferredLocationExists &&
-            //         $resumeExists;
-            //     if ($registrationType === 'confirm') {
-            //         $isProfileComplete =
-            //             $isProfileComplete &&
-            //             !empty($request->it_oc_status) &&
-            //             !empty($request->exposure_type) &&
-            //             !empty($request->core_department);
-            //     }
-            // }
-
-            if ($request->looking_for === 'articleship') {
-
-                // Preferred location + resume are only shown for Inter-Both (Case A).
-                // Doing-Articleship (Case B) shows neither, so it must skip them even though
-                // its registration_type is 'confirm'.
-                $skipLocationAndResume =
-                    in_array($request->ca_status, [
-                        'inter-g2',
-                        'doing-articleship',
-                        'doing articleship',
-                        'inter-g1',
-                        'pursuing-inter',
-                        'foundation'
-                    ]);
-
-                $isProfileComplete =
-                    $basicInfoComplete &&
-                    !empty($request->srn);
-
-                if (!$skipLocationAndResume) {
-                    $isProfileComplete =
-                        $isProfileComplete &&
-                        $preferredLocationExists;
-                }
-
-                // Inter-Both (Case A) wizard requires exposure, core domain and attempts.
-                // IT/OC is shown but optional in the wizard, so it is NOT gated here.
-                if ($registrationType === 'confirm' && !$skipLocationAndResume) {
-                    $isProfileComplete =
-                        $isProfileComplete &&
-                        !empty($request->exposure_type) &&
-                        !empty($request->core_department) &&
-                        !empty($request->attempts);
-                }
-
-                // Doing-Articleship status (Case B) also collects the current articleship firm.
-                if (in_array($request->ca_status, ['doing-articleship', 'doing articleship'])) {
-                    $isProfileComplete =
-                        $isProfileComplete &&
-                        !empty($request->current_firm_name);
-                }
-            } elseif (
-                in_array(
-                    strtolower(trim($request->looking_for ?? '')),
-                    ['doing-articleship', 'already_doing_articleship']
-                )
-            ) {
-                // Case B — wizard collects basic info, srn and the current articleship firm only.
-                // already_doing_articleship shares this completion criteria (Basic Info +
-                // Experience); Professional Status is not collected for it.
-                $isProfileComplete =
-                    $basicInfoComplete &&
-                    !empty($request->srn) &&
-                    !empty($request->current_firm_name);
-            } elseif (
-                in_array(
-                    $request->looking_for,
-                    ['semi-qualified', 'qualified']
-                )
-            ) {
-                $isProfileComplete =
-                    $basicInfoComplete &&
-                    !empty($request->srn) &&
-                    // !empty($request->experience_years) &&
-                    $preferredLocationExists;
-            } elseif ($request->looking_for === 'creator') {
-                $prefCatsArr = $request->has('preferred_categories')
-                    ? ($request->preferred_categories ?? [])
-                    : json_decode($existingProfile->preferred_categories ?? '[]', true);
-                $hasPrefCats = is_array($prefCatsArr) && count($prefCatsArr) > 0;
-                $isProfileComplete =
-                    !empty($request->city) &&
-                    !empty($request->qualification) &&
-                    !empty($request->availability_status) &&
-                    !empty(trim($request->why_should_hire_you ?? '')) &&
-                    is_numeric($request->experience_years) &&
-                    $hasPrefCats;
-
-            }
-
-
-
-            // Extend completion check: students who opted into creator also need creator fields done
             $isCreatorOptin = $request->has('is_creator')
                 ? (bool)$request->is_creator
                 : (bool)($existingProfile->is_creator ?? false);
 
-            if ($isCreatorOptin && $request->looking_for !== 'creator') {
-                $prefCatsArr = $request->has('preferred_categories')
-                    ? ($request->preferred_categories ?? [])
-                    : json_decode($existingProfile->preferred_categories ?? '[]', true);
-                $hasPrefCats = is_array($prefCatsArr) && count($prefCatsArr) > 0;
-                $isCreatorFieldsComplete =
-                    !empty($request->qualification) &&
-                    !empty($request->availability_status) &&
-                    !empty(trim($request->why_should_hire_you ?? '')) &&
-                    is_numeric($request->experience_years) &&
-                    $hasPrefCats;
-                $isProfileComplete = $isProfileComplete && $isCreatorFieldsComplete;
-            }
+            $prefCatsArr = $request->has('preferred_categories')
+                ? ($request->preferred_categories ?? [])
+                : json_decode($existingProfile->preferred_categories ?? '[]', true);
+            $hasPrefCats = is_array($prefCatsArr) && count($prefCatsArr) > 0;
+
+            // Completion decision is owned by ProfileCompletionHelper so this flow and
+            // the lightweight career-status update stay in perfect sync (no duplicate logic).
+            $isProfileComplete = ProfileCompletionHelper::isComplete([
+                'looking_for'              => $request->looking_for,
+                'ca_status'                => $request->ca_status,
+                'city'                     => $request->city,
+                'srn'                      => $request->srn,
+                'has_preferred_location'   => !empty($preferredLocations),
+                'exposure_filled'          => !empty($request->exposure_type),
+                'core_department'          => $request->core_department,
+                'attempts'                 => $request->attempts,
+                'current_firm_name'        => $request->current_firm_name,
+                'is_creator_optin'         => $isCreatorOptin,
+                'qualification'            => $request->qualification,
+                'availability_status'      => $request->availability_status,
+                'why_should_hire_you'      => $request->why_should_hire_you,
+                'experience_years'         => $request->experience_years,
+                'has_preferred_categories' => $hasPrefCats,
+            ]);
 
 
             DB::table('users')
@@ -567,6 +476,123 @@ class UserController extends Controller
             ]);
         }
     }
+    // ─────────────────────────────────────────────────────────────────────────
+    // PATCH /student/career-status
+    //
+    // Lightweight update of student_profiles.looking_for ONLY. Unlike
+    // updateProfile it performs NO full-profile validation — a student changing
+    // their career status must never be blocked for an unrelated field
+    // (core_department, ca_status, exposure_type, …). profile_completed is
+    // recalculated from the stored profile (with the new looking_for) using the
+    // shared ProfileCompletionHelper so it stays accurate.
+    // ─────────────────────────────────────────────────────────────────────────
+    public function updateCareerStatus(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            $token = $request->cookie('auth_token');
+            if (!$token) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Unauthenticated'
+                ], 401);
+            }
+            $user = AuthHelper::resolveUser($request);
+            if (!$user) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid token'
+                ], 401);
+            }
+
+            $validator = Validator::make($request->all(), [
+                'looking_for' => 'required|string|in:articleship,already_doing_articleship,semi-qualified,qualified',
+            ]);
+            if ($validator->fails()) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => $validator->errors()->first(),
+                ]);
+            }
+
+            $profile = DB::table('student_profiles')
+                ->where('user_id', $user->id)->first();
+            if (!$profile) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Please complete your profile before updating your career status.',
+                ]);
+            }
+
+            $lookingFor = $request->looking_for;
+
+            // Update ONLY looking_for — every other column is left untouched.
+            DB::table('student_profiles')
+                ->where('user_id', $user->id)
+                ->update([
+                    'looking_for' => $lookingFor,
+                    'updated_at'  => now(),
+                ]);
+
+            // Recalculate profile_completed against the stored profile values with
+            // the new looking_for. Normalise the stored JSON columns into the flat
+            // shape the shared helper expects (same decision as updateProfile).
+            $exposureArr = json_decode($profile->exposure_type ?? '[]', true);
+            $prefLocArr  = json_decode($profile->preferred_location ?? '[]', true);
+            $prefCatsArr = json_decode($profile->preferred_categories ?? '[]', true);
+
+            $isProfileComplete = ProfileCompletionHelper::isComplete([
+                'looking_for'              => $lookingFor,
+                'ca_status'                => $profile->ca_status,
+                'city'                     => $profile->city,
+                'srn'                      => $profile->srn,
+                'has_preferred_location'   => is_array($prefLocArr) && count($prefLocArr) > 0,
+                'exposure_filled'          => is_array($exposureArr) && count($exposureArr) > 0,
+                'core_department'          => $profile->core_department,
+                'attempts'                 => $profile->attempts,
+                'current_firm_name'        => $profile->current_firm_name,
+                'is_creator_optin'         => (bool)($profile->is_creator ?? false),
+                'qualification'            => $profile->qualification,
+                'availability_status'      => $profile->availability_status,
+                'why_should_hire_you'      => $profile->why_should_hire_you,
+                'experience_years'         => $profile->experience_years,
+                'has_preferred_categories' => is_array($prefCatsArr) && count($prefCatsArr) > 0,
+            ]);
+
+            DB::table('users')
+                ->where('id', $user->id)
+                ->update([
+                    'profile_completed' => $isProfileComplete ? 1 : 0,
+                    'updated_at'        => now(),
+                ]);
+
+            DB::commit();
+
+            // Mirror updateProfile's idempotent reward grant so completing the
+            // profile via this path is treated identically. Both helpers are no-ops
+            // if the bonus was already granted or the email is not yet verified.
+            if ($isProfileComplete) {
+                SysCoinHelper::maybeGrantWelcomeBonus($user->id);
+                SysCoinHelper::maybeGrantStudentReferralBonus($user->id);
+            }
+
+            return response()->json([
+                'status'            => true,
+                'message'           => 'Career status updated successfully',
+                'profile_completed' => $isProfileComplete ? 1 : 0,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('UserController@updateCareerStatus: ' . $e->getMessage());
+            return response()->json([
+                'status'  => false,
+                'message' => 'Career status update failed: Server error',
+            ]);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // POST /dismiss-apply-limit-modal
     // ─────────────────────────────────────────────────────────────────────────

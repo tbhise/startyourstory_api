@@ -91,6 +91,8 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     // ── Available to all authenticated users (no firm-verification gate) ──
     Route::post('/updateProfile',        [UserController::class, 'updateProfile']);
+    // Lightweight career-status update — updates looking_for only, no full-profile validation.
+    Route::patch('/student/career-status', [UserController::class, 'updateCareerStatus']);
     Route::post('/getProfile',           [UserController::class, 'getProfile']);
 
     // ── Resume Builder drafts (one per user) ──

@@ -3730,3 +3730,22 @@ Both are async (database queue), fully fail-isolated, and change no existing beh
 ### Impact
 - Purely additive: 2 jobs, 2 mailables + 2 blades, 2 service methods, 2 enum cases, 3 columns across 2 tables,
   2 scheduler entries. No existing table/route/controller/auth/job altered; existing reminders + digest untouched.
+
+## 2026-07-02 — Free actions: stop counting 'shortlisted' (feature disabled)
+
+### Why
+- Firm "H Mistry & Associates" (firm_id 25) reported having 0 free actions left despite never using
+  interview invite / schedule interview. Audit showed all their usage was `shortlisted` (Save Candidate)
+  rows in `recruiter_actions` (3 distinct students, June 24–25). Since the shortlist feature has been
+  temporarily removed from the UI, historical shortlist rows should no longer consume the free limit.
+
+### Change
+- `app/Helpers/FreeActionsHelper.php` — `getUsedCount()` no longer counts `shortlisted`; `saved` is
+  hard-coded to 0 (key kept for API shape). Limit now = distinct `interview_invite` + `interview_requested`
+  students only. Inline note explains how to re-enable if the shortlist feature returns.
+- No DB changes; existing `shortlisted` rows left intact (students keep their activity history).
+- Limit-check gates in UserController / JobsController for shortlisting left in place (dormant while UI is off).
+
+### Verified (tinker, local copy of live DB)
+- Before: `getStatus(25)` → used=3, saved=3, remaining=0. After: used=0, remaining=2.
+- Fixes every firm that burned free actions on Save Candidate, not just firm 25.

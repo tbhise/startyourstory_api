@@ -11,9 +11,13 @@ class FreeActionsHelper
     /**
      * Count free actions used. Billable action types (each counted as distinct
      * candidates so the same candidate in two jobs isn't double-charged):
-     *   - shortlisted          (Save Candidate)
      *   - interview_invite     (Invite to Interview)
      *   - interview_requested  (Schedule Interview from job applications)
+     *
+     * NOTE: 'shortlisted' (Save Candidate) is temporarily excluded — the
+     * shortlist feature is disabled, so historical shortlist rows must not
+     * consume the free limit. Re-add $countByType('shortlisted') if the
+     * feature comes back.
      */
     public static function getUsedCount(int $firmId): array
     {
@@ -25,7 +29,7 @@ class FreeActionsHelper
                 ->count('student_id');
         };
 
-        $saved      = $countByType('shortlisted');
+        $saved      = 0; // shortlist feature disabled; was $countByType('shortlisted')
         $invites    = $countByType('interview_invite');
         $interviews = $countByType('interview_requested');
 

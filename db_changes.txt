@@ -2981,3 +2981,99 @@ ALTER TABLE `jobs`
 -- ROLLBACK:
 -- ALTER TABLE `interview_invites` DROP COLUMN `response_reminders_sent`, DROP COLUMN `last_response_reminder_at`;
 -- ALTER TABLE `jobs` DROP COLUMN `last_applicant_reminder_at`;
+
+
+-- =====================================================================
+-- 2026-07-03 — Push notifications for students & firms (device tokens)
+-- Migration: 2026_07_03_000001_create_user_fcm_tokens_table.php
+-- Additive only. Separate from admin_fcm_tokens so the admin push
+-- pipeline stays fully isolated. One row per device; unique token so
+-- re-registering the same device updates instead of duplicating.
+-- =====================================================================
+
+CREATE TABLE `user_fcm_tokens` (
+  `id`             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`        BIGINT UNSIGNED NOT NULL,
+  `token`          VARCHAR(512) NOT NULL,
+  `device_info`    VARCHAR(255) NULL,
+  `last_active_at` DATETIME NULL,
+  `created_at`     TIMESTAMP NULL,
+  `updated_at`     TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_user_fcm_token` (`token`),
+  KEY `idx_user_fcm_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `user_fcm_tokens`;
+
+
+-- =====================================================================
+-- 2026-07-03 — Unread-digest push throttle state (students + firms)
+-- Migration: 2026_07_03_000002_create_user_push_digest_state_table.php
+-- Additive only. One row per user; written by SendUnreadDigestPushJob to
+-- enforce: min 8h between digests, only when unread count grew.
+-- =====================================================================
+
+CREATE TABLE `user_push_digest_state` (
+  `user_id`           BIGINT UNSIGNED NOT NULL,
+  `last_sent_at`      DATETIME NOT NULL,
+  `last_unread_count` INT UNSIGNED NOT NULL DEFAULT 0,
+  `created_at`        TIMESTAMP NULL,
+  `updated_at`        TIMESTAMP NULL,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `user_push_digest_state`;
+
+
+-- =====================================================================
+-- 2026-07-03 — Unread-messages email reminder throttle state
+-- Migration: 2026_07_03_000003_create_user_message_email_state_table.php
+-- Additive only. One row per user; written by SendUnreadMessagesEmailJob
+-- to enforce: max one unread-messages reminder email per 3 hours.
+-- (Replaces the per-message NewMessageReplyMail sends.)
+-- =====================================================================
+
+CREATE TABLE `user_message_email_state` (
+  `user_id`      BIGINT UNSIGNED NOT NULL,
+  `last_sent_at` DATETIME NOT NULL,
+  `created_at`   TIMESTAMP NULL,
+  `updated_at`   TIMESTAMP NULL,
+  PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `user_message_email_state`;
+
+
+-- =====================================================================
+-- 2026-07-03 — Chat message attachments (images + PDF)
+-- Migration: 2026_07_03_000004_create_message_attachments_table.php
+-- Additive only. Files live on the PRIVATE disk (storage/app/private/
+-- message-attachments/{conversation}/) and are served exclusively via the
+-- authenticated GET /messaging/attachments/{id} endpoint. file_path is
+-- never sent to clients. Max 5 files/message, at most 1 PDF.
+-- =====================================================================
+
+CREATE TABLE `message_attachments` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `message_id`      BIGINT UNSIGNED NOT NULL,
+  `conversation_id` BIGINT UNSIGNED NOT NULL,
+  `type`            ENUM('image','pdf') NOT NULL,
+  `file_path`       VARCHAR(500) NOT NULL,
+  `original_name`   VARCHAR(255) NOT NULL,
+  `mime_type`       VARCHAR(100) NOT NULL,
+  `size_bytes`      INT UNSIGNED NOT NULL,
+  `width`           SMALLINT UNSIGNED NULL,
+  `height`          SMALLINT UNSIGNED NULL,
+  `created_at`      TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_ma_message` (`message_id`),
+  KEY `idx_ma_conversation` (`conversation_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `message_attachments`;
+-- (also delete storage/app/private/message-attachments/)

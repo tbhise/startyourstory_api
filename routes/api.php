@@ -140,6 +140,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/interview-invites/{id}/cancel',            [InterviewInviteController::class, 'cancel']);
 
     Route::post('/mark-read', [NotificationController::class, 'markAsRead']);
+
+    // ── Push notifications (students + firms) — device token lifecycle ──
+    // Separate from /admin/fcm/token: user tokens live in user_fcm_tokens.
+    Route::post('/fcm/token',   [\App\Http\Controllers\API\UserPushController::class, 'registerToken']);
+    Route::delete('/fcm/token', [\App\Http\Controllers\API\UserPushController::class, 'deleteToken']);
+
     Route::get('/referrals', [ReferralController::class, 'index']);
 
     // ── Centralized payout details (referral earners + creators) ──
@@ -349,9 +355,11 @@ Route::middleware([ApiAuthMiddleware::class])->prefix('messaging')->group(functi
     Route::post('/conversations/{id}/mark-read',              [MessagingController::class, 'markRead']);
     Route::get('/unread-count',                               [MessagingController::class, 'getUnreadCount']);
     Route::get('/settings',                                   [MessagingController::class, 'getSettings']);
-    Route::post('/settings',                                  [MessagingController::class, 'updateSettings']);
+    // POST /settings removed 2026-07-03 — accept_direct_messages toggle retired.
     Route::get('/firm/{firmId}/status',                       [MessagingController::class, 'getFirmMessagingStatus']);
     Route::get('/candidate/{candidateId}/status',             [MessagingController::class, 'getCandidateMessagingStatus']);
+    // Chat attachments — authenticated streaming from the private disk.
+    Route::get('/attachments/{id}',                           [\App\Http\Controllers\API\MessageAttachmentController::class, 'show']);
 });
 
 // ── Admin Messaging ───────────────────────────────────────────────────────────

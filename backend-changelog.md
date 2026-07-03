@@ -4,6 +4,208 @@
 
 ---
 
+## 2026-07-03 — Messaging business rules finalized: gates rewritten
+
+Implements the finalized rules: NEW conversations gated identically in both directions
+(premium unlimited; free = `allow_free_firm_messaging` + under `free_firm_conversation_limit`);
+EXISTING conversations are never blocked by policy — only by a closed conversation or an
+inactive participant. Four decisions applied:
+
+- **Request-unlock system removed completely.** Deleted `canFirmUnlockRequest`,
+  `incrementRequestsUnlocked`, `FREE_LIFETIME_REQUESTS_UNLOCKED`, the
+  `request_limit_reached` 403 in `getMessages`, and the unlock counting in `sendMessage`'s
+  auto-accept. Free firms can always view + reply to student-initiated requests
+  (also fixes the old inconsistency where a firm could reply via API to a request it
+  couldn't view). `messaging_limits.lifetime_requests_unlocked` column remains but is
+  no longer read/written.
+- **`accept_direct_messages` toggle retired.** Removed from the student gate
+  (`canStudentMessageFirm`), `acceptsDirectMessages()` + `getOrCreateSettings()` deleted,
+  `POST /messaging/settings` route + `updateSettings` removed, field dropped from the
+  `GET /messaging/settings` payload. `messaging_settings` table stays in the DB, unused.
+  (Known cosmetic leftover: AdminMessagingController@getStats still counts that table.)
+- **New `MessagingHelper::canSendMessageInConversation($conv)`** — existing-conversation
+  gate used by `sendMessage`: blocks only `blocked`/`ignored` conversations or a
+  soft-deleted participant (checks `users.is_deleted` for both sides). Also added
+  `is_deleted` guards in `startConversation`: firm→deleted-student now 404s; student→
+  deleted-firm-user returns the generic not-accepting message.
+- **Free limit now counts ONLY firm-initiated conversations.** Removed
+  `incrementConversationsStarted` from the student-initiated branch — inbound student
+  leads never consume a free firm's quota (premium sells outbound outreach).
+- **Renames/copy**: `firmCanHaveNewConversation`/`canFirmStartConversation` consolidated
+  into `canStartNewConversation($firmId)` (all callers updated); student-facing message
+  is now "Firm Not Accepting Direct Messages".
+- **Frontend**: companies page Message button now gated on `can_start_conversation`
+  (was `is_premium` alone — free firms under limit were wrongly shown as not accepting);
+  `MessagingSettings` type + `updateMessagingSettings` removed.
+- **Verified** (tinker on dev DB): premium → allowed; free under-limit + student → allowed;
+  free over-limit → firm sees upgrade copy, student sees "Firm Not Accepting Direct
+  Messages"; existing conv with active participants → allowed; blocked conv →
+  `conversation_closed`; soft-deleted participant → `participant_inactive`. Routes:
+  `POST /messaging/settings` gone, all others intact.
+- **Rollback**: git-revert both repos' edits; no schema changes (columns retained).
+
+---
+
+## 2026-07-03 — Chat message attachments (images + PDF), additive layer
+
+Students and firms can attach files to chat messages. Text-only messaging is untouched —
+a plain JSON send takes the exact pre-existing code path. Approved V1 decisions applied:
+originals preserved (NO WebP conversion — users send marksheets/offer letters), max 5
+files/message in any mix with at most 1 PDF, and the websocket payload stays lightweight
+(no attachment metadata broadcast).
+
+- **`message_attachments`** (new table, migration `2026_07_03_000004`, mirrored in
+  db_changes.txt): message_id, conversation_id (denormalised for 1-query download auth),
+  type enum(image,pdf), file_path (server-only), original_name, mime_type, size_bytes,
+  width/height (images — stable chat layout).
+- **`app/Services/Messaging/MessageAttachmentService.php`** (new)
+  - `validateSet()`: ≤5 files, images jpg/png/webp ≤5MB (content-sniffed MIME +
+    `getimagesize()` sanity check), ≤1 PDF ≤10MB (`%PDF-` magic bytes). Rejects
+    disguised executables (verified in test).
+  - `store()`: ORIGINAL bytes untouched → private `local` disk at
+    `message-attachments/{conv}/{40-char random}.{server-derived ext}`; inserts rows;
+    on any failure deletes already-written files then rethrows (caller's txn rolls back).
+  - `forMessages()`: client-safe payloads (never file_path) grouped by message_id.
+  - `summaries()`: bell-preview + push-body strings ("📷 3 Photos" / "📄 Sent a document").
+- **`app/Http/Controllers/API/MessageAttachmentController.php`** (new) +
+  route `GET /messaging/attachments/{id}` (ApiAuthMiddleware): re-verifies conversation
+  ownership per request, streams from the private disk with stored Content-Type,
+  `X-Content-Type-Options: nosniff`, inline (or `?download=1`), `Cache-Control: private`.
+- **`MessagingController@sendMessage`** (modified, additive): optional `attachments[]`
+  multipart; text required only when no attachments (`''` stored otherwise — column is
+  TEXT NOT NULL, no ALTER needed); attachment storage inside the existing transaction.
+  `MessagingHelper` / events / notifyPeer are UNCHANGED — attachment-aware preview and
+  push-body strings are passed through their existing string parameters. Realtime:
+  attachment messages broadcast the generic marker `📎 Attachment` (V1 decision); the
+  client refetches the thread on seeing it.
+- **`MessagingController@getMessages`** (modified, additive): decorates rows with
+  `attachments: []` via one whereIn query — old messages get an empty array.
+- **Verified**: syntax clean; migration run; route registered; service e2e test (real GD
+  PNG + PDF): valid set accepted, exe-disguised-as-png rejected, 2-PDF set rejected,
+  originals preserved (.png kept), private-disk storage under the conversation folder,
+  no file_path in client payloads, cleanup verified.
+- **Deployment note**: nginx `client_max_body_size` must be ≥ 35m and PHP
+  `upload_max_filesize`/`post_max_size` ≥ 10M/35M on the API server.
+- **Rollback**: revert the two MessagingController blocks + route, remove service +
+  controller + migration, DROP TABLE message_attachments, delete
+  storage/app/private/message-attachments/.
+
+---
+
+## 2026-07-03 — Messaging notifications rearchitected: 3-hourly unread email + per-message push
+
+Decision: for chat messages, PUSH is the realtime channel (2-min cooldown per
+conversation+recipient, skip-if-active, collapse tag — see entry below) and EMAIL becomes
+a slow backstop — one summary email per user at most every 3 hours while messages stay
+unread. The old per-message `NewMessageReplyMail` send is REMOVED from
+`MessagingController::notifyPeer` (one email per chat message no longer happens; the
+mailable class itself is kept).
+
+- **`app/Jobs/SendUnreadMessagesEmailJob.php`** (new) — hourly (`send-unread-messages-email`).
+  Finds users with unread messages via the denormalised
+  `conversations.candidate_unread_count` / `firm_unread_count` (status active/pending),
+  skips anyone emailed < 3h ago, queues `UnreadMessagesReminderMail`, upserts throttle
+  state. Reading messages zeroes the unread counters, which stops reminders automatically.
+- **`app/Mail/UnreadMessagesReminderMail.php`** + view
+  **`emails/messaging/unread-reminder.blade.php`** (new) — "You have {n} unread messages
+  waiting in {m} conversations", CTA → /messages. Same template style + sender identity
+  (EmailPurpose::MESSAGE_REPLY) as the per-message mail it replaces.
+- **`user_message_email_state`** (new table, migration `2026_07_03_000003`, mirrored in
+  db_changes.txt) — `user_id PK, last_sent_at`.
+- **`MessagingController`** — per-message `Mail::to(...)->queue(NewMessageReplyMail)`
+  removed from both branches of `notifyPeer` (comment points to the new job).
+  `pushToPeer` anti-spam gates RESTORED after temporary test bypass (2-min cooldown +
+  active-in-60s skip), with debug logging of every skip/dispatch decision.
+- **Verified**: targeted migration run; `schedule:list` shows the job; transactional
+  dry-run on dev DB (3 unread conversations → 2 reminder emails queued on first run →
+  0 on immediate re-run (3h throttle) → rolled back cleanly).
+- **Rollback**: restore the two Mail::queue blocks in notifyPeer, remove the job +
+  schedule entry + mailable + view, drop `user_message_email_state`.
+
+---
+
+## 2026-07-03 — Push v2: dynamic copy, message push, smart unread digest
+
+Follow-up to the initial push layer (entry below). Three additions, all additive;
+bell/email/reminder logic still untouched.
+
+- **Dynamic push copy everywhere** (no generic wording). Names moved into the TITLE:
+  students see "*{firm_name}* invited you for an interview" / "…scheduled your interview"
+  (with date · mode in the body) / "…accepted your new interview date"; firms see
+  "*{student_name}* applied for {job_title}" / "…{accepted|declined} your interview invite" /
+  "…confirmed the interview" / "…requested a new interview time" / "…cancelled the interview".
+  Reminder jobs retitled the same way ("Interview tomorrow with {firm_name}", "{n} applicants
+  are awaiting your review", "{firm_name} is waiting for your response").
+- **Missing firm push added**: `JobsController@respondInterview` now also pushes on
+  `Reschedule Requested` (title "…requested a new interview time", body "Proposed: {date}") —
+  previously only Accepted/Rejected fired. Decision applied: NO push to a firm for its own
+  reschedule-accept action (actor never gets pushed).
+- **New-message push** (`MessagingController::notifyPeer` → new `pushToPeer()` helper):
+  "New message from {name}" + 80-char preview → `/messages`. Anti-spam, in order:
+  (1) atomic 2-min cooldown per conversation+recipient (`Cache::add`), (2) skip when the
+  recipient was active in the last 60s (Reverb + focused-tab toast already cover them),
+  (3) webpush collapse tag `conv_{id}` so bursts replace one notification instead of stacking.
+  `UserPushService::sendToUser` + `SendUserPushJob` gained an optional trailing `collapseTag`
+  param (backward-compatible).
+- **Smart unread digest** — new `app/Jobs/SendUnreadDigestPushJob.php`, scheduled hourly
+  (`send-unread-digest-push`). Sends "You have {n} unread notifications" (+ latest title
+  teaser) only when ALL hold: has push tokens; unread > 0 (bell + role-scoped
+  recruiter_actions); inactive > 6h; last digest > 8h ago (max 2/day by construction);
+  unread count GREW since last digest; 09:00–21:00 IST (enforced in-job too). Throttle state
+  in new `user_push_digest_state` table (migration `2026_07_03_000002`, mirrored in
+  db_changes.txt). Collapse tag `digest_{user}`. Push-only — no bell insert, no email.
+- **Verified**: syntax on all 12 touched files; targeted migration run; `schedule:list`
+  shows the new job; digest dry-run on dev DB (baseline no-op → 1 push queued for an
+  eligible user with correct dynamic payload → immediate re-run throttled → cleanup).
+- **Rollback**: revert the dispatch-site copy edits, remove `pushToPeer` + its two call
+  lines, remove the digest job + schedule entry, drop `user_push_digest_state`.
+
+---
+
+## 2026-07-03 — Push notifications for Students & Firms (additive layer)
+
+Browser push (FCM) extended from admin-only to students and firms. Strictly additive:
+every existing flow (in-app bell, `recruiter_actions`, email, reminder jobs, admin push)
+is unchanged — trigger points only gain a queued push dispatch next to their existing
+notification calls. Admin push infra (`FcmService`, `admin_fcm_tokens`,
+`AdminNotificationService`, `/admin/fcm/token`) is untouched.
+
+- **`database/migrations/2026_07_03_000001_create_user_fcm_tokens_table.php`** (new)
+  - `user_fcm_tokens` — one row per device, `token` unique, keyed to `users.id`.
+    Deliberately separate from `admin_fcm_tokens`. SQL mirrored in `db_changes.txt`.
+- **`app/Services/Notifications/UserPushService.php`** (new)
+  - FCM HTTP v1 sender for user devices. Same service account + OAuth token-cache slot
+    as `FcmService`, but reads only `user_fcm_tokens` (query builder). Non-throwing,
+    no-op when unconfigured, prunes dead tokens on 404/403/UNREGISTERED.
+    OAuth mint duplicated (not shared) so the admin class needed zero modification.
+- **`app/Jobs/SendUserPushJob.php`** (new)
+  - Queued (database driver) wrapper around `UserPushService::sendToUser`. `tries = 1`,
+    internally try/caught — a push failure can never fail a business flow or the queue.
+    Dispatching inside DB transactions is safe: the job row commits atomically with them.
+- **`app/Http/Controllers/API/UserPushController.php`** (new) + **`routes/api.php`** (modified)
+  - `POST /fcm/token` (upsert by unique token — reassigns device to current user) and
+    `DELETE /fcm/token` (scoped to token + user), inside `ApiAuthMiddleware` (cookie auth).
+- **High-priority push bindings** (existing logic untouched; dispatch added alongside):
+  - `InterviewInviteController` — invite() → student; respond() → firm (accepted/declined);
+    schedule() → student; confirm() → firm (confirmed/reschedule); cancel() → firm.
+  - `JobsController` — applyJob() → firm ("New application received", deep-link
+    `/firm-jobs/{id}/applications`); interview request → student; respondInterview()
+    → firm (Accepted/Rejected only); reschedule-accept → student.
+  - `SendInterviewReminder24HoursJob` / `SendInterviewReminder1HourJob` — student push
+    after successful email send (rides the existing `reminder_*_sent_at` duplicate
+    protection; `applications.student_id` added to the select — additive).
+  - `SendInterviewResponseReminderJob` / `SendFirmApplicantReminderJob` — push alongside
+    the existing bell + email calls inside the same per-item try/catch.
+  - Deep links: students → `/recruiter-actions` or `/my-applications`; firms →
+    `/firm-applications`, `/firm-dashboard`, or `/firm-jobs/{id}/applications`.
+- **Not bound yet** (deferred to a later phase): messages, ticket updates, wallet/payment,
+  shortlist/select/reject status changes, marketplace events.
+- **Rollback**: remove the `SendUserPushJob::dispatch(...)` blocks (each is a self-contained
+  addition), the two `/fcm/token` routes, and the three new classes; drop `user_fcm_tokens`.
+  No existing table or contract changed, so rollback has zero data impact.
+
+---
+
 ## 2026-07-01 — Dedicated lightweight Career Status update API
 
 The Career Status modal previously reused `POST /updateProfile`, which runs full-profile

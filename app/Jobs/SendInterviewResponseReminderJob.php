@@ -102,6 +102,14 @@ class SendInterviewResponseReminderJob implements ShouldQueue
                         . 'Please accept or reject the interview request.'
                 );
 
+                // Push notification (additive layer — queued, failure-safe).
+                SendUserPushJob::dispatch(
+                    (int) $invite->student_id,
+                    "{$invite->firm_name} is waiting for your response",
+                    'Accept or decline the interview invitation.',
+                    '/recruiter-actions'
+                );
+
                 // Email (queued + logged via EmailNotificationService → DispatchMailJob).
                 $emailService->sendInterviewResponseReminder(
                     $invite->student_email,

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Helpers\AuthHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
+use App\Jobs\SendUserPushJob;
 use App\Services\Notifications\EmailNotificationService;
 use App\Services\ActivityTracker;
 use App\Enums\ActivityType;
@@ -143,6 +144,14 @@ class InterviewInviteController extends Controller
                 'created_at'          => now(),
             ]);
 
+            // Push notification (additive layer — queued, never blocks the request).
+            SendUserPushJob::dispatch(
+                (int) $studentId,
+                $firm->firm_name . ' invited you for an interview',
+                'Tap to view and respond.',
+                '/recruiter-actions'
+            );
+
             // Email (immediate / queued).
             try {
                 app(EmailNotificationService::class)->sendInterviewInvite(
@@ -256,6 +265,16 @@ class InterviewInviteController extends Controller
                     'Interview invitation ' . $verb,
                     $user->name . ' has ' . $verb . ' your interview invitation.'
                 );
+
+                // Push notification (additive layer — queued, never blocks the request).
+                SendUserPushJob::dispatch(
+                    (int) $firm->user_id,
+                    $user->name . ' ' . $verb . ' your interview invite',
+                    $newStatus === 'accepted'
+                        ? 'You can now schedule the interview.'
+                        : 'The invitation has been closed.',
+                    '/firm-dashboard'
+                );
                 try {
                     app(EmailNotificationService::class)->sendInterviewInviteResponse(
                         $firm->firm_email,
@@ -348,6 +367,15 @@ class InterviewInviteController extends Controller
                 'created_at'          => now(),
             ]);
 
+            // Push notification (additive layer — queued, never blocks the request).
+            $pushWhen = date('D, d M Y \a\t h:i A', strtotime($request->interview_date));
+            SendUserPushJob::dispatch(
+                (int) $invite->student_id,
+                $firm->firm_name . ' scheduled your interview',
+                $pushWhen . ' · ' . $request->interview_mode . ' — please confirm your availability.',
+                '/recruiter-actions'
+            );
+
             // Activity log (async, non-blocking).
             ActivityTracker::log(ActivityTracker::FIRM, $firm->user_id, ActivityType::INTERVIEW_SCHEDULED, [
                 'invite_id'      => (int) $inviteId,
@@ -427,6 +455,20 @@ class InterviewInviteController extends Controller
                     $confirmed
                         ? $user->name . ' confirmed the scheduled interview.'
                         : $user->name . ' requested to reschedule the interview.'
+                );
+
+                // Push notification (additive layer — queued, never blocks the request).
+                SendUserPushJob::dispatch(
+                    (int) $firm->user_id,
+                    $confirmed
+                        ? $user->name . ' confirmed the interview'
+                        : $user->name . ' requested a new interview time',
+                    $confirmed
+                        ? 'The interview is locked in.'
+                        : ($request->reschedule_date
+                            ? 'Proposed: ' . date('D, d M Y', strtotime($request->reschedule_date))
+                            : 'Review the reschedule request.'),
+                    '/firm-dashboard'
                 );
             }
 
@@ -539,6 +581,14 @@ class InterviewInviteController extends Controller
                         $firm->user_id,
                         'Interview cancelled',
                         'The candidate cancelled the interview invitation.'
+                    );
+
+                    // Push notification (additive layer — queued, never blocks the request).
+                    SendUserPushJob::dispatch(
+                        (int) $firm->user_id,
+                        $user->name . ' cancelled the interview',
+                        'The interview slot is now free.',
+                        '/firm-dashboard'
                     );
                 }
             }

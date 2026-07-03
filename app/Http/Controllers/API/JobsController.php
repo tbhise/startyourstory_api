@@ -14,6 +14,7 @@ use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
 use App\Helpers\SysCoinHelper;
 use App\Exceptions\InsufficientFundsException;
+use App\Jobs\SendUserPushJob;
 use App\Services\ActivityTracker;
 use App\Enums\ActivityType;
 use Illuminate\Database\QueryException;
@@ -140,6 +141,14 @@ class JobsController extends Controller
                 $user->name .
                     ' applied for ' .
                     $job->title . '.'
+            );
+            // Push notification (additive layer — queued on the database driver,
+            // so the job row commits atomically with this transaction).
+            SendUserPushJob::dispatch(
+                (int) $firm->user_id,
+                $user->name . ' applied for ' . $job->title,
+                'Review the application.',
+                '/firm-jobs/' . $id . '/applications'
             );
             DB::commit();
             return response()->json([
@@ -1317,6 +1326,14 @@ class JobsController extends Controller
         |--------------------------------------------------------------------------
         */
             if (!$existingAction) {
+                // Push notification (additive layer — queued, atomic with this transaction).
+                SendUserPushJob::dispatch(
+                    (int) $application->student_id,
+                    $firm->firm_name . ' invited you for an interview',
+                    date('D, d M Y \a\t h:i A', strtotime($request->interview_date))
+                        . ' · ' . $request->interview_mode . ' — tap to respond.',
+                    '/recruiter-actions'
+                );
                 DB::table('recruiter_actions')->insert([
                     'firm_id' =>
                     $firm->id,
@@ -1968,6 +1985,40 @@ class JobsController extends Controller
                 'created_at' =>
                 now(),
             ]);
+            // Push notification (additive layer — queued, atomic with this transaction).
+            // Covers all three student responses, incl. reschedule requests.
+            $pushFirmUserId = DB::table('firm_profiles')
+                ->where('id', $application->firm_id)
+                ->value('user_id');
+            if ($pushFirmUserId) {
+                [$pushTitle, $pushBody] = match ($request->response) {
+                    'Accepted' => [
+                        $user->name . ' confirmed the interview',
+                        $application->interview_date
+                            ? 'Interview on ' . date('D, d M Y \a\t h:i A', strtotime($application->interview_date)) . '.'
+                            : 'The interview is locked in.',
+                    ],
+                    'Rejected' => [
+                        $user->name . ' rejected the interview',
+                        'The interview will not go ahead.',
+                    ],
+                    'Reschedule Requested' => [
+                        $user->name . ' requested a new interview time',
+                        $request->reschedule_date
+                            ? 'Proposed: ' . date('D, d M Y', strtotime($request->reschedule_date))
+                            : 'Review the reschedule request.',
+                    ],
+                    default => [null, null],
+                };
+                if ($pushTitle) {
+                    SendUserPushJob::dispatch(
+                        (int) $pushFirmUserId,
+                        $pushTitle,
+                        $pushBody,
+                        '/firm-applications'
+                    );
+                }
+            }
             /*
         |--------------------------------------------------------------------------
         | Send Firm Notification Email (queued)
@@ -2122,6 +2173,14 @@ class JobsController extends Controller
                 'action_date'      => $application->interview_date,
                 'created_at'       => now(),
             ]);
+
+            // Push notification (additive layer — queued, atomic with this transaction).
+            SendUserPushJob::dispatch(
+                (int) $application->student_id,
+                $firm->firm_name . ' accepted your new interview date',
+                'Your proposed interview date has been confirmed.',
+                '/recruiter-actions'
+            );
 
             // Email to student
             try {

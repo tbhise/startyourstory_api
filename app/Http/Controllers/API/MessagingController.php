@@ -9,7 +9,9 @@ use App\Helpers\SubscriptionHelper;
 use App\Events\MessageSent;
 use App\Events\MessageRead;
 use App\Events\ConversationUpdated;
+use App\Jobs\SendUserPushJob;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -304,22 +306,9 @@ class MessagingController extends Controller
                 return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            // For free firms: check if they can unlock this request
-            if ($user->role === 'firm') {
-                $firm = $this->firmProfileForUser($user->id);
-                if ($conv->status === 'pending' && $conv->initiated_by === 'candidate') {
-                    $request_ = DB::table('message_requests')->where('conversation_id', $conv->id)->first();
-                    if ($request_ && $request_->status === 'pending') {
-                        if (!MessagingHelper::canFirmUnlockRequest($firm->id)) {
-                            return response()->json([
-                                'status'  => false,
-                                'message' => 'Upgrade to view more messages.',
-                                'code'    => 'request_limit_reached',
-                            ], 403);
-                        }
-                    }
-                }
-            }
+            // NOTE (2026-07-03 business rules): the free-firm "request unlock"
+            // gate was removed — existing conversations (including pending
+            // student-initiated requests) are always viewable by participants.
 
             $page    = max(1, (int) $request->get('page', 1));
             $perPage = 30;
@@ -333,6 +322,16 @@ class MessagingController extends Controller
                 ->get()
                 ->reverse()
                 ->values();
+
+            // Decorate with attachments (ids only — never file paths). Old
+            // messages simply get an empty array.
+            $attachmentsByMsg = \App\Services\Messaging\MessageAttachmentService::forMessages(
+                $msgs->pluck('id')->all()
+            );
+            $msgs = $msgs->map(function ($m) use ($attachmentsByMsg) {
+                $m->attachments = $attachmentsByMsg[(int) $m->id] ?? [];
+                return $m;
+            });
 
             // Mark messages from peer as read + zero this viewer's unread counter.
             $readerType = $user->role === 'student' ? 'firm' : 'candidate';
@@ -398,14 +397,18 @@ class MessagingController extends Controller
                 }
 
                 $candidateId = (int) $request->input('candidate_id');
-                $candidate   = DB::table('users')->where('id', $candidateId)->where('role', 'student')->first();
+                $candidate   = DB::table('users')
+                    ->where('id', $candidateId)
+                    ->where('role', 'student')
+                    ->where('is_deleted', false)
+                    ->first();
                 if (!$candidate) {
                     DB::rollBack();
                     return response()->json(['status' => false, 'message' => 'Candidate not found'], 404);
                 }
 
                 // Check limit
-                $check = MessagingHelper::canFirmStartConversation($firm->id);
+                $check = MessagingHelper::canStartNewConversation($firm->id);
                 if (!$check['allowed']) {
                     DB::rollBack();
                     return response()->json([
@@ -518,6 +521,15 @@ class MessagingController extends Controller
                 }
 
                 $firmUser = DB::table('users')->where('id', $firmProfile->user_id)->first();
+                // Firm account gone/deactivated → same generic message (no detail leak).
+                if (!$firmUser || $firmUser->is_deleted) {
+                    DB::rollBack();
+                    return response()->json([
+                        'status'  => false,
+                        'message' => 'Firm Not Accepting Direct Messages',
+                        'code'    => 'not_accepting',
+                    ], 403);
+                }
 
                 $convId = DB::table('conversations')->insertGetId([
                     'candidate_id'    => $user->id,
@@ -549,9 +561,9 @@ class MessagingController extends Controller
                 ]);
                 MessagingHelper::applyMessageSent($convId, 'candidate', $msgId, $message);
 
-                // A student-initiated conversation also counts toward the firm's
-                // lifetime free-conversation limit (the firm is a participant).
-                MessagingHelper::incrementConversationsStarted($firmId);
+                // Business rule (2026-07-03): student-initiated conversations do
+                // NOT consume the firm's free-conversation limit — the limit only
+                // meters the firm's own outbound outreach. No increment here.
 
                 if ($firmUser) {
                     NotificationHelper::create(
@@ -613,13 +625,36 @@ class MessagingController extends Controller
                 return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
             }
 
-            if ($conv->status === 'blocked' || $conv->status === 'ignored') {
-                return response()->json(['status' => false, 'message' => 'Cannot send message to this conversation'], 403);
+            // Existing-conversation gate (2026-07-03 business rules): premium/
+            // limit policy NEVER blocks an existing conversation — only a closed
+            // conversation or an inactive/deleted participant does.
+            $gate = MessagingHelper::canSendMessageInConversation($conv);
+            if (!$gate['allowed']) {
+                return response()->json(['status' => false, 'message' => $gate['message'], 'code' => $gate['reason']], 403);
             }
 
             $message = trim($request->input('message', ''));
-            if (empty($message) || mb_strlen($message) > 2000) {
+
+            // Attachments (ADDITIVE, optional). A plain-JSON text message takes
+            // the exact same path as before — nothing below changes for it.
+            $files = $request->file('attachments', []);
+            if ($files instanceof \Illuminate\Http\UploadedFile) {
+                $files = [$files];
+            }
+            $files = is_array($files) ? array_values(array_filter($files)) : [];
+            $hasAttachments = count($files) > 0;
+
+            if (!$hasAttachments && empty($message)) {
                 return response()->json(['status' => false, 'message' => 'Message must be between 1 and 2000 characters'], 422);
+            }
+            if (mb_strlen($message) > 2000) {
+                return response()->json(['status' => false, 'message' => 'Message must be between 1 and 2000 characters'], 422);
+            }
+            if ($hasAttachments) {
+                $attachmentError = \App\Services\Messaging\MessageAttachmentService::validateSet($files);
+                if ($attachmentError !== null) {
+                    return response()->json(['status' => false, 'message' => $attachmentError], 422);
+                }
             }
 
             $senderType = $user->role === 'student' ? 'candidate' : 'firm';
@@ -640,13 +675,8 @@ class MessagingController extends Controller
                         ->where('id', $conv->id)
                         ->update(['status' => 'active', 'updated_at' => now()]);
 
-                    // If firm is replying to a candidate-initiated request, count the unlock
-                    if ($user->role === 'firm') {
-                        $firm = $this->firmProfileForUser($user->id);
-                        if ($firm) {
-                            MessagingHelper::incrementRequestsUnlocked($firm->id);
-                        }
-                    }
+                    // (Request-unlock counting removed 2026-07-03 — replying to a
+                    // request is never limited; it accepts the conversation only.)
                 }
             }
 
@@ -654,22 +684,42 @@ class MessagingController extends Controller
                 'conversation_id' => $conv->id,
                 'sender_id'       => $user->id,
                 'sender_type'     => $senderType,
-                'message'         => $message,
+                'message'         => $message, // '' for attachment-only messages
                 'is_read'         => false,
                 'created_at'      => now(),
                 'updated_at'      => now(),
             ]);
 
+            // Store attachments (original format, private disk) + build the
+            // text stand-ins used by preview/push when the message has no text.
+            $bellPreview = $message;
+            $pushBody    = $message;
+            if ($hasAttachments) {
+                $attachmentPayloads = \App\Services\Messaging\MessageAttachmentService::store($files, (int) $conv->id, $msgId);
+                if ($message === '') {
+                    [$bellPreview, $pushBody] = \App\Services\Messaging\MessageAttachmentService::summaries($attachmentPayloads);
+                }
+            }
+
             // Refresh last-message snapshot + bump recipient's unread counter.
-            MessagingHelper::applyMessageSent($conv->id, $senderType, $msgId, $message);
+            MessagingHelper::applyMessageSent($conv->id, $senderType, $msgId, $bellPreview);
 
             // Notify the other party
-            $this->notifyPeer($user, $conv, $message, $senderType);
+            $this->notifyPeer($user, $conv, $pushBody, $senderType);
 
             DB::commit();
 
             // Realtime (after commit so subscribers see committed state).
-            $this->broadcastMessage($conv->id, $msgId, $user->id, $senderType, $message);
+            // V1 decision: the websocket payload stays lightweight — attachment
+            // messages broadcast the generic "📎 Attachment" marker and the
+            // recipient's client refetches the thread for full details.
+            $this->broadcastMessage(
+                $conv->id,
+                $msgId,
+                $user->id,
+                $senderType,
+                $hasAttachments ? '📎 Attachment' : $message
+            );
 
             return response()->json([
                 'status'  => true,
@@ -786,21 +836,19 @@ class MessagingController extends Controller
             if (!$firm) {
                 return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
             }
-            $settings = MessagingHelper::getOrCreateSettings($firm->id);
             $limits   = MessagingHelper::getOrCreateLimits($firm->id);
             $isPremium = SubscriptionHelper::isPremiumFirm($firm->id);
 
+            // accept_direct_messages toggle + request-unlock system retired
+            // (2026-07-03 business rules) — fields removed from the payload.
             return response()->json([
                 'status'  => true,
                 'message' => 'Settings fetched',
                 'data'    => [
-                    'accept_direct_messages'          => (bool) $settings->accept_direct_messages,
                     'is_premium'                      => $isPremium,
                     'lifetime_conversations_started'  => (int) $limits->lifetime_conversations_started,
-                    'lifetime_requests_unlocked'      => (int) $limits->lifetime_requests_unlocked,
                     'monthly_conversations_started'   => (int) $limits->monthly_conversations_started,
                     'free_conversation_limit'         => MessagingHelper::freeFirmConversationLimit(),
-                    'free_request_unlock_limit'       => MessagingHelper::FREE_LIFETIME_REQUESTS_UNLOCKED,
                     'allow_free_firm_messaging'       => MessagingHelper::allowFreeFirmMessaging(),
                     'premium_monthly_limit'           => 0,
                 ],
@@ -811,39 +859,9 @@ class MessagingController extends Controller
         }
     }
 
-    public function updateSettings(Request $request)
-    {
-        try {
-            $user = $this->authUser($request);
-            if ($user->role !== 'firm') {
-                return response()->json(['status' => false, 'message' => 'Unauthorized'], 403);
-            }
-            $firm = $this->firmProfileForUser($user->id);
-            if (!$firm) {
-                return response()->json(['status' => false, 'message' => 'Firm profile not found'], 404);
-            }
-
-            $validator = Validator::make($request->all(), [
-                'accept_direct_messages' => 'required|boolean',
-            ]);
-            if ($validator->fails()) {
-                return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
-            }
-
-            MessagingHelper::getOrCreateSettings($firm->id);
-            DB::table('messaging_settings')
-                ->where('firm_id', $firm->id)
-                ->update([
-                    'accept_direct_messages' => (bool) $request->input('accept_direct_messages'),
-                    'updated_at'             => now(),
-                ]);
-
-            return response()->json(['status' => true, 'message' => 'Settings updated']);
-        } catch (\Exception $e) {
-            Log::error('MessagingController@updateSettings: ' . $e->getMessage());
-            return response()->json(['status' => false, 'message' => 'Server error'], 500);
-        }
-    }
+    // updateSettings (accept_direct_messages toggle) removed 2026-07-03 —
+    // the per-firm toggle is retired from the product; the messaging_settings
+    // table remains in the DB but is no longer read or written by the app.
 
     /*
     |--------------------------------------------------------------------------
@@ -860,12 +878,10 @@ class MessagingController extends Controller
                 return response()->json(['status' => false, 'message' => 'Firm not found'], 404);
             }
 
-            $accepts = MessagingHelper::acceptsDirectMessages($firmId);
-            // Effective gate for a student starting a NEW conversation: firm policy
-            // (premium / free-under-limit) AND the accept_direct_messages toggle.
+            // Effective gate for a student starting a NEW conversation: the firm
+            // policy alone (premium / free-under-limit). The accept_direct_messages
+            // toggle was retired 2026-07-03 and is no longer consulted.
             $canStart = MessagingHelper::canStudentMessageFirm($firmId);
-            // Strict premium flag — the candidate-side "Message" button is gated on
-            // this alone (only premium firms accept direct messages).
             $isPremium = SubscriptionHelper::isPremiumFirm($firmId);
             $user    = $this->authUser($request);
 
@@ -882,7 +898,9 @@ class MessagingController extends Controller
                 'status'  => true,
                 'message' => 'Firm messaging status',
                 'data'    => [
-                    'accept_direct_messages'   => $accepts,
+                    // Kept for payload compatibility; mirrors the effective gate
+                    // now that the per-firm toggle is retired.
+                    'accept_direct_messages'   => $canStart['allowed'],
                     'can_start_conversation'   => $canStart['allowed'],
                     'is_premium'               => $isPremium,
                     'existing_conversation_id' => $existingConvId,
@@ -920,7 +938,7 @@ class MessagingController extends Controller
                 ->first();
 
             $limits   = MessagingHelper::getOrCreateLimits($firm->id);
-            $canStart = MessagingHelper::canFirmStartConversation($firm->id);
+            $canStart = MessagingHelper::canStartNewConversation($firm->id);
 
             return response()->json([
                 'status'  => true,
@@ -966,21 +984,62 @@ class MessagingController extends Controller
                 $firmName  = $firm ? $firm->firm_name : 'A firm';
                 $candidate = DB::table('users')->where('id', $conv->candidate_id)->first();
                 if ($candidate) {
-                    Mail::to($candidate->email)->queue(
-                        new \App\Mail\NewMessageReplyMail($candidate, $firmName, $message)
-                    );
+                    // Per-message email intentionally removed (2026-07-03): unread
+                    // messages are now emailed at most once per 3h by
+                    // SendUnreadMessagesEmailJob. Push below is the realtime channel.
+                    $this->pushToPeer((int) $candidate->id, $firmName, $message, (int) $conv->id);
                 }
             } else {
                 $firmProfile = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
                 $firmUser    = $firmProfile ? DB::table('users')->where('id', $firmProfile->user_id)->first() : null;
                 if ($firmUser) {
-                    Mail::to($firmUser->email)->queue(
-                        new \App\Mail\NewMessageReplyMail($firmUser, $sender->name, $message)
-                    );
+                    // Per-message email intentionally removed (2026-07-03): unread
+                    // messages are now emailed at most once per 3h by
+                    // SendUnreadMessagesEmailJob. Push below is the realtime channel.
+                    $this->pushToPeer((int) $firmUser->id, $sender->name, $message, (int) $conv->id);
                 }
             }
         } catch (\Exception $e) {
             Log::warning('Messaging peer notification failed: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Per-message push to the conversation peer, with anti-spam protection:
+     *  - Collapse tag `conv_{id}`: a burst of messages REPLACES one notification
+     *    in the browser instead of stacking.
+     *  - 2-minute cooldown per conversation+recipient (atomic Cache::add), so a
+     *    rapid exchange produces at most one push per window.
+     *  - Skip when the recipient was active in the last 60s — they are in the
+     *    app, where Reverb + the focused-tab toast already cover delivery.
+     * Never throws — called inside notifyPeer's try/catch.
+     */
+    private function pushToPeer(int $recipientId, string $senderName, string $message, int $conversationId): void
+    {
+        // Cooldown gate first (cheapest). add() is atomic: false = already sent recently.
+        if (!Cache::add("msg_push_cd_{$conversationId}_{$recipientId}", 1, 120)) {
+            Log::debug("pushToPeer skipped: cooldown active (conv {$conversationId}, recipient {$recipientId})");
+            return;
+        }
+
+        $recentlyActive = DB::table('user_sessions')
+            ->where('user_id', $recipientId)
+            ->where('last_activity_at', '>=', now()->subSeconds(60))
+            ->exists();
+        if ($recentlyActive) {
+            Log::debug("pushToPeer skipped: recipient {$recipientId} active in last 60s (conv {$conversationId})");
+            return;
+        }
+
+        Log::debug("pushToPeer: dispatching push (conv {$conversationId}, recipient {$recipientId})");
+        $preview = mb_strlen($message) > 80 ? mb_substr($message, 0, 77) . '…' : $message;
+        SendUserPushJob::dispatch(
+            $recipientId,
+            'New message from ' . $senderName,
+            $preview,
+            '/messages',
+            [],
+            'conv_' . $conversationId
+        );
     }
 }

@@ -7,9 +7,6 @@ use Carbon\Carbon;
 
 class MessagingHelper
 {
-    // Free firm lifetime cap for request-unlocks (unchanged).
-    const FREE_LIFETIME_REQUESTS_UNLOCKED = 3;
-
     // Defaults for the admin-controlled messaging policy (overridable via
     // platform_settings: allow_free_firm_messaging, free_firm_conversation_limit).
     const DEFAULT_ALLOW_FREE_FIRM_MESSAGING = true;
@@ -40,13 +37,15 @@ class MessagingHelper
     }
 
     /**
-     * Core policy: can this firm be part of a NEW conversation?
+     * Core policy: can a NEW conversation involving this firm be started?
+     * Applies to BOTH directions (student->firm and firm->student).
      * - Premium firm: always (unlimited).
      * - Non-premium: only if free messaging is enabled AND under the lifetime limit.
-     * (Does NOT consider the accept_direct_messages toggle — that gates the
-     *  student->firm direction only; see canStudentMessageFirm.)
+     * Note: the lifetime limit counts FIRM-INITIATED conversations only
+     * (business rule: free firms always receive inbound student leads; premium
+     * sells unlimited OUTBOUND outreach).
      */
-    public static function firmCanHaveNewConversation(int $firmId): array
+    public static function canStartNewConversation(int $firmId): array
     {
         if (SubscriptionHelper::isPremiumFirm($firmId)) {
             return ['allowed' => true, 'reason' => null, 'message' => null];
@@ -74,20 +73,59 @@ class MessagingHelper
     }
 
     /**
-     * Student -> Firm initiation gate: firm policy must allow a new conversation
-     * AND the firm must accept direct messages. The student should never learn
-     * the firm's premium/limit state, so all failures collapse to one message.
+     * Student -> Firm initiation gate: same core policy as firm-initiated
+     * (canStartNewConversation), but the student must never learn the firm's
+     * premium/limit state, so all failures collapse to one generic message.
+     * (The retired accept_direct_messages toggle is no longer consulted —
+     * removed from the product 2026-07-03.)
      */
     public static function canStudentMessageFirm(int $firmId): array
     {
-        $policy = self::firmCanHaveNewConversation($firmId);
-        if (!$policy['allowed'] || !self::acceptsDirectMessages($firmId)) {
+        $policy = self::canStartNewConversation($firmId);
+        if (!$policy['allowed']) {
             return [
                 'allowed' => false,
                 'reason'  => 'not_accepting',
-                'message' => 'Not Accepting Direct Messages',
+                'message' => 'Firm Not Accepting Direct Messages',
             ];
         }
+        return ['allowed' => true, 'reason' => null, 'message' => null];
+    }
+
+    /**
+     * Existing-conversation gate: once a conversation exists, messaging is
+     * NEVER blocked by premium/limit policy (business rule) — only by the
+     * conversation being closed or a participant no longer being active.
+     */
+    public static function canSendMessageInConversation(object $conv): array
+    {
+        if ($conv->status === 'blocked' || $conv->status === 'ignored') {
+            return [
+                'allowed' => false,
+                'reason'  => 'conversation_closed',
+                'message' => 'Cannot send message to this conversation',
+            ];
+        }
+
+        $candidateActive = DB::table('users')
+            ->where('id', $conv->candidate_id)
+            ->where('is_deleted', false)
+            ->exists();
+
+        $firmUserId = DB::table('firm_profiles')->where('id', $conv->firm_id)->value('user_id');
+        $firmActive = $firmUserId && DB::table('users')
+            ->where('id', $firmUserId)
+            ->where('is_deleted', false)
+            ->exists();
+
+        if (!$candidateActive || !$firmActive) {
+            return [
+                'allowed' => false,
+                'reason'  => 'participant_inactive',
+                'message' => 'This conversation is no longer available',
+            ];
+        }
+
         return ['allowed' => true, 'reason' => null, 'message' => null];
     }
 
@@ -97,26 +135,9 @@ class MessagingHelper
     |--------------------------------------------------------------------------
     */
 
-    public static function getOrCreateSettings(int $firmId): object
-    {
-        $settings = DB::table('messaging_settings')->where('firm_id', $firmId)->first();
-        if (!$settings) {
-            DB::table('messaging_settings')->insert([
-                'firm_id'               => $firmId,
-                'accept_direct_messages' => true,
-                'created_at'            => now(),
-                'updated_at'            => now(),
-            ]);
-            $settings = DB::table('messaging_settings')->where('firm_id', $firmId)->first();
-        }
-        return $settings;
-    }
-
-    public static function acceptsDirectMessages(int $firmId): bool
-    {
-        $s = DB::table('messaging_settings')->where('firm_id', $firmId)->first();
-        return $s ? (bool) $s->accept_direct_messages : true;
-    }
+    // getOrCreateSettings removed 2026-07-03: the accept_direct_messages
+    // toggle is retired from the product. The messaging_settings table stays
+    // in the DB (untouched) but the app no longer reads or writes it.
 
     /*
     |--------------------------------------------------------------------------
@@ -164,37 +185,13 @@ class MessagingHelper
 
     /*
     |--------------------------------------------------------------------------
-    | Can Firm Start New Conversation?
-    |--------------------------------------------------------------------------
-    */
-
-    public static function canFirmStartConversation(int $firmId): array
-    {
-        // Firm-initiated: gated purely by the firm's own messaging policy
-        // (premium = unlimited; free = enabled & under the admin limit).
-        // The accept_direct_messages toggle does NOT block a firm's own outreach.
-        return self::firmCanHaveNewConversation($firmId);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Can Free Firm Unlock Request?
-    |--------------------------------------------------------------------------
-    */
-
-    public static function canFirmUnlockRequest(int $firmId): bool
-    {
-        if (SubscriptionHelper::isPremiumFirm($firmId)) {
-            return true;
-        }
-        $limits = self::getOrCreateLimits($firmId);
-        return $limits->lifetime_requests_unlocked < self::FREE_LIFETIME_REQUESTS_UNLOCKED;
-    }
-
-    /*
-    |--------------------------------------------------------------------------
     | Increment Counters
     |--------------------------------------------------------------------------
+    | NOTE (2026-07-03 business rules): incremented ONLY for firm-initiated
+    | conversations — student-initiated ones never consume the free limit.
+    | The request-unlock system (canFirmUnlockRequest / incrementRequestsUnlocked)
+    | was removed entirely; the lifetime_requests_unlocked column remains in
+    | the table but is no longer read or written.
     */
 
     public static function incrementConversationsStarted(int $firmId): void
@@ -203,14 +200,6 @@ class MessagingHelper
             'lifetime_conversations_started' => DB::raw('lifetime_conversations_started + 1'),
             'monthly_conversations_started'  => DB::raw('monthly_conversations_started + 1'),
             'updated_at'                     => now(),
-        ]);
-    }
-
-    public static function incrementRequestsUnlocked(int $firmId): void
-    {
-        DB::table('messaging_limits')->where('firm_id', $firmId)->update([
-            'lifetime_requests_unlocked' => DB::raw('lifetime_requests_unlocked + 1'),
-            'updated_at'                 => now(),
         ]);
     }
 

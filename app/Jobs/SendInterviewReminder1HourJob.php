@@ -43,6 +43,7 @@ class SendInterviewReminder1HourJob implements ShouldQueue
             ->whereNotIn('applications.recruiter_status', ['Interview Rejected', 'Rejected', 'Cancelled'])
             ->select(
                 'applications.id',
+                'applications.student_id',
                 'applications.interview_date',
                 'applications.interview_mode',
                 'applications.interview_note',
@@ -100,6 +101,15 @@ class SendInterviewReminder1HourJob implements ShouldQueue
                 DB::table('applications')
                     ->where('id', $app->id)
                     ->update(['reminder_1h_sent_at' => now()]);
+
+                // Push notification (additive layer — queued; rides the same
+                // duplicate protection as the email above).
+                SendUserPushJob::dispatch(
+                    (int) $app->student_id,
+                    "Interview in 1 hour — {$app->firm_name}",
+                    "{$app->job_title} · {$interviewDate}",
+                    '/my-applications'
+                );
 
             } catch (Throwable $e) {
                 Log::error('1h interview reminder failed', [

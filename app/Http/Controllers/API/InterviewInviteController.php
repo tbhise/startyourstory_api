@@ -149,7 +149,9 @@ class InterviewInviteController extends Controller
                 (int) $studentId,
                 $firm->firm_name . ' invited you for an interview',
                 'Tap to view and respond.',
-                '/recruiter-actions'
+                '/recruiter-actions',
+                [],
+                'interview_' . $inviteId // later invite events replace this notification
             );
 
             // Email (immediate / queued).
@@ -263,7 +265,8 @@ class InterviewInviteController extends Controller
                 NotificationHelper::create(
                     $firm->user_id,
                     'Interview invitation ' . $verb,
-                    $user->name . ' has ' . $verb . ' your interview invitation.'
+                    $user->name . ' has ' . $verb . ' your interview invitation.',
+                    false // explicit richer push dispatched below
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -273,7 +276,9 @@ class InterviewInviteController extends Controller
                     $newStatus === 'accepted'
                         ? 'You can now schedule the interview.'
                         : 'The invitation has been closed.',
-                    '/firm-dashboard'
+                    '/firm-dashboard',
+                    [],
+                    'interview_' . $invite->id // replaces older notifications for this invite
                 );
                 try {
                     app(EmailNotificationService::class)->sendInterviewInviteResponse(
@@ -373,7 +378,9 @@ class InterviewInviteController extends Controller
                 (int) $invite->student_id,
                 $firm->firm_name . ' scheduled your interview',
                 $pushWhen . ' · ' . $request->interview_mode . ' — please confirm your availability.',
-                '/recruiter-actions'
+                '/recruiter-actions',
+                [],
+                'interview_' . $invite->id // replaces the original invite notification
             );
 
             // Activity log (async, non-blocking).
@@ -454,7 +461,8 @@ class InterviewInviteController extends Controller
                     $confirmed ? 'Interview confirmed' : 'Reschedule requested',
                     $confirmed
                         ? $user->name . ' confirmed the scheduled interview.'
-                        : $user->name . ' requested to reschedule the interview.'
+                        : $user->name . ' requested to reschedule the interview.',
+                    false // explicit richer push dispatched below
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -468,7 +476,9 @@ class InterviewInviteController extends Controller
                         : ($request->reschedule_date
                             ? 'Proposed: ' . date('D, d M Y', strtotime($request->reschedule_date))
                             : 'Review the reschedule request.'),
-                    '/firm-dashboard'
+                    '/firm-dashboard',
+                    [],
+                    'interview_' . $invite->id // replaces older notifications for this invite
                 );
             }
 
@@ -580,7 +590,8 @@ class InterviewInviteController extends Controller
                     NotificationHelper::create(
                         $firm->user_id,
                         'Interview cancelled',
-                        'The candidate cancelled the interview invitation.'
+                        'The candidate cancelled the interview invitation.',
+                        false // explicit richer push dispatched below
                     );
 
                     // Push notification (additive layer — queued, never blocks the request).
@@ -588,7 +599,9 @@ class InterviewInviteController extends Controller
                         (int) $firm->user_id,
                         $user->name . ' cancelled the interview',
                         'The interview slot is now free.',
-                        '/firm-dashboard'
+                        '/firm-dashboard',
+                        [],
+                        'interview_' . $invite->id // replaces older notifications for this invite
                     );
                 }
             }

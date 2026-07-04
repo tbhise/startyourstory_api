@@ -73,7 +73,12 @@ class UserPushService
             ]));
 
             foreach ($tokens as $id => $token) {
-                $webpushNotification = ['icon' => '/android-chrome-192x192.png'];
+                $webpushNotification = [
+                    'icon'  => '/android-chrome-192x192.png',
+                    // Android status-bar badge (monochrome-masked by Chrome).
+                    // Uses the app icon until a dedicated badge asset exists.
+                    'badge' => '/android-chrome-192x192.png',
+                ];
                 if ($collapseTag) {
                     // Same tag → the browser REPLACES the previous notification
                     // instead of stacking (e.g. a burst of chat messages shows

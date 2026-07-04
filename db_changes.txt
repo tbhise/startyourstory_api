@@ -3029,23 +3029,13 @@ CREATE TABLE `user_push_digest_state` (
 
 
 -- =====================================================================
--- 2026-07-03 — Unread-messages email reminder throttle state
--- Migration: 2026_07_03_000003_create_user_message_email_state_table.php
--- Additive only. One row per user; written by SendUnreadMessagesEmailJob
--- to enforce: max one unread-messages reminder email per 3 hours.
--- (Replaces the per-message NewMessageReplyMail sends.)
--- =====================================================================
-
-CREATE TABLE `user_message_email_state` (
-  `user_id`      BIGINT UNSIGNED NOT NULL,
-  `last_sent_at` DATETIME NOT NULL,
-  `created_at`   TIMESTAMP NULL,
-  `updated_at`   TIMESTAMP NULL,
-  PRIMARY KEY (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- ROLLBACK:
+-- 2026-07-03 — user_message_email_state: REMOVED 2026-07-04 (never shipped)
+-- The unread-messages reminder email system was removed entirely before
+-- production deploy (final strategy: email only on new-conversation
+-- requests; replies notify via push alone). Do NOT create this table.
+-- If it was already created from an earlier copy of this file:
 -- DROP TABLE IF EXISTS `user_message_email_state`;
+-- =====================================================================
 
 
 -- =====================================================================

@@ -4,6 +4,194 @@
 
 ---
 
+## 2026-07-04 — Push spam reduction: message aggregation, gates restored (tuned), interview collapse tags
+
+Ends the 2026-07-03 TEST MODE (push on every message) and replaces it with the
+final anti-spam design. Chrome/Android flags high-frequency per-site pushes as
+spam; this reduces volume while losing zero information.
+
+- **`MessagingController::pushToPeer` rewritten**:
+  - **Aggregation**: every message increments a pending cache counter
+    (`msg_push_agg_{conv}_{recipient}`, TTL 15 min). Suppressed messages are not
+    lost — the next allowed push says "{n} new messages from {name}" (n>1) with
+    the latest message as preview. Verified: msg1 → "New message from Rahul";
+    msgs 2-3 suppressed; after cooldown expiry msg4 → "3 new messages from Rahul".
+  - **Active suppression restored and raised 60s → 180s**
+    (PUSH_ACTIVE_SUPPRESS_SECONDS). Rationale: shells poll every ~30s so an open
+    tab keeps `last_activity_at` fresh either way; the raise only adds a grace
+    period after the user leaves the site, avoiding "pushed about the chat I was
+    literally just reading". Checked BEFORE the cooldown now — a skip no longer
+    consumes the cooldown window (fixes the ordering flaw from the 2026-07-03 audit).
+  - **2-min cooldown restored** (PUSH_COOLDOWN_SECONDS, atomic Cache::add).
+  - Collapse tag `conv_{id}` unchanged. Verified: active recipient → 0 jobs
+    queued, aggregate=2, cooldown NOT consumed.
+- **Interview collapse tags** (webpush `tag` → newer replaces older in the tray):
+  `interview_{inviteId}` on all 5 InterviewInviteController pushes
+  (invite/respond/schedule/confirm/cancel) + SendInterviewResponseReminderJob;
+  `interview_app_{applicationId}` on the 3 JobsController application-flow
+  interview pushes (request/respond/reschedule-accept) + both interview reminder
+  jobs (1h reminder replaces the 24h one). Two namespaces because invite ids and
+  application ids can collide. applyJob push left untagged on purpose (distinct
+  applicants must not replace each other). Digest logic untouched.
+- **`UserPushService`**: webpush notification gains `badge` (Android status-bar
+  glyph; currently the 192px app icon — a dedicated monochrome ~96px badge asset
+  would render crisper, follow-up).
+- **Verified**: php -l clean on all 7 files; tinker functional test of
+  aggregation/cooldown/active-skip (transactional, rolled back).
+- **Rollback**: restore pushToPeer from the TEST MODE entry below; drop the six
+  `[], 'interview_…'` arg pairs; remove the badge line.
+
+---
+
+## 2026-07-03 — Push on EVERY notification-bell action (central hook)
+
+The notification bell (`FirmDashboardController@getNotifications`, `POST /notifications`)
+reads ONLY the `notifications` table, and every row there is written through
+`NotificationHelper::create()`. So push is now hooked into that single helper: every
+bell entry for a student/firm fires a `SendUserPushJob` — exactly once.
+
+- **`app/Helpers/NotificationHelper.php`**: `create()` gains `bool $sendPush = true`
+  and `?string $actionUrl = null`. When `$sendPush` (default), it dispatches
+  `SendUserPushJob($userId, $title, $message, $actionUrl)` after the insert. Queued +
+  non-throwing; no-op when the user has no device token / FCM unconfigured; safe inside
+  DB transactions (database queue = job row commits with the txn).
+- **Newly pushed (previously bell/email only)**: wallet credit/debit
+  (AdminWalletController), support-ticket replies (Admin + SupportTicketController),
+  referral payouts (AdminReferralController), admin-originated user notifications
+  (AdminController), new message-request (MessagingController@startConversation, both
+  directions), account-deletion notice to firm (UserController).
+- **Dedup — 6 sites pass `$sendPush = false`** because they ALREADY dispatch a richer,
+  deep-linked explicit push to the same user (kept, better copy):
+  InterviewInviteController respond/confirm/cancel, JobsController@applyJob,
+  SendInterviewResponseReminderJob, SendFirmApplicantReminderJob. Interview
+  invite/schedule and application-status pushes ride the `recruiter_actions` feed
+  (not `create()`), so they never doubled.
+- **Verified** (tinker, transactional, rolled back): default `create()` → 1
+  `SendUserPushJob` queued on `queue_jobs` + bell row written; `create(...,false)` →
+  0 jobs queued + bell row still written. Syntax clean on all 5 touched files.
+- **Note**: still requires a running queue worker to deliver; a focused recipient
+  tab shows an in-app toast instead of an OS pop-up (FCM foreground behaviour).
+- **Rollback**: revert the `NotificationHelper::create` signature/body and the six
+  `false` args.
+
+---
+
+## 2026-07-03 — [TEST MODE — REVERT BEFORE PROD] message push on every message
+
+Temporary change for end-to-end push testing. **`MessagingController::pushToPeer`**:
+both anti-spam gates are commented out so EVERY chat message dispatches a push —
+(1) the 2-min per-conversation cooldown and (2) the 60s-recently-active skip. The
+`conv_{id}` collapse tag is retained, so browser notifications still coalesce.
+
+- ⚠️ **Not for production.** Restore by un-commenting the two gate blocks (they are
+  left in place, commented, with a `TEST MODE` banner) — this reverts to at most one
+  push per conversation per 2 minutes and suppression while the recipient is active.
+- No other logic touched; note that a FOCUSED recipient tab still shows a toast
+  instead of an OS pop-up (FCM foreground behaviour), and delivery still requires a
+  running queue worker.
+
+---
+
+## 2026-07-03 — SMTP stale-connection fix: ping_threshold + restart_threshold
+
+Root cause of the production "421 4.4.2 smtp.hostinger.com Error: timeout exceeded"
+errors (thrown at MAIL FROM inside DispatchMailJob): long-running queue workers keep
+the SMTP connection alive between sends, and Hostinger's shared SMTP drops idle
+connections — the next send then fails on the dead socket (and was retried by the
+job's tries=3/backoff, so mail still delivered, but each incident logged an error).
+
+- **`config/mail.php`** (smtp mailer, additive): `ping_threshold` = 30 (env
+  `MAIL_PING_THRESHOLD`) — Symfony NOOP-pings a connection idle >30s and
+  transparently reconnects if dead; `restart_threshold` = 50 (env
+  `MAIL_RESTART_THRESHOLD`) — recycles the connection every 50 sends as a guard
+  against per-connection message caps. Both are consumed by
+  `EsmtpTransportFactory` from the DSN options Laravel already passes through.
+- **Verified** (tinker + reflection on the built smtp transport):
+  pingThreshold=30, restartThreshold=50 present on the EsmtpTransport instance.
+- **Deploy note**: if config is cached in prod, run `php artisan config:cache`
+  after deploying. Optional server hardening (not in repo): supervisor
+  `--max-time=3600` on queue workers to recycle processes hourly.
+- **Rollback**: remove the two config keys.
+
+---
+
+## 2026-07-03 — error_logs: skip-list for routine-noise messages
+
+Four messages were flooding the admin error_logs table without representing real
+failures. They are now excluded at BOTH ingestion points via a shared skip list
+(`ErrorLogRecorder::MESSAGE_SKIP` + `shouldSkipMessage()`), matched exact
+(case-insensitive, trimmed) so real errors that merely contain these words
+(e.g. "Unauthorized webhook signature …") are still recorded:
+
+- "Invalid token" / "Unauthorized" — expired-cookie 401s (frontend reports every
+  API error; these are routine session expiries)
+- "Send Verification Link API called" — an audit `Log::alert()` in
+  UserController@sendVerificationLink, captured because `alert` is in
+  ErrorLogRecorder's error-level list; it is not a failure
+- "This action is disabled during admin impersonation (read-only mode)." —
+  intentional 403 from BlockImpersonationWrites
+
+Changes:
+- **`app/Services/ErrorLogRecorder.php`**: `MESSAGE_SKIP` const + public
+  `shouldSkipMessage()`; applied in `record()` (exceptions) and `recordLog()`
+  (error-level log lines).
+- **`app/Http/Controllers/API/ErrorLogController.php`** `@store`: same check for
+  frontend-reported rows; still ACKs 201 so the fire-and-forget client (and its
+  localStorage fallback) is unaffected. Backend-side filtering deliberately covers
+  stale cached frontend bundles too.
+- Everything else (sanitization, redaction, stack storage, admin endpoints)
+  unchanged. laravel.log is NOT affected — full detail still lands there.
+- **Verified** (tinker): all four messages skipped incl. case/whitespace variants;
+  "Unauthorized webhook signature from gateway", "Network Error", and an SQLSTATE
+  message still pass through and would be recorded.
+- **Rollback**: remove the `MESSAGE_SKIP` block + the two call sites + the
+  controller guard.
+
+---
+
+## 2026-07-03 — Attachment rule finalized: 5 files total, any mix, up to 5 PDFs
+
+Documentation correction — NO validation logic changed. The final approved rule is:
+max 5 attachments per message TOTAL, any combination of images and PDFs (5 images,
+5 PDFs, or 3 images + 2 PDFs are all valid; 6 files always rejected). The code already
+implemented this (`MessageAttachmentService::MAX_FILES = 5`, `MAX_PDFS = 5`; frontend
+`ATT_MAX_FILES/ATT_MAX_PDFS = 5`) — the "at most 1 PDF" wording in the original
+'Chat message attachments' entry below is superseded, and the stale service docblock
+was updated to match.
+
+- **Verified** (tinker, real GD PNGs + real PDFs through `validateSet`): 5 images →
+  accepted; 5 PDFs → accepted; 3 images + 2 PDFs → accepted; 6 files (4+2) → rejected
+  ("at most 5 files"); exe-disguised-as-png → rejected. Per-file size caps unchanged
+  (images ≤5MB, PDF ≤10MB).
+
+---
+
+## 2026-07-03 — FINAL rule correction: student-initiated conversations also consume the free limit
+
+Supersedes the "free limit counts ONLY firm-initiated conversations" decision in the
+entry below. Final confirmed business rule: the free-firm conversation limit applies to
+ALL new conversations in BOTH directions — firm-initiated AND student-initiated each
+increment `messaging_limits.lifetime_conversations_started`. Existing conversations
+remain unaffected (reply gate unchanged).
+
+- **`MessagingController@startConversation`** (student branch):
+  `MessagingHelper::incrementConversationsStarted($firmId)` restored after the message
+  insert (unconditional, matching the firm-initiated branch — premium firms accrue the
+  counter too; the gate just never enforces it for them).
+- **`MessagingHelper`**: `canStartNewConversation` docblock + increment-counters comment
+  updated to the final rule (no logic change there — the gate already counted both
+  directions once the increment exists).
+- **Verified** (tinker on dev DB, transactional dry-run, rolled back): limit=2, fresh
+  free firm → student→firm OK (counter 1) → firm→student OK (counter 2) →
+  firm→student blocked `free_limit_reached` → student→firm blocked `not_accepting`
+  ("Firm Not Accepting Direct Messages"), counter stays 2 → reply in existing
+  conversation still allowed at limit, counter unchanged → premium firm with counter=99
+  passes both gates.
+- **Rollback**: remove the one `incrementConversationsStarted` line in the student
+  branch (comments cosmetic).
+
+---
+
 ## 2026-07-03 — Messaging business rules finalized: gates rewritten
 
 Implements the finalized rules: NEW conversations gated identically in both directions
@@ -3951,3 +4139,148 @@ Both are async (database queue), fully fail-isolated, and change no existing beh
 ### Verified (tinker, local copy of live DB)
 - Before: `getStatus(25)` → used=3, saved=3, remaining=0. After: used=0, remaining=2.
 - Fixes every firm that burned free actions on Save Candidate, not just firm 25.
+
+## 2026-07-04 — Companies "Openings" = total vacancies (SUM), not job-post count
+
+### Why
+- Student-side /companies cards showed the NUMBER of active job posts as "Openings"
+  (e.g. Job A openings=1 + Job B openings=2 displayed as 2, not 3). The `jobs.openings`
+  vacancy column was never aggregated. The list page also silently counted Draft jobs
+  (filtered on `is_active` only), while the detail page required `status='Active'`,
+  so the two pages could disagree.
+
+### Change (`app/Http/Controllers/API/FirmController.php` — queries only, no route/schema changes)
+- `getCompanies()` derived table: `COUNT(*)` → `SUM(COALESCE(openings, 1))`, filter
+  tightened from `is_active = 1` to `is_active = 1 AND status = 'Active'`.
+- `getCompanyDetails()` scalar subquery: `count(*)` → `coalesce(sum(coalesce(jobs.openings, 1)), 0)`
+  (filter already had `status = 'Active'`).
+- `openings_breakdown`: `count(*)` → `SUM(COALESCE(openings, 1))` + added `status = 'Active'`
+  filter, so per-type counts add up to the headline number.
+- NULL openings counts as 1 (a live job is ≥1 vacancy; legacy rows predate the UI default of 1).
+  Draft and Closed jobs are excluded everywhere; matches the student job feed filter.
+- Both `current_openings` response fields now cast `(int)` — SUM arrives as a string from PDO,
+  unlike the old COUNT(*), and the frontend types it as number.
+
+### Verified (tinker against local DB, real controller methods, test rows cleaned up)
+- Firm 16 (active jobs 2+2+1): list card and detail both 5 (was 3 under COUNT).
+- Edge rows added (openings=NULL Active, Draft openings=2, Closed openings=10): both pages
+  → 6 (NULL counted as 1, Draft/Closed excluded); breakdown summed to 6. After cleanup → 5.
+- JSON types confirmed integer on both endpoints; `php -l` clean.
+- No frontend changes needed: field names/consumers unchanged (`companies.index.tsx` card,
+  `companies.$id.index.tsx` badge + `hasOpenings` gate). `/master/companies`, admin pages,
+  per-job `openings` displays (student dashboard, firm-jobs) untouched.
+
+## 2026-07-04 — Unread-messages reminder EMAIL system removed entirely (never shipped)
+
+### Why
+- Final messaging notification strategy confirmed: EMAIL fires only when a NEW
+  conversation is initiated (NewMessageRequestMail, both directions — unchanged);
+  replies/existing-conversation messages notify via PUSH alone (aggregation +
+  cooldown gates unchanged). The 3-hourly unread-messages reminder email
+  (added 2026-07-03, never deployed to production) contradicts this and was
+  removed completely rather than left dormant.
+
+### Removed
+- `routes/console.php` — `send-unread-messages-email` schedule entry + the
+  `SendUnreadMessagesEmailJob` import (tombstone comment left in place).
+- `app/Jobs/SendUnreadMessagesEmailJob.php` — deleted.
+- `app/Mail/UnreadMessagesReminderMail.php` — deleted.
+- `resources/views/emails/messaging/unread-reminder.blade.php` — deleted.
+- `database/migrations/2026_07_03_000003_create_user_message_email_state_table.php` — deleted.
+- `user_message_email_state` table dropped from the dev DB (was empty);
+  db_changes.txt CREATE block replaced with a do-not-create tombstone that
+  includes the DROP statement in case an earlier copy was ever applied.
+- Stale notifyPeer comments updated to the final strategy wording.
+
+### Kept (explicitly)
+- `NewMessageRequestMail` + both queue sites in startConversation (new-conversation email).
+- All push logic: pushToPeer gates/aggregation, NotificationHelper::create hook,
+  `send-unread-digest-push` hourly job (push-only, bell-based — unrelated to chat email).
+- `NewMessageReplyMail` class stays dormant (pre-existing, zero dispatch sites).
+
+### Verified
+- `php -l` clean on routes/console.php + MessagingController.php.
+- `php artisan schedule:list` boots clean; send-unread-messages-email gone,
+  send-unread-digest-push still listed.
+- Repo-wide grep: zero remaining references outside changelog history and the
+  db_changes tombstone. Dev queue had no pending jobs of the removed class.
+
+## 2026-07-05 — Fallback flush for suppressed chat pushes (closes the "stuck message" gap)
+
+### Why
+- pushToPeer suppresses pushes while the recipient is active (180s window) and relies
+  on the NEXT message event to flush the aggregate. If a user closed the app right
+  after a message was suppressed and no further message arrived, that message was
+  never notified on ANY channel (no reply email by design; digest push counts only
+  bell/recruiter actions, not chat). Confirmed against prod logs of 2026-07-04/05.
+
+### Change (additive — no existing gate/cooldown/aggregation/collapse behaviour altered)
+- **`app/Jobs/FlushSuppressedMessagePushJob.php`** (new, tries=1, non-throwing):
+  delayed re-check that pushes ONLY if all hold — (1) recipient had NO activity at/after
+  the LAST suppressed message (activity after it = open tab got it via Reverb);
+  (2) conversation still unread for them (DB counters, not cache; blocked/ignored skip);
+  (3) aggregate counter still pending (0 = an event push already flushed);
+  (4) shared per-conversation cooldown slot free (atomic Cache::add). Payload/deep-link/
+  `conv_{id}` collapse tag identical to pushToPeer; body = attachment-aware
+  `last_message_preview` snapshot.
+- **`MessagingController`**: active-skip branch of `pushToPeer` now records the
+  suppression timestamp (`msg_push_flush_ts_*`, TTL = aggregate TTL) and schedules ONE
+  flush job per conversation+recipient burst via atomic `Cache::add` on
+  `msg_push_flush_*` (TTL = delay + 60s), `->delay(PUSH_FLUSH_DELAY_SECONDS = 120)`.
+  Push constants made public (single source of truth for the job). Comparing against
+  the suppression moment — not a fixed window — is what makes the 2-min delay safe:
+  a user who closes the app the second a message lands still gets the fallback.
+- Worst-case notification delay for a "last message before silence" goes from
+  infinite to ~2 minutes; users active after the message are never double-pushed.
+
+### Verified (tinker on dev DB, transactional, rolled back; cache keys cleaned)
+- Two suppressions → exactly ONE delayed job (available_at = +119s), aggregate=2.
+- Activity after suppression → skip, aggregate preserved. Inactive + unread + pending
+  → 1 push queued: title "2 new messages from {firm}", body = preview, tag conv_{id};
+  aggregate cleared + cooldown set. Immediate re-flush → blocked by cooldown.
+  pending=0 → skip; unread=0 → skip; blocked conversation → skip. php -l clean.
+
+### Deploy
+- Queue-worker restart required (new job class). No schema/route/env changes.
+
+## 2026-07-05 — Activity Tracker: job_applied action added + entity names in meta
+
+Root cause of the "Devesh Mishra applications missing from Activity Tracker" audit:
+`job_applied` was never a tracked action — no `ActivityType` case and no
+`ActivityTracker::log` call in the apply flow (affected ALL students since launch,
+not just Devesh). Also: tracker Details rendered raw IDs ("Candidate #112") because
+meta only stored IDs.
+
+### Changes
+- **`app/Enums/ActivityType.php`**: new student case `JOB_APPLIED = 'job_applied'`.
+- **`app/Http/Controllers/API/JobsController.php`**:
+  - `applyJob`: logs `job_applied` after `DB::commit()` (per ActivityTracker contract)
+    with `application_id, job_id, job_title, firm_id, firm_name, payment_source` —
+    names passed inline (all in scope), zero extra queries.
+  - student interview-accept: meta now also carries `firm_id` so firm name resolves.
+- **`app/Jobs/LogActivityJob.php`**: new `enrichMeta()` — central name resolution at
+  write time for the shared meta ID conventions (`student_id`→`student_name` via
+  users, `firm_id`→`firm_name` via firm_profiles [firm_id is ALWAYS firm_profiles.id
+  in tracker meta], `job_id`→`job_title` via jobs). Skips keys the caller pre-filled;
+  runs in the queue worker (zero request-path cost); own try/catch — a failed lookup
+  inserts the row with IDs only (old behaviour). This gives ALL 8 existing call sites
+  names without touching their controllers. Names are frozen at write time so history
+  survives renames.
+- **`app/Http/Controllers/API/CreatorMarketplaceController.php`**: `content_submitted`
+  meta now includes `project_title` + `firm_id` (both already in scope).
+- No schema change (`meta` is JSON), no API change (meta passed through), old rows
+  untouched — frontend falls back to `#ID` format for them.
+
+### Verified
+- `php -l` clean on all 4 files.
+- Real end-to-end run (tinker, dev DB): `LogActivityJob('student', 178, 'job_applied',
+  [job_id 18, firm_id 48, student_id 178, ...])->handle()` inserted meta with
+  `student_name: "Devesh Mishra"`, `firm_name: "CA Pritam Mahure & Associates"`,
+  `job_title: "Articleship Trainee - Indirect Tax (GST & Customs)"`; test row deleted.
+
+### Deploy
+- Queue-worker restart required (`php artisan queue:restart`) — LogActivityJob code
+  changed. Constructor signature unchanged, so any in-flight queued payloads remain
+  compatible. No schema/route/env changes.
+- Historical backfill of `job_applied` rows from `applications` (applied_at →
+  created_at) is possible but NOT included — decide separately.

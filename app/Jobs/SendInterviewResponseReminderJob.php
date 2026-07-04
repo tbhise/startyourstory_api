@@ -99,7 +99,8 @@ class SendInterviewResponseReminderJob implements ShouldQueue
                     (int) $invite->student_id,
                     'Interview Response Pending',
                     "{$invite->firm_name} is waiting for your response to an interview invitation. "
-                        . 'Please accept or reject the interview request.'
+                        . 'Please accept or reject the interview request.',
+                    false // explicit richer push dispatched below
                 );
 
                 // Push notification (additive layer — queued, failure-safe).
@@ -107,7 +108,9 @@ class SendInterviewResponseReminderJob implements ShouldQueue
                     (int) $invite->student_id,
                     "{$invite->firm_name} is waiting for your response",
                     'Accept or decline the interview invitation.',
-                    '/recruiter-actions'
+                    '/recruiter-actions',
+                    [],
+                    'interview_' . $invite->id // replaces the original invite notification
                 );
 
                 // Email (queued + logged via EmailNotificationService → DispatchMailJob).

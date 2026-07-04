@@ -644,8 +644,13 @@ class FirmController extends Controller
                 ->where('firm_profiles.verification_status', 'approved')
                 ->leftJoin('firm_departments', 'firm_profiles.id', '=', 'firm_departments.firm_id')
 
+                // current_openings = total vacancies (SUM of jobs.openings), not the
+                // number of job posts. NULL openings counts as 1 — a live job always
+                // represents at least one vacancy (legacy rows predate the UI default).
+                // Filter matches the student job feed: is_active AND status = 'Active',
+                // so Draft/Closed jobs never inflate the card count.
                 ->leftJoin(
-                    DB::raw('(SELECT firm_id, COUNT(*) AS current_openings FROM jobs WHERE is_active = 1 GROUP BY firm_id) AS job_counts'),
+                    DB::raw("(SELECT firm_id, SUM(COALESCE(openings, 1)) AS current_openings FROM jobs WHERE is_active = 1 AND status = 'Active' GROUP BY firm_id) AS job_counts"),
                     'job_counts.firm_id',
                     '=',
                     'firm_profiles.id'
@@ -842,7 +847,9 @@ class FirmController extends Controller
                     'logo_path' => $company->logo_path ? asset('storage/' . $company->logo_path) : null,
                     'is_premium' => $company->is_premium,
                     'verification_status' => $company->verification_status,
-                    'current_openings' => $company->current_openings,
+                    // (int) cast: SUM() arrives as a string from PDO, unlike the
+                    // old COUNT(*) — keep the JSON type numeric for the frontend.
+                    'current_openings' => (int) $company->current_openings,
                     'about' => $company->about,
                     'firm_type' => $company->firm_type,
                     'establishment_year' =>
@@ -908,7 +915,9 @@ class FirmController extends Controller
                 ->select(
                     'firm_profiles.*',
                     'users.mobile as primary_mobile',
-                    DB::raw('(select count(*) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true and jobs.status ="Active") as current_openings')
+                    // Same vacancy semantics as getCompanies: SUM of openings over
+                    // live jobs, NULL counting as 1, so list and detail always match.
+                    DB::raw('(select coalesce(sum(coalesce(jobs.openings, 1)), 0) from jobs where jobs.firm_id = firm_profiles.id and jobs.is_active = true and jobs.status ="Active") as current_openings')
                 )
                 ->leftJoin('users', 'users.id', 'firm_profiles.user_id')
                 ->where('firm_profiles.id', $id)
@@ -977,10 +986,13 @@ class FirmController extends Controller
         | Response
         |--------------------------------------------------------------------------
         */
+            // Vacancy totals per hiring type — same SUM/COALESCE/filter rules as
+            // current_openings above, so the breakdown adds up to the headline count.
             $openingsBreakdown = DB::table('jobs')
                 ->where('firm_id', $company->id)
                 ->where('is_active', 1)
-                ->selectRaw('hiring_for, count(*) as `count`')
+                ->where('status', 'Active')
+                ->selectRaw('hiring_for, SUM(COALESCE(openings, 1)) as `count`')
                 ->groupBy('hiring_for')
                 ->get()
                 ->map(fn($row) => [
@@ -993,7 +1005,9 @@ class FirmController extends Controller
                 'id' => $company->id,
                 'user_id' => $company->user_id,
                 'firm_name' => $company->firm_name,
-                'current_openings' => $company->current_openings,
+                // (int) cast: SUM() arrives as a string from PDO, unlike the
+                // old COUNT(*) — keep the JSON type numeric for the frontend.
+                'current_openings' => (int) $company->current_openings,
                 'openings_breakdown' => $openingsBreakdown,
                 // 'frn' => $company->frn,
                 'city' => $company->city,

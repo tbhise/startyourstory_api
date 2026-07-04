@@ -1810,6 +1810,8 @@ class CreatorMarketplaceController extends Controller
                 'engagement_id' => (int) $id,
                 'submission_id' => (int) $submissionId,
                 'round'         => (int) $round,
+                'project_title' => $project?->title,
+                'firm_id'       => (int) $engagement->firm_id,
             ]);
 
             return response()->json(['status' => true, 'message' => 'Work submitted successfully.']);

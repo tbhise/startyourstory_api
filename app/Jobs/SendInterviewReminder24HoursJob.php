@@ -108,7 +108,9 @@ class SendInterviewReminder24HoursJob implements ShouldQueue
                     (int) $app->student_id,
                     "Interview tomorrow with {$app->firm_name}",
                     "{$app->job_title} · {$interviewDate}",
-                    '/my-applications'
+                    '/my-applications',
+                    [],
+                    'interview_app_' . $app->id // replaces older notifications for this interview
                 );
 
             } catch (Throwable $e) {

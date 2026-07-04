@@ -47,6 +47,15 @@ return [
             'password' => env('MAIL_PASSWORD'),
             'timeout' => env('MAIL_TIMEOUT'),
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
+            // Long-running queue workers keep the SMTP connection alive between
+            // sends; Hostinger drops idle connections, producing intermittent
+            // "421 4.4.2 timeout exceeded" at MAIL FROM. If the connection has
+            // been idle longer than ping_threshold seconds, Symfony pings it
+            // (NOOP) and transparently reconnects when it is dead. The
+            // restart_threshold recycles the connection every N sends as a
+            // guard against per-connection message caps on shared SMTP.
+            'ping_threshold' => (int) env('MAIL_PING_THRESHOLD', 30),
+            'restart_threshold' => (int) env('MAIL_RESTART_THRESHOLD', 50),
         ],
 
         'ses' => [

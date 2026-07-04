@@ -41,9 +41,9 @@ class MessagingHelper
      * Applies to BOTH directions (student->firm and firm->student).
      * - Premium firm: always (unlimited).
      * - Non-premium: only if free messaging is enabled AND under the lifetime limit.
-     * Note: the lifetime limit counts FIRM-INITIATED conversations only
-     * (business rule: free firms always receive inbound student leads; premium
-     * sells unlimited OUTBOUND outreach).
+     * Note (final business rule 2026-07-03): the lifetime limit counts ALL new
+     * conversations involving the firm — firm-initiated AND student-initiated
+     * both consume the free quota. Existing conversations are never affected.
      */
     public static function canStartNewConversation(int $firmId): array
     {
@@ -187,8 +187,9 @@ class MessagingHelper
     |--------------------------------------------------------------------------
     | Increment Counters
     |--------------------------------------------------------------------------
-    | NOTE (2026-07-03 business rules): incremented ONLY for firm-initiated
-    | conversations — student-initiated ones never consume the free limit.
+    | NOTE (final business rules 2026-07-03): incremented for EVERY new
+    | conversation involving the firm — both firm-initiated and student-
+    | initiated ones consume the free limit.
     | The request-unlock system (canFirmUnlockRequest / incrementRequestsUnlocked)
     | was removed entirely; the lifetime_requests_unlocked column remains in
     | the table but is no longer read or written.

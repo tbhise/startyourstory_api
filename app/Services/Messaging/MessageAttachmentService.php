@@ -11,7 +11,8 @@ use Illuminate\Support\Str;
 /**
  * Chat message attachments (ADDITIVE layer on live messaging).
  *
- * Rules (V1): max 5 files per message, any mix of images + at most 1 PDF.
+ * Rules (V1, finalized 2026-07-03): max 5 files per message TOTAL, in any mix
+ * of images and PDFs (5 images, 5 PDFs, or 3+2 are all valid; 6 files never).
  * Images: jpg/jpeg/png/webp, ≤5 MB each — stored in their ORIGINAL format,
  * untouched (users send document-like images: marksheets, offer letters —
  * format conversion would hurt readability/download UX). PDFs: ≤10 MB.

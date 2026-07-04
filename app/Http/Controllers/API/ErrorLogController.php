@@ -25,6 +25,15 @@ class ErrorLogController extends Controller
                 : 'frontend';
 
             $message = mb_substr((string) $request->input('message', 'Unknown error'), 0, 2000);
+
+            // Routine-noise messages (expired-session 401s, intentional
+            // impersonation 403s, audit log lines) are never persisted —
+            // same skip list as backend-recorded errors. Ack with 201 so the
+            // fire-and-forget client is unaffected.
+            if (\App\Services\ErrorLogRecorder::shouldSkipMessage($message)) {
+                return response()->json(['status' => true], 201);
+            }
+
             $url     = mb_substr((string) $request->input('url', ''), 0, 500) ?: null;
             $stack   = $request->input('stack')
                 ? mb_substr((string) $request->input('stack'), 0, 5000)

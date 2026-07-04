@@ -561,9 +561,12 @@ class MessagingController extends Controller
                 ]);
                 MessagingHelper::applyMessageSent($convId, 'candidate', $msgId, $message);
 
-                // Business rule (2026-07-03): student-initiated conversations do
-                // NOT consume the firm's free-conversation limit — the limit only
-                // meters the firm's own outbound outreach. No increment here.
+                // Final business rule (2026-07-03): the free-conversation limit
+                // applies to ALL new conversations involving the firm, in BOTH
+                // directions — student-initiated ones consume the quota too.
+                // Incremented for premium firms as well (same as the firm-
+                // initiated branch); the gate simply doesn't enforce it for them.
+                MessagingHelper::incrementConversationsStarted($firmId);
 
                 if ($firmUser) {
                     NotificationHelper::create(
@@ -977,25 +980,25 @@ class MessagingController extends Controller
             // NOTE: no per-message bell notification (NotificationHelper::create).
             // The Messages unread badge already tracks per-message counts in realtime
             // (ConversationUpdated), so adding a bell entry per message floods the
-            // notification bell. The one-time "new conversation request" bell still
-            // fires in startConversation. Per-message email is kept for offline reach.
+            // notification bell. The one-time "new conversation request" bell + email
+            // still fire in startConversation; replies notify via push only.
             if ($senderType === 'firm') {
                 $firm      = $this->firmProfileForUser($sender->id);
                 $firmName  = $firm ? $firm->firm_name : 'A firm';
                 $candidate = DB::table('users')->where('id', $conv->candidate_id)->first();
                 if ($candidate) {
-                    // Per-message email intentionally removed (2026-07-03): unread
-                    // messages are now emailed at most once per 3h by
-                    // SendUnreadMessagesEmailJob. Push below is the realtime channel.
+                    // No email for replies (final 2026-07-04 strategy): email fires
+                    // only on new-conversation requests (NewMessageRequestMail in
+                    // startConversation). Push below is the only reply channel.
                     $this->pushToPeer((int) $candidate->id, $firmName, $message, (int) $conv->id);
                 }
             } else {
                 $firmProfile = DB::table('firm_profiles')->where('id', $conv->firm_id)->first();
                 $firmUser    = $firmProfile ? DB::table('users')->where('id', $firmProfile->user_id)->first() : null;
                 if ($firmUser) {
-                    // Per-message email intentionally removed (2026-07-03): unread
-                    // messages are now emailed at most once per 3h by
-                    // SendUnreadMessagesEmailJob. Push below is the realtime channel.
+                    // No email for replies (final 2026-07-04 strategy): email fires
+                    // only on new-conversation requests (NewMessageRequestMail in
+                    // startConversation). Push below is the only reply channel.
                     $this->pushToPeer((int) $firmUser->id, $sender->name, $message, (int) $conv->id);
                 }
             }
@@ -1004,38 +1007,81 @@ class MessagingController extends Controller
         }
     }
 
+    /** Suppress the push while the recipient was active within this window (s). */
+    public const PUSH_ACTIVE_SUPPRESS_SECONDS = 180;
+    /** Minimum gap between pushes for one conversation+recipient (s). */
+    public const PUSH_COOLDOWN_SECONDS = 120;
+    /** How long unsent messages keep accumulating toward one aggregate push (s). */
+    public const PUSH_AGGREGATE_TTL = 900;
+    /** Fallback flush: re-check a suppressed push this long after suppression (s). */
+    public const PUSH_FLUSH_DELAY_SECONDS = 120;
+
     /**
-     * Per-message push to the conversation peer, with anti-spam protection:
-     *  - Collapse tag `conv_{id}`: a burst of messages REPLACES one notification
-     *    in the browser instead of stacking.
-     *  - 2-minute cooldown per conversation+recipient (atomic Cache::add), so a
-     *    rapid exchange produces at most one push per window.
-     *  - Skip when the recipient was active in the last 60s — they are in the
-     *    app, where Reverb + the focused-tab toast already cover delivery.
+     * Per-message push to the conversation peer, spam-reduced (2026-07-04):
+     *  - AGGREGATION: every message increments a pending counter; messages
+     *    suppressed by the gates below are not lost — the next allowed push
+     *    says "{n} new messages from {name}" instead of pushing n times.
+     *  - Active suppression FIRST (180s, raised from 60s): recipient is in the
+     *    app where Reverb + the in-app toast already deliver; checking before
+     *    the cooldown means a skip never burns the cooldown window.
+     *  - 2-minute cooldown per conversation+recipient (atomic Cache::add).
+     *  - Collapse tag `conv_{id}`: whatever does get through REPLACES the
+     *    previous browser notification for this conversation, never stacks.
      * Never throws — called inside notifyPeer's try/catch.
      */
     private function pushToPeer(int $recipientId, string $senderName, string $message, int $conversationId): void
     {
-        // Cooldown gate first (cheapest). add() is atomic: false = already sent recently.
-        if (!Cache::add("msg_push_cd_{$conversationId}_{$recipientId}", 1, 120)) {
-            Log::debug("pushToPeer skipped: cooldown active (conv {$conversationId}, recipient {$recipientId})");
-            return;
+        // Count this message toward the aggregate regardless of the gates below.
+        $countKey = "msg_push_agg_{$conversationId}_{$recipientId}";
+        if (!Cache::add($countKey, 1, self::PUSH_AGGREGATE_TTL)) {
+            Cache::increment($countKey);
         }
 
         $recentlyActive = DB::table('user_sessions')
             ->where('user_id', $recipientId)
-            ->where('last_activity_at', '>=', now()->subSeconds(60))
+            ->where('last_activity_at', '>=', now()->subSeconds(self::PUSH_ACTIVE_SUPPRESS_SECONDS))
             ->exists();
         if ($recentlyActive) {
-            Log::debug("pushToPeer skipped: recipient {$recipientId} active in last 60s (conv {$conversationId})");
+            Log::debug("pushToPeer skipped: recipient {$recipientId} active (conv {$conversationId}) — message added to aggregate");
+            // Fallback flush (2026-07-05): if the recipient closes the app right
+            // after this suppression and no further message ever arrives, the
+            // aggregate would never flush — the message would stay silently
+            // unnotified. Record WHEN the last suppression happened and schedule
+            // ONE delayed re-check per conversation+recipient burst (atomic add).
+            // The job pushes only if the recipient had no activity after this
+            // moment and the conversation is still unread (DB truth).
+            Cache::put(
+                "msg_push_flush_ts_{$conversationId}_{$recipientId}",
+                now()->getTimestamp(),
+                self::PUSH_AGGREGATE_TTL
+            );
+            if (Cache::add("msg_push_flush_{$conversationId}_{$recipientId}", 1, self::PUSH_FLUSH_DELAY_SECONDS + 60)) {
+                \App\Jobs\FlushSuppressedMessagePushJob::dispatch($conversationId, $recipientId)
+                    ->delay(now()->addSeconds(self::PUSH_FLUSH_DELAY_SECONDS));
+            }
             return;
         }
 
-        Log::debug("pushToPeer: dispatching push (conv {$conversationId}, recipient {$recipientId})");
+        // Cooldown gate (atomic): false = a push already went out this window;
+        // the counter keeps accumulating for the next allowed push.
+        if (!Cache::add("msg_push_cd_{$conversationId}_{$recipientId}", 1, self::PUSH_COOLDOWN_SECONDS)) {
+            Log::debug("pushToPeer skipped: cooldown active (conv {$conversationId}, recipient {$recipientId}) — message added to aggregate");
+            return;
+        }
+
+        // Pending count = messages since the last push (including this one).
+        $pending = max(1, (int) Cache::get($countKey, 1));
+        Cache::forget($countKey);
+
+        $title = $pending > 1
+            ? "{$pending} new messages from {$senderName}"
+            : "New message from {$senderName}";
         $preview = mb_strlen($message) > 80 ? mb_substr($message, 0, 77) . '…' : $message;
+
+        Log::debug("pushToPeer: dispatching push (conv {$conversationId}, recipient {$recipientId}, pending {$pending})");
         SendUserPushJob::dispatch(
             $recipientId,
-            'New message from ' . $senderName,
+            $title,
             $preview,
             '/messages',
             [],

@@ -7,7 +7,6 @@ use App\Jobs\SendInterviewReminder24HoursJob;
 use App\Jobs\SendInterviewResponseReminderJob;
 use App\Jobs\SendFirmApplicantReminderJob;
 use App\Jobs\SendUnreadDigestPushJob;
-use App\Jobs\SendUnreadMessagesEmailJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -287,16 +286,6 @@ Schedule::job(new SendUnreadDigestPushJob())
     ->name('send-unread-digest-push')
     ->withoutOverlapping();
 
-/*
-|--------------------------------------------------------------------------
-| Unread-messages reminder EMAIL (students + firms)
-|--------------------------------------------------------------------------
-| Runs hourly; emails a user with unread chat messages at most once every
-| 3 hours, while the messages stay unread. Replaces the old per-message
-| email (removed from MessagingController::notifyPeer). Push remains the
-| realtime channel. See SendUnreadMessagesEmailJob.
-*/
-Schedule::job(new SendUnreadMessagesEmailJob())
-    ->hourly()
-    ->name('send-unread-messages-email')
-    ->withoutOverlapping();
+// (2026-07-04) The unread-messages reminder EMAIL job was removed before ever
+// shipping: final strategy is email ONLY on new-conversation requests
+// (NewMessageRequestMail); replies notify via push alone.

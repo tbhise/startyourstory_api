@@ -140,7 +140,8 @@ class JobsController extends Controller
                 'New application received',
                 $user->name .
                     ' applied for ' .
-                    $job->title . '.'
+                    $job->title . '.',
+                false // explicit richer push dispatched below
             );
             // Push notification (additive layer — queued on the database driver,
             // so the job row commits atomically with this transaction).
@@ -151,6 +152,17 @@ class JobsController extends Controller
                 '/firm-jobs/' . $id . '/applications'
             );
             DB::commit();
+
+            // Activity log (async, non-blocking — never affects the application).
+            ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::JOB_APPLIED, [
+                'application_id' => (int) $applicationId,
+                'job_id'         => (int) $job->id,
+                'job_title'      => $job->title,
+                'firm_id'        => (int) $job->firm_id,
+                'firm_name'      => $firm->firm_name ?? null,
+                'payment_source' => $paymentSource,
+            ]);
+
             return response()->json([
                 'status' => true,
                 'message' => 'Job applied successfully'
@@ -1332,7 +1344,9 @@ class JobsController extends Controller
                     $firm->firm_name . ' invited you for an interview',
                     date('D, d M Y \a\t h:i A', strtotime($request->interview_date))
                         . ' · ' . $request->interview_mode . ' — tap to respond.',
-                    '/recruiter-actions'
+                    '/recruiter-actions',
+                    [],
+                    'interview_app_' . $application->id // app-flow interview thread tag
                 );
                 DB::table('recruiter_actions')->insert([
                     'firm_id' =>
@@ -2015,7 +2029,9 @@ class JobsController extends Controller
                         (int) $pushFirmUserId,
                         $pushTitle,
                         $pushBody,
-                        '/firm-applications'
+                        '/firm-applications',
+                        [],
+                        'interview_app_' . $application->id // replaces older notifications for this interview
                     );
                 }
             }
@@ -2084,6 +2100,7 @@ class JobsController extends Controller
                 ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::INTERVIEW_ACCEPTED, [
                     'application_id' => (int) $application->id,
                     'job_id'         => (int) $application->job_id,
+                    'firm_id'        => (int) $application->firm_id,
                 ]);
             }
 
@@ -2179,7 +2196,9 @@ class JobsController extends Controller
                 (int) $application->student_id,
                 $firm->firm_name . ' accepted your new interview date',
                 'Your proposed interview date has been confirmed.',
-                '/recruiter-actions'
+                '/recruiter-actions',
+                [],
+                'interview_app_' . $application->id // replaces older notifications for this interview
             );
 
             // Email to student

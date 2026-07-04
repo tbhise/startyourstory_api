@@ -21,6 +21,7 @@ enum ActivityType: string
     case SUBSCRIPTION_PURCHASED  = 'subscription_purchased';
 
     // ── Student actions ───────────────────────────────────────────────────────
+    case JOB_APPLIED             = 'job_applied';
     case INTERVIEW_ACCEPTED      = 'interview_accepted';
     case CONTENT_SUBMITTED       = 'content_submitted';
     case WALLET_RECHARGED        = 'wallet_recharged';

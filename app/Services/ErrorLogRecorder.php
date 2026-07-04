@@ -41,6 +41,31 @@ class ErrorLogRecorder
         \Illuminate\Auth\AuthenticationException::class,
     ];
 
+    /**
+     * Exact messages (case-insensitive, trimmed) that are routine noise and
+     * must never be persisted to error_logs — regardless of whether they
+     * arrive as a backend exception/log line or as a frontend-reported API
+     * error (ErrorLogController@store consults this list too). These are
+     * expected auth/UX responses, not errors:
+     *  - "Invalid token" / "Unauthorized": every expired-cookie request.
+     *  - "Send Verification Link API called": an audit Log::alert(), not a failure.
+     *  - impersonation read-only rejection: intentional 403 by design.
+     * Kept exact-match so a real error that merely CONTAINS one of these
+     * words (e.g. "Unauthorized webhook signature ...") is still recorded.
+     */
+    private const MESSAGE_SKIP = [
+        'invalid token',
+        'unauthorized',
+        'send verification link api called',
+        'this action is disabled during admin impersonation (read-only mode).',
+    ];
+
+    /** True when the message is on the routine-noise skip list. */
+    public static function shouldSkipMessage(string $message): bool
+    {
+        return in_array(mb_strtolower(trim($message)), self::MESSAGE_SKIP, true);
+    }
+
     /** Log levels that represent a genuine error worth surfacing to admins. */
     private const LOG_ERROR_LEVELS = ['error', 'critical', 'alert', 'emergency'];
 
@@ -60,8 +85,13 @@ class ErrorLogRecorder
             }
         }
 
+        $summary = self::safeMessage($e);
+        if (self::shouldSkipMessage($summary)) {
+            return;
+        }
+
         self::writeRow(
-            self::safeMessage($e),
+            $summary,
             self::statusFor($e),
             $request,
             self::stackTrace($e),
@@ -89,7 +119,7 @@ class ErrorLogRecorder
         }
 
         $safe = self::sanitize($message);
-        if ($safe === '') {
+        if ($safe === '' || self::shouldSkipMessage($safe)) {
             return;
         }
 

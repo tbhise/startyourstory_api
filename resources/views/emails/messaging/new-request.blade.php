@@ -1,63 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>New Message Request — {{ $appName }}</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 16px;">
-  <tr>
-    <td align="center">
-      <table width="100%" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+{{--
+    New message REQUEST notification (first message in a new conversation).
+    Variables: $recipientName, $senderName, $messagePreview, $appName, $messagesUrl.
+    Migrated from a standalone HTML shell to the shared premium layout —
+    body content unchanged.
+--}}
+@extends('emails.layouts.premium', [
+    'title'     => 'New Message Request — StartYourStory',
+    'preheader' => 'You have a new message request from ' . $senderName . '.',
+])
 
-        <!-- Header -->
+@section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#4b5563;">
+
+    <p class="dm-h" style="margin:0 0 8px;font-size:15px;color:#111827;font-weight:600;">Hi {{ $recipientName }},</p>
+
+    <p style="margin:0 0 20px;">
+        You have a new message request from <strong>{{ $senderName }}</strong>.
+    </p>
+
+    {{-- Preview box --}}
+    <div class="dm-card" style="background:#f9fafb;border-left:3px solid #2563eb;border-radius:6px;padding:14px 16px;margin-bottom:24px;">
+        <p class="dm-p" style="margin:0;font-size:13px;color:#374151;line-height:1.6;font-style:italic;">"{{ $messagePreview }}"</p>
+    </div>
+
+    <p style="margin:0 0 24px;">
+        Log in to view the full message and reply.
+    </p>
+
+    {{-- CTA --}}
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
         <tr>
-          <td style="background:#2563eb;padding:28px 32px;text-align:center;">
-            <p style="margin:0;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:-0.3px;">{{ $appName }}</p>
-          </td>
-        </tr>
-
-        <!-- Body -->
-        <tr>
-          <td style="padding:32px 32px 24px;">
-            <p style="margin:0 0 8px;font-size:15px;color:#111827;font-weight:600;">Hi {{ $recipientName }},</p>
-            <p style="margin:0 0 20px;font-size:14px;color:#4b5563;line-height:1.6;">
-              You have a new message request from <strong>{{ $senderName }}</strong>.
-            </p>
-
-            <!-- Preview box -->
-            <div style="background:#f9fafb;border-left:3px solid #2563eb;border-radius:6px;padding:14px 16px;margin-bottom:24px;">
-              <p style="margin:0;font-size:13px;color:#374151;line-height:1.6;font-style:italic;">"{{ $messagePreview }}"</p>
-            </div>
-
-            <p style="margin:0 0 24px;font-size:14px;color:#4b5563;line-height:1.6;">
-              Log in to view the full message and reply.
-            </p>
-
-            <!-- CTA -->
-            <table cellpadding="0" cellspacing="0">
-              <tr>
-                <td style="background:#2563eb;border-radius:8px;">
-                  <a href="{{ $messagesUrl }}" style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">
+            <td class="dm-btn" style="background-color:#2563eb;border-radius:8px;">
+                <a href="{{ $messagesUrl }}" style="display:inline-block;padding:12px 24px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">
                     View Message
-                  </a>
-                </td>
-              </tr>
-            </table>
-          </td>
+                </a>
+            </td>
         </tr>
+    </table>
 
-        <!-- Footer -->
-        <tr>
-          <td style="padding:20px 32px;border-top:1px solid #f0f0f0;text-align:center;">
-            <p style="margin:0;font-size:12px;color:#9ca3af;">© {{ date('Y') }} {{ $appName }}. All rights reserved.</p>
-          </td>
-        </tr>
-
-      </table>
-    </td>
-  </tr>
-</table>
-</body>
-</html>
+</div>
+@endsection

@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'Interview Invitation Update'])
+@extends('emails.layouts.premium', ['title' => 'Interview Invitation Update'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Hello <strong>{{ $firmName }}</strong>,
@@ -31,4 +32,5 @@
         </tr>
     </table>
 
+</div>
 @endsection

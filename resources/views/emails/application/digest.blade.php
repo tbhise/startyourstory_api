@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'New Applications'])
+@extends('emails.layouts.premium', ['title' => 'New Applications'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Hello <strong>{{ $firmName }}</strong>,
@@ -56,8 +57,8 @@
 
         {{-- Application Rows --}}
         @foreach ($applications as $index => $application)
-            <tr style="background: {{ $index % 2 === 0 ? '#ffffff' : '#f9fafb' }};">
-                <td style="
+            <tr class="{{ $index % 2 === 0 ? 'dm-row-a' : 'dm-row-b' }}" style="background: {{ $index % 2 === 0 ? '#ffffff' : '#f9fafb' }};">
+                <td class="dm-h" style="
                     padding: 12px 16px;
                     font-size: 14px;
                     color: #111827;
@@ -66,7 +67,7 @@
                 ">
                     {{ $application['candidate_name'] }}
                 </td>
-                <td style="
+                <td class="dm-p" style="
                     padding: 12px 16px;
                     font-size: 14px;
                     color: #374151;
@@ -74,7 +75,7 @@
                 ">
                     {{ $application['job_title'] }}
                 </td>
-                <td style="
+                <td class="dm-p" style="
                     padding: 12px 16px;
                     font-size: 13px;
                     color: #6b7280;
@@ -94,11 +95,12 @@
         ])
     </p>
 
-    <div class="info-box" style="margin-top: 20px;">
+    <div class="dm-card dm-p" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-top:24px;color:#1e40af;font-size:14px;line-height:1.7; margin-top: 20px;">
         <p>
             You receive this digest hourly when new applications arrive.
             Log in to your dashboard to review, shortlist, and schedule interviews.
         </p>
     </div>
 
+</div>
 @endsection

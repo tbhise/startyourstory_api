@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'Interview Declined'])
+@extends('emails.layouts.premium', ['title' => 'Interview Declined'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         <strong>{{ $candidateName }}</strong> has <strong>declined</strong> the interview request
@@ -20,4 +21,5 @@
         ])
     </p>
 
+</div>
 @endsection

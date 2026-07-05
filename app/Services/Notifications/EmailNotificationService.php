@@ -21,6 +21,8 @@ use App\Mail\InterviewScheduledMail;
 use App\Mail\InterviewResponseReminderMail;
 use App\Mail\FirmApplicantReminderMail;
 use App\Mail\ReferralPayoutRequestMail;
+use App\Mail\StudentFeatureReleaseMail;
+use App\Mail\FirmFeatureReleaseMail;
 use App\Mail\SupportTicketClosedMail;
 use App\Models\EmailLog;
 use App\Models\User;
@@ -119,6 +121,35 @@ class EmailNotificationService
 
         SendWelcomeEmailJob::dispatch($email, $name, $couponCode, $userType, $log->id)
             ->delay(now()->addSeconds($delaySeconds));
+    }
+
+    // -------------------------------------------------------------------------
+    // Campaigns (bulk — queued by the mail:*-reengagement-feature commands via
+    // CampaignEmailService; standard log + DispatchMailJob pipeline)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Student re-engagement + feature release campaign email.
+     */
+    public function sendStudentFeatureReleaseEmail(string $email, string $name = ''): int
+    {
+        $subject  = '🚀 Big Updates Now Live on StartYourStory';
+        $mailable = (new StudentFeatureReleaseMail($name !== '' ? $name : 'Candidate'))
+            ->subject($subject);
+
+        return $this->queue($email, 'student', $mailable, $subject, EmailPurpose::REENGAGEMENT);
+    }
+
+    /**
+     * Firm re-engagement + feature release campaign email.
+     */
+    public function sendFirmFeatureReleaseEmail(string $email, string $name = ''): int
+    {
+        $subject  = '🚀 New Hiring Features Now Live on StartYourStory';
+        $mailable = (new FirmFeatureReleaseMail($name !== '' ? $name : 'Hiring Partner'))
+            ->subject($subject);
+
+        return $this->queue($email, 'firm', $mailable, $subject, EmailPurpose::REENGAGEMENT);
     }
 
     // -------------------------------------------------------------------------

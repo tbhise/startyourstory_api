@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'Interview Invitation'])
+@extends('emails.layouts.premium', ['title' => 'Interview Invitation'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Hello <strong>{{ $candidateName }}</strong>,
@@ -12,7 +13,7 @@
     </p>
 
     @if (!empty($inviteMessage))
-        <div style="
+        <div class="dm-card" style="
             background: #eff6ff;
             border: 1px solid #bfdbfe;
             border-radius: 12px;
@@ -37,11 +38,12 @@
         </tr>
     </table>
 
-    <div class="info-box" style="margin-top: 20px;">
+    <div class="dm-card dm-p" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-top:24px;color:#1e40af;font-size:14px;line-height:1.7; margin-top: 20px;">
         <p>
             Open your <strong>Notifications</strong> to accept or decline. If you accept,
             {{ $firmName }} will share the interview schedule with you next.
         </p>
     </div>
 
+</div>
 @endsection

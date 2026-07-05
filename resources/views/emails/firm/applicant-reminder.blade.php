@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'Applicants Awaiting Review'])
+@extends('emails.layouts.premium', ['title' => 'Applicants Awaiting Review'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Hello <strong>{{ $firmName }}</strong>,
@@ -29,11 +30,11 @@
             </th>
         </tr>
         @foreach ($jobs as $index => $job)
-            <tr style="background: {{ $index % 2 === 0 ? '#ffffff' : '#f9fafb' }};">
-                <td style="padding: 12px 16px; font-size: 14px; color: #111827; border-bottom: 1px solid #e5e7eb; font-weight: 600;">
+            <tr class="{{ $index % 2 === 0 ? 'dm-row-a' : 'dm-row-b' }}" style="background: {{ $index % 2 === 0 ? '#ffffff' : '#f9fafb' }};">
+                <td class="dm-h" style="padding: 12px 16px; font-size: 14px; color: #111827; border-bottom: 1px solid #e5e7eb; font-weight: 600;">
                     {{ $job['title'] }}
                 </td>
-                <td style="padding: 12px 16px; font-size: 14px; color: #374151; border-bottom: 1px solid #e5e7eb; text-align: right;">
+                <td class="dm-p" style="padding: 12px 16px; font-size: 14px; color: #374151; border-bottom: 1px solid #e5e7eb; text-align: right;">
                     {{ $job['count'] }}
                 </td>
             </tr>
@@ -48,11 +49,12 @@
         ])
     </p>
 
-    <div class="info-box" style="margin-top: 20px;">
+    <div class="dm-card dm-p" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-top:24px;color:#1e40af;font-size:14px;line-height:1.7; margin-top: 20px;">
         <p>
             Reviewing applicants promptly helps you secure the best candidates before they accept
             other offers. Log in to shortlist, schedule interviews, or decline.
         </p>
     </div>
 
+</div>
 @endsection

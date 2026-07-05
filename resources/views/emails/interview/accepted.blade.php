@@ -1,6 +1,7 @@
-@extends('emails.layouts.app', ['heading' => 'Interview Confirmed'])
+@extends('emails.layouts.premium', ['title' => 'Interview Confirmed'])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Good news! <strong>{{ $candidateName }}</strong> has <strong>accepted</strong> your
@@ -8,7 +9,7 @@
     </p>
 
     {{-- Interview Detail Card --}}
-    <div style="
+    <div class="dm-card" style="
         background: #f0fdf4;
         border: 1px solid #bbf7d0;
         border-radius: 12px;
@@ -17,34 +18,34 @@
     ">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; width: 120px; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; width: 120px; vertical-align: top;">
                     Candidate
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $candidateName }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Position
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $jobTitle }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Date & Time
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $interviewDate }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Mode
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $interviewMode }}
                 </td>
             </tr>
@@ -59,4 +60,5 @@
         ])
     </p>
 
+</div>
 @endsection

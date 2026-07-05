@@ -9,9 +9,10 @@
     $heading    = "Interview Reminder — {$urgency}";
 @endphp
 
-@extends('emails.layouts.app', ['heading' => $heading])
+@extends('emails.layouts.premium', ['title' => $heading])
 
 @section('content')
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
     <p>
         Hello <strong>{{ $candidateName }}</strong>,
@@ -41,7 +42,7 @@
     </div>
 
     {{-- Interview Detail Card --}}
-    <div style="
+    <div class="dm-card" style="
         background: #eff6ff;
         border: 1px solid #bfdbfe;
         border-radius: 12px;
@@ -50,43 +51,43 @@
     ">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; width: 120px; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; width: 120px; vertical-align: top;">
                     Company
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $firmName }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Position
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $jobTitle }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Date & Time
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $interviewDate }}
                 </td>
             </tr>
             <tr>
-                <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Mode
                 </td>
-                <td style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
                     {{ $interviewMode }}
                 </td>
             </tr>
             @if (!empty($interviewNote))
                 <tr>
-                    <td style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                    <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                         Note
                     </td>
-                    <td style="padding: 6px 0; font-size: 15px; color: #374151;">
+                    <td class="dm-p" style="padding: 6px 0; font-size: 15px; color: #374151;">
                         {{ $interviewNote }}
                     </td>
                 </tr>
@@ -102,11 +103,12 @@
         ])
     </p>
 
-    <div class="info-box" style="margin-top: 20px;">
+    <div class="dm-card dm-p" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-top:24px;color:#1e40af;font-size:14px;line-height:1.7; margin-top: 20px;">
         <p>
             Best of luck with your interview!
             Make sure you are prepared and available at the scheduled time.
         </p>
     </div>
 
+</div>
 @endsection

@@ -66,10 +66,11 @@
 
 @endphp
 
-@extends('emails.layouts.app')
+@extends('emails.layouts.premium')
 
 @section('content')
-    <h1 style="margin:0 0 20px;color:#111827;font-size:30px;line-height:38px;font-weight:700;">
+<div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
+    <h1 class="dm-h" style="margin:0 0 20px;color:#111827;font-size:30px;line-height:38px;font-weight:700;">
         {{ $headline }}
     </h1>
 
@@ -86,14 +87,14 @@
     </p>
 
     @if (!empty($couponCode))
-        <div class="info-box">
+        <div class="dm-card dm-p" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-top:24px;color:#1e40af;font-size:14px;line-height:1.7;">
 
 
             <p style="margin-bottom:10px;font-weight:600;">
                 Your Welcome Coupon
             </p>
 
-            <p
+            <p class="dm-hi"
                 style="
         margin:0;
         font-size:28px;
@@ -111,7 +112,7 @@
     <p style="text-align:center;margin:35px 0;">
 
 
-        <a href="https://startyourstory.in/login" class="button">
+        <a href="https://startyourstory.in/login" class="dm-btn" style="display:inline-block;background-color:#2563eb;border-radius:10px;padding:14px 28px;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:15px;font-weight:600;color:#FFFFFF;text-decoration:none;">
             {{ $ctaText }}
         </a>
 
@@ -125,7 +126,7 @@
     ">
 
 
-        <h3 style="
+        <h3 class="dm-h" style="
         margin:0 0 16px;
         color:#111827;
         font-size:18px;
@@ -142,4 +143,5 @@
         </p>
 
     </div>
+</div>
 @endsection

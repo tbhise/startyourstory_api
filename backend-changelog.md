@@ -4284,3 +4284,274 @@ meta only stored IDs.
   compatible. No schema/route/env changes.
 - Historical backfill of `job_applied` rows from `applications` (applied_at →
   created_at) is possible but NOT included — decide separately.
+
+## 2026-07-05 — Dev-only email template gallery: browser previews at /dev/emails
+
+Design/modify any email template by viewing it in the browser instead of sending
+test mail. Edit the blade under `resources/views/emails/`, refresh the tab.
+
+### Added
+- **`app/Http/Controllers/Dev/MailPreviewController.php`** (new): registry of all
+  23 mailables → 27 preview keys (variant keys where behaviour branches:
+  accepted/declined invite response, 1h/24h reminders, normal/final response
+  reminder, firm/candidate message request, student/firm welcome), each built with
+  realistic sample data (Devesh Mishra / CA Pritam Mahure & Associates / the GST
+  articleship job). `GET /dev/emails` = grouped index page; `GET /dev/emails/{key}`
+  returns the Mailable (Laravel renders its HTML directly). Adding a template = one
+  registry entry.
+- **`routes/web.php`**: the two routes, registered ONLY when
+  `app()->environment(['local','development'])`; the controller re-checks the same
+  gate (404 otherwise) so production can never serve these. The older TEMPORARY
+  `/mail-preview/reengagement` route kept (its query params preview re-engagement
+  variants) with a note that /dev/emails supersedes it.
+
+### Verified
+- `php -l` clean; all 27 registry entries `render()`ed OK via tinker (0 failures —
+  proves every blade gets all variables it needs).
+- HTTP smoke test on `php artisan serve --port=8123`: index 200 (4.3 KB),
+  `welcome-student` 200 (8.7 KB), `interview-scheduled` contains the sample
+  candidate/job strings, unknown key → 404.
+
+### Deploy
+- Nothing to do — routes don't register on production (APP_ENV=production). Purely
+  additive; no existing route/controller touched except the routes-file comment.
+
+## 2026-07-05 — Premium reusable email layout + student feature-release campaign
+
+New brand-reference email system (600px, blue header, dark-navy 4-column footer,
+light/dark mode) for campaign-grade emails. ADDITIVE — the existing
+emails/layouts/app.blade.php and all transactional templates are untouched.
+
+### Added
+- **`resources/views/emails/layouts/premium.blade.php`** (new, reusable): shared
+  header (SYS logo tile, brand + tagline, right-side positioning line) and footer
+  (brand block, Quick Links, Company, Follow Us social circles, contact row,
+  copyright) around a `@yield('content')` body. 100% table-based + inline CSS;
+  `<style>` only carries mobile stacking (≤620px: .stack-card/.gap-col/.btn-block/
+  .hide-sm) and dark-mode overrides (`prefers-color-scheme: dark` + `[data-ogsc]`
+  for Outlook apps; #0D1117/#161B22/#F8FAFC/#94A3B8/#30363D). Container uses
+  width="600" attr + CSS width:100%;max-width:600px (Outlook vs responsive).
+  Icons are Unicode glyphs in coloured circles — zero images. Footer links point
+  at real frontend routes; social icons link to the site root (TODO in-file:
+  swap in real profile URLs when published).
+- **`resources/views/emails/campaign/student-feature-release.blade.php`** (new):
+  re-engagement + feature-release body — hero, "What's New for You" 4 feature
+  cards (td-as-card pattern → equal heights, spacer tds hidden on mobile),
+  "We miss you!" CTA card (bulletproof table button, full-width on mobile,
+  trust line), 3-card "Stay updated" strip.
+- **`app/Mail/StudentFeatureReleaseMail.php`** (new): Mailable
+  (name, ctaUrl → default {frontend}/login), EmailPurpose::REENGAGEMENT,
+  subject "Big updates are now live on StartYourStory 🚀".
+- Registered in /dev/emails gallery ('student-feature-release', Campaigns group).
+
+### Verified (rendered via Playwright screenshots, 4 modes)
+- Desktop 700px viewport: container exactly 600px; 4 feature cards equal-height;
+  trust line single-line. Dark mode matches spec palette. Mobile 390px: container
+  shrinks to viewport (no horizontal scroll), cards stack with 10px gaps, CTA
+  button spans the card, footer stacks, header right-tagline hidden.
+- Fixed en route: `display:block` on the button table broke width:100% (anonymous
+  table shrink-to-fit) → block only the anchor; fixed CSS width:600px preventing
+  mobile shrink → width:100%;max-width:600px.
+- All 28 /dev/emails previews render OK (0 failures); php -l clean.
+
+### Deploy
+- Nothing required — new files only; nothing sends this campaign yet (send wiring
+  is a separate decision: campaign system or a console command).
+
+## 2026-07-05 — Email preview mode toggle + premium layout uses real logo
+
+- **`Dev/MailPreviewController@show`**: new `?mode=light|dark` query param pins the
+  preview's colour scheme regardless of the OS/browser theme (the template kept
+  "showing dark" for anyone on a dark Windows theme — that was prefers-color-scheme
+  working as designed, but you couldn't design the light variant without switching
+  the OS). Preview-only trick: rewrites the `(prefers-color-scheme: dark)` media
+  condition to `not all` (never) / `all` (always). No param = follows the browser,
+  like a real client. Index page now shows ☀ light / 🌙 dark pill links per template.
+- **`emails/layouts/premium.blade.php`**: header (28px in 44px tile) and footer
+  (20px in 30px tile) now use the real logo `https://startyourstory.in/favicon.ico`
+  (same asset the transactional layout uses) instead of the "SYS" text span;
+  alt="SYS" keeps a text fallback while images are blocked.
+- Verified over HTTP (Playwright): `?mode=light` under a dark browser renders the
+  light bg (#F5F7FA ✓), `?mode=dark` under a light browser renders #0D1117 ✓,
+  no param auto-follows the browser theme ✓; logo visible in the header tile.
+
+## 2026-07-05 — /dev/emails test-send route + ?name override (premium system complete)
+
+Completes the premium email system ask. Audit confirmed everything else already
+existed (premium layout, campaign template, mailable, 28-template preview
+gallery with light/dark toggle) — reused untouched, zero redesign.
+
+### Added
+- **`Dev/MailPreviewController@send`** + route `GET /dev/emails/{key}/send`
+  (same local/development env gate): sends a REAL test email for ANY registry
+  template. Params: `?to=` (default tusharbhise908@gmail.com), `?name=` (sample
+  candidate name), `?via=smtp` (force a configured mailer — local default is
+  'log', which only writes to laravel.log; response says so explicitly).
+  Deliberately reuses the EXACT production pipeline: creates the same
+  email_logs row EmailNotificationService::queue() writes (subject prefixed
+  [TEST]) and runs DispatchMailJob via dispatchSync — sender-identity
+  resolution by purpose, send, markSent/markFailed — so a test send exercises
+  precisely what production executes. 404 unknown key, 422 bad ?to/?via.
+- **`registry(?string $candidate)`**: optional candidate-name override;
+  `?name=` now also works on previews (`/dev/emails/{key}?name=Tushar`).
+- Index page: ✉ send-test link per template + params hint line.
+
+### Verified (live, port 8125)
+- Send via default log mailer → status true + log-mailer warning note;
+  email_logs #1043 status=sent, purpose=reengagement, sender_identity=marketing.
+- REAL SMTP send (`?via=smtp`) delivered to tusharbhise908@gmail.com —
+  email_logs #1044 status=sent, no error.
+- Preview `?name=Tushar` renders "Hello Tushar,". Unknown key → 404;
+  invalid ?to → 422. Index 200; all 28 previews render (0 failures); php -l clean.
+
+### Regression safety
+- No existing file's behaviour changed: EmailNotificationService, DispatchMailJob,
+  queue jobs, campaigns, transactional templates and layouts untouched. New route
+  is additive and never registers on production (env gate + in-controller gate).
+- Existing transactional templates were NOT migrated to the premium layout on
+  purpose (visual change to production emails needs design review; migration is
+  a one-line `@extends` swap per template when desired).
+
+## 2026-07-05 — ALL email templates migrated to the premium layout
+
+Every email the platform sends now renders inside emails/layouts/premium.blade.php
+(shared header/footer, dark mode, responsive) — layout used exactly as-is (incl.
+the simplified footer edited earlier today); zero layout redesign.
+
+### Migrated (22 templates; body content preserved verbatim)
+- 18 that extended layouts.app (verify-email, welcome, firm-approved,
+  firm-rejected, password-reset, support-ticket-closed, creator/selected,
+  creator/accepted, application/digest, firm/applicant-reminder, interview/
+  scheduled, accepted, rejected, reminder, invite, invite-response,
+  response-reminder, reschedule-accepted) via a mechanical recipe:
+  extends swap ('heading' param → 'title': the old layout NEVER rendered it, so
+  nothing visible was lost); body wrapped in one dm-p typography div carrying the
+  old layout's exact `content p` styles (16px/1.8 #4b5563); `.button` /
+  `.info-box` classes (styles lived in the old layout's <style>) inlined with
+  their original values (+dm-btn; firm-rejected's gray support button kept gray,
+  no dm-btn). Inline-styled detail cards/tables untouched — light tint + dark
+  text stays readable in both modes. welcome h1/h3 got dm-h (inline #111827
+  would vanish on the dark panel).
+- 4 standalone full-HTML shells rebuilt as premium bodies, content preserved:
+  messaging/new-request, messaging/new-reply, referral/payout-request,
+  reengagement (entire userType×lifecycle @php block kept verbatim; preheader =
+  lead, title = heading; motivation/benefits/CTA/info sections identical).
+- Gotcha fixed en route: the literal word "@php" inside a Blade comment in the
+  rewritten reengagement was captured by Blade's php-block extractor (runs
+  before comment stripping), swallowing @section — "Cannot end a section
+  without first starting one". Reworded the comment.
+
+### Verified
+- 28/28 gallery previews render with premium header+footer markers and zero
+  old-layout markers; all 9 reengagement variants (3 userTypes × 3 states) OK.
+- Playwright screenshots light+dark: verify-email, interview-scheduled,
+  application-digest, re-engagement — body content identical to before in light
+  mode; dark mode readable everywhere (dm-p wrapper text flips, cards stay
+  light-tinted).
+- grep: no template outside layouts/ references emails.layouts.app.
+
+### Rollback / notes
+- layouts/app.blade.php kept on disk (now unused) — reverting any single
+  template = restore its old extends/wrapper from git/backup; no code outside
+  resources/views/emails changed in this step.
+- Mailables, EmailNotificationService, jobs, routes: untouched. The old
+  /mail-preview/reengagement route now shows the premium version (expected).
+- Visual change to production emails is the point of this migration — verify a
+  couple in real clients via /dev/emails/{key}/send?via=smtp before deploy.
+
+## 2026-07-05 — Premium email layout polish (width, spacing, dark-mode cards)
+
+Layout-level refinements only — header/footer markup and all body content
+untouched.
+
+### premium.blade.php
+- Container 600px → **680px** (`width="680"` attr for Outlook + CSS
+  width:100%;max-width:680px); mobile stacking breakpoint 620px → 700px.
+- Header→body gap: content padding 30px → **42px top** (34px sides, 18px bottom).
+- **Body→footer transition**: new panel row with settle space + hairline
+  divider (#E5E7EB / dark #30363D) before the navy footer.
+- Dark mode "black dominance" fixed: page (.dm-bg) now **#161B22** with the
+  email panel (.dm-panel) #0D1117 — the mail reads as an elevated surface.
+- New `.dm-row-a/.dm-row-b` classes (dark zebra rows #161B22/#0D1117), in both
+  the prefers-color-scheme and [data-ogsc] blocks.
+
+### Templates (20 files, classes only — light mode pixel-identical)
+- Every light-tinted inline card/box now carries dm-* classes so dark mode
+  renders it #161B22 bg / #30363D border / #F8FAFC-#94A3B8 text: info boxes,
+  interview detail cards (incl. red final-reminder + rejection variants),
+  messaging preview quotes, digest/applicant tables (header row stays navy,
+  zebra rows via dm-row-a/b, cell text dm-h/dm-p), reengagement motivation/
+  benefit/amber boxes, welcome coupon box (code text dm-hi), greeting/lead
+  lines with inline colours.
+
+### Verified
+- 28/28 previews render with premium header+footer; container measured exactly
+  680px in Chromium. Screenshots: interview-scheduled dark (dark cards, elevated
+  panel, divider), application-digest dark (navy header row + dark zebra rows),
+  student-feature-release light 680px (roomier cards/spacing). php -l n/a
+  (blade); view:clear + full re-render clean.
+
+## 2026-07-05 — 3 email fixes: firm welcome coupon, re-engagement dark-mode strong, firm campaign template
+
+1. **Firm welcome coupon "missing"** — audit outcome: NOT a production bug. The
+   only active dispatch (UserController@verify → sendWelcomeEmail) passes
+   `$user->referral_code` as the coupon for ALL roles, all 44 firms have codes,
+   and the blade's coupon box has no role gate. The only firm welcome that ever
+   rendered without a coupon was the /dev/emails 'welcome-firm' PREVIEW sample,
+   seeded with null. Fixed the sample → `WELCOME100` (desc documents that
+   production passes the firm's referral_code). No backend logic changed.
+2. **Re-engagement dark mode** — "less than two minutes" invisible: the amber
+   info-box `<strong>` carried inline `color:#0f172a` and was the single #0f172a
+   in the file without a `dm-h` class → near-black on the #161B22 dark card.
+   Added `class="dm-h"` (dark → #F8FAFC; light unchanged). Verified computed
+   color rgb(248,250,252) in dark via Playwright.
+3. **New firm campaign template** — `emails/campaign/firm-reengagement-feature.blade.php`
+   (+ `App\Mail\FirmFeatureReleaseMail`, purpose REENGAGEMENT, ctaUrl default
+   {frontend}/login) — firm copy per spec, exact student-template styling: same
+   premium layout, hero, flanking-lines title, td-as-card feature cards (2 ×
+   half-width), CTA card, 3 benefit cards. Registered in /dev/emails
+   ('firm-reengagement-feature', Campaigns) → previewable + test-sendable.
+
+### Verified
+- 29/29 previews render; firm welcome shows "Your Welcome Coupon"+WELCOME100;
+  dark-mode contrast asserted; firm campaign screenshotted light+dark (matches
+  student template styling). Nothing else modified.
+
+## 2026-07-05 — Campaign commands: mail:student-reengagement-feature / mail:firm-reengagement-feature
+
+Reusable campaign infrastructure (thin commands → services → standard mail
+pipeline). No direct Mail::send; nothing existing modified except two additive
+wrapper methods on EmailNotificationService.
+
+### Added
+- **`app/Services/Campaign/CampaignRecipientService.php`**: recipient resolution
+  (role + is_deleted=0 + non-empty email; select id,name,email). Full audience
+  streams via lazyById(500) — bounded memory; --limit uses a bounded query;
+  byEmail() resolves the user's real name (stub row for arbitrary addresses).
+  Future segments (creators, inactive, incomplete-profile) belong here.
+- **`app/Services/Campaign/CampaignEmailService.php`**: iterates recipients and
+  queues each via EmailNotificationService (→ email_logs row + DispatchMailJob).
+  Per-recipient safety: invalid emails skipped, exceptions caught+logged+counted,
+  one bad recipient never aborts. Progress callback feeds command output.
+  New campaign = one match-arm + one mailer wrapper.
+- **`EmailNotificationService`**: two public campaign wrappers using the private
+  queue() primitive — sendStudentFeatureReleaseEmail (subject "🚀 Big Updates Now
+  Live on StartYourStory", fallback name Candidate) and
+  sendFirmFeatureReleaseEmail ("🚀 New Hiring Features Now Live on
+  StartYourStory", fallback Hiring Partner); ->subject() set on the mailable so
+  the delivered subject matches the log row. Purpose: REENGAGEMENT.
+- **Commands** (thin: options → services → output):
+  `mail:student-reengagement-feature` and `mail:firm-reengagement-feature`, both
+  with --dry-run (count + sample table, sends nothing), --limit=N, --email=addr,
+  --force. FULL-audience runs prompt for confirmation unless --force (schedulers
+  must pass it — non-interactive confirm defaults to abort). Shared abstract
+  base class (skipped by command discovery). Existing mail:reengagement untouched.
+
+### Verified (live)
+- php -l clean ×6; both commands registered in artisan list.
+- Dry runs: 122 students / 44 firms found, --limit=2 caps the would-queue count
+  and sample table, nothing sent.
+- End-to-end: --email run queued email_log #1048 → `queue:work --once` processed
+  DispatchMailJob → status=sent, purpose=reengagement, sender resolved
+  (From: StartYourStory <info@startyourstory.in>), subject correct, body present
+  in mail log (MAIL_MAILER=log locally).

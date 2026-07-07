@@ -1270,6 +1270,33 @@ class UserController extends Controller
 
             if ($role === 'firm') {
                 $userType = 'firm';
+
+                // Direct Job Post flow: activate the Draft job(s) this firm
+                // created via /quickCreateJob during onboarding. Scoped to
+                // created_via='quick_post' so drafts saved intentionally from
+                // the normal job form are never auto-published. Guarded so a
+                // failure here can never break email verification itself.
+                try {
+                    $firmId = DB::table('firm_profiles')
+                        ->where('user_id', $user->id)
+                        ->value('id');
+                    if ($firmId) {
+                        DB::table('jobs')
+                            ->where('firm_id', $firmId)
+                            ->where('created_via', 'quick_post')
+                            ->where('status', 'Draft')
+                            ->update([
+                                'status' => 'Active',
+                                'is_active' => 1,
+                                'updated_at' => now(),
+                            ]);
+                    }
+                } catch (\Exception $e) {
+                    Log::error('Quick-post job activation on email verify failed', [
+                        'user_id' => $user->id,
+                        'message' => $e->getMessage(),
+                    ]);
+                }
             } else {
 
 

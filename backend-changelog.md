@@ -4555,3 +4555,48 @@ wrapper methods on EmailNotificationService.
   DispatchMailJob → status=sent, purpose=reengagement, sender resolved
   (From: StartYourStory <info@startyourstory.in>), subject correct, body present
   in mail log (MAIL_MAILER=log locally).
+
+## 2026-07-07 — Direct Job Post flow: /quickCreateJob + auto-activation on email verify
+
+New additive onboarding path for firms ("Post Job" / "Hire Talent" on the
+homepage → register → quick job form). Existing registration, job posting,
+admin verification and permissions are untouched.
+
+### Added
+- **`jobs.created_via`** VARCHAR(25) NULL (db_changes.txt, hand-applied SQL with
+  rollback): tags jobs created through the quick-post flow (`'quick_post'`).
+  Normal /createJob jobs stay NULL and are never auto-activated.
+- **`POST /quickCreateJob`** (`FirmController::quickCreateJob`, routes/api.php):
+  deliberately separate from /createJob. Lives in the ApiAuthMiddleware group
+  but NOT behind FirmVerifiedMiddleware — it runs right after registration
+  while the firm is still pending admin approval. Throttled `auth-register`
+  (10/min per IP). Validates title/type/description (location, openings,
+  salary optional; location falls back to the firm's city, hiring_for mirrors
+  type — same as createJob). Creates the job as **Draft** (invisible to
+  students — getJobs requires status='Active') with created_via='quick_post',
+  inside a transaction; logs ActivityType::JOB_POSTED (source quick_post).
+  Edge case: if the user's email is ALREADY verified when the form is
+  submitted (link clicked in another tab), the job is created as Active
+  directly, since verify() will never fire again.
+- **`UserController::verify`**: on first-time firm email verification, flips
+  all of that firm's `created_via='quick_post'` + `status='Draft'` jobs to
+  Active/is_active=1. Wrapped in its own try/catch so a failure can never
+  break email verification. Intentionally scoped: manually saved drafts are
+  never touched.
+
+### Not changed (by design)
+- registerFirm — untouched; it already sends the verification email, so
+  quickCreateJob sends nothing (a second send would duplicate the email).
+- No new job statuses; uses the existing 'Draft'/'Active' values.
+- NOTE / product decision to be aware of: student visibility (getJobs) checks
+  only jobs.status + is_active — it does NOT check firm_profiles.verification_status.
+  A quick-posted job therefore goes live on EMAIL verification alone, before
+  admin approval of the firm (as specified for this feature). If that trust
+  gap matters, add `verification_status='approved'` to the activation UPDATE
+  in UserController::verify.
+
+### Verified
+- php -l clean ×3 (FirmController, UserController, routes/api.php).
+- SQL in db_changes.txt appended with rollback; NOT yet applied to the DB —
+  run the ALTER TABLE before deploying this code (quickCreateJob inserts the
+  created_via column).

@@ -124,6 +124,11 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/getCompanyDetails/{id}', [FirmController::class, 'getCompanyDetails']);
     Route::post('/searchFirms',            [FirmController::class, 'searchFirms']);
     Route::get('/getJobs',                 [FirmController::class, 'getJobs']);
+    // Direct Job Post onboarding — quick draft job right after registration.
+    // Intentionally NOT behind FirmVerifiedMiddleware: the firm is still
+    // pending admin approval at this point. Creates a Draft (student-invisible)
+    // job that activates on email verification (UserController@verify).
+    Route::post('/quickCreateJob',         [FirmController::class, 'quickCreateJob'])->middleware('throttle:auth-register');
 
     // Student job actions
     Route::post('/jobs/{id}/apply',                          [JobsController::class, 'applyJob'])->middleware('throttle:apply');

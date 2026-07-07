@@ -3067,3 +3067,20 @@ CREATE TABLE `message_attachments` (
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `message_attachments`;
 -- (also delete storage/app/private/message-attachments/)
+
+
+-- =====================================================================
+-- 2026-07-07 — jobs.created_via: Direct Job Post flow marker
+-- No migration (hand-applied, per project convention).
+-- Additive only. Tags jobs created through the new quick-post onboarding
+-- flow (POST /quickCreateJob) so UserController@verify can auto-activate
+-- ONLY those Draft jobs when the firm verifies its email. Jobs created
+-- through the normal /createJob flow keep created_via = NULL and are
+-- never auto-activated.
+-- =====================================================================
+
+ALTER TABLE `jobs`
+  ADD COLUMN `created_via` VARCHAR(25) NULL DEFAULT NULL AFTER `status`;
+
+-- ROLLBACK:
+-- ALTER TABLE `jobs` DROP COLUMN `created_via`;

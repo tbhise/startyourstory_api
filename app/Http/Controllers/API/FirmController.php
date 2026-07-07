@@ -1237,6 +1237,105 @@ class FirmController extends Controller
             ]);
         }
     }
+    /*
+    |--------------------------------------------------------------------------
+    | Quick Job Post — Direct Job Post onboarding flow
+    |--------------------------------------------------------------------------
+    | Deliberately separate from createJob(): reachable by firms that are NOT
+    | yet admin-approved (ApiAuthMiddleware only, no FirmVerifiedMiddleware),
+    | because it runs immediately after registration. The job is created as
+    | Draft (invisible to students — getJobs requires status='Active') and is
+    | tagged created_via='quick_post' so UserController@verify auto-activates
+    | it once the firm verifies its email. If the email is ALREADY verified
+    | when this runs (user verified in another tab before submitting the
+    | form), the job is created as Active directly — otherwise it would stay
+    | Draft forever since verify() only fires once.
+    */
+    public function quickCreateJob(Request $request)
+    {
+        DB::beginTransaction();
+        try {
+            $validator = Validator::make($request->all(), [
+                'title' => 'required|string|max:255',
+                'type' => 'required|string|max:255',
+                'location' => 'nullable|string|max:100',
+                'openings' => 'nullable|integer|min:1',
+                'salary' => 'nullable|string|max:100',
+                'description' => 'required|string',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $validator->errors()->first()
+                ]);
+            }
+
+            $user = $request->attributes->get('auth_user');
+            if ($user->role !== 'firm') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Only firm accounts can post jobs'
+                ]);
+            }
+            $firm = DB::table('firm_profiles')
+                ->where('user_id', $user->id)
+                ->first();
+            if (!$firm) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Firm profile not found'
+                ]);
+            }
+
+            $status = is_null($user->email_verified_at) ? 'Draft' : 'Active';
+
+            $jobId = DB::table('jobs')->insertGetId([
+                'firm_id' => $firm->id,
+                'title' => $request->title,
+                'location' => $request->input('location') ?: $firm->city,
+                'type' => $request->type,
+                'salary' => $request->input('salary') ?: null,
+                'description' => $request->description,
+                'openings' => $request->openings,
+                'hiring_for' => $request->type,
+                'status' => $status,
+                'is_active' => 1,
+                'created_via' => 'quick_post',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::commit();
+
+            // Activity log (async, non-blocking — never affects job creation).
+            ActivityTracker::log(ActivityTracker::FIRM, $user->id, ActivityType::JOB_POSTED, [
+                'job_id'    => $jobId,
+                'job_title' => $request->title,
+                'source'    => 'quick_post',
+            ]);
+
+            return response()->json([
+                'status' => true,
+                'message' => $status === 'Active'
+                    ? 'Job posted successfully'
+                    : 'Job saved. It will go live once you verify your email.',
+                'data' => [
+                    'job_id' => $jobId,
+                    'job_status' => $status,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Quick Create Job API Error', [
+                'message' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'Server error',
+            ]);
+        }
+    }
     public function getFirmJobs(Request $request)
     {
         try {

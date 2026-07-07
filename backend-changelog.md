@@ -4600,3 +4600,122 @@ admin verification and permissions are untouched.
 - SQL in db_changes.txt appended with rollback; NOT yet applied to the DB —
   run the ALTER TABLE before deploying this code (quickCreateJob inserts the
   created_via column).
+
+---
+
+## 2026-07-07 — Employment Status (new isolated student feature)
+
+Additive-only feature: a second status next to Career Status telling us whether
+a student has joined a firm/company. Deliberately isolated — Career Status
+(`looking_for`, `PATCH /student/career-status`), profile completion,
+registration, and every existing API are untouched.
+
+- **DB (see db_changes.txt for hand-apply SQL + rollback)**:
+  - `student_profiles.employment_status` ENUM('looking','joined') NOT NULL
+    DEFAULT 'looking' — quick-lookup flag for future Admin filtering.
+  - New `student_employment_history` table (user_id, organization_name,
+    designation NULL, joined_date, joined_via_platform, is_current,
+    timestamps). One `is_current = 1` row per user; going back to "looking"
+    clears `is_current` but keeps rows for analytics. Keyed by `user_id`
+    per project convention (spec said student_id; no table here uses that).
+  - Matching migration files `2026_07_07_000001` / `000002` added.
+- **`StudentEmploymentController` (new)**, student-role-gated via
+  `auth_user` request attribute:
+  - `GET /student/employment` → `{ employment_status, current }` where
+    `current` is the active history record (null while looking). Missing
+    profile row / pre-migration rows fall back to `looking`.
+  - `POST /student/employment` — `employment_status=looking` closes the
+    active record; `=joined` validates organization_name + joined_date
+    (+ required joined_via_platform boolean, optional designation), then in
+    a transaction updates the flag, clears previous `is_current`, and
+    inserts the new current row. Future joined_date allowed (offer
+    accepted, joining soon).
+- **routes/api.php**: two new routes inside the ApiAuthMiddleware group,
+  right under the career-status route. Nothing else moved.
+
+### Verified
+- php -l clean ×4 (controller, routes, both migrations).
+- SQL appended to db_changes.txt with rollback; NOT yet applied to the DB —
+  run the ALTER TABLE + CREATE TABLE before deploying this code.
+
+### Rollback Plan
+- Remove the 2 routes + controller + migrations; run the rollback SQL in
+  db_changes.txt. No existing code paths reference the new column/table.
+
+---
+
+## 2026-07-07 — Employment Status v2: firm_id on employment history
+
+The Organization Name in the employment modal is now picked via the existing
+FirmSelector/searchFirms flow, so the record stores the registered firm's id
+alongside the display name (custom typed names keep firm_id NULL) — same
+convention as student_profiles.current_firm_id / current_firm_name.
+
+- **DB**: `student_employment_history.firm_id` BIGINT UNSIGNED NULL +
+  `idx_seh_firm` index (migration `2026_07_07_000003`; SQL in db_changes.txt,
+  ALREADY APPLIED to the local DB).
+- **`StudentEmploymentController`**: `firm_id` accepted on POST
+  (`nullable|integer|exists:firm_profiles,id`), stored on insert, and returned
+  in the `current` payload of both GET and POST. No other change; searchFirms
+  itself is untouched.
+
+### Verified
+- php -l clean; column + index applied and confirmed via Schema::hasColumn.
+
+### Rollback Plan
+- Rollback SQL in db_changes.txt; revert controller edits (frontend sends
+  firm_id but unknown request keys are ignored by validation, so backend-only
+  rollback is safe).
+
+---
+
+## 2026-07-07 — Free interview limit moved: unlimited invites, quota on scheduling
+
+Non-premium firms previously consumed their 2 free actions when SENDING an
+interview invitation. Invitations are now unlimited; the quota is consumed
+only when the firm actually schedules the interview (after the student
+accepts). No new endpoints, no DB changes, no notification/flow changes —
+only the consumption point and the counting query moved.
+
+- **`FreeActionsHelper::getUsedCount`**: invite-flow usage is now counted as
+  distinct students in `interview_invites` with `scheduled_at IS NOT NULL`
+  (written once at scheduling, never cleared) instead of `interview_invite`
+  recruiter_actions. Verified on live data: 0 scheduled/confirmed/completed
+  invites lack scheduled_at, so existing scheduled interviews keep counting;
+  firms that had burned the limit on never-scheduled invites got their
+  actions back. `interview_requested` counting (applications-flow Schedule
+  Interview — already charged at scheduling) is unchanged, as are the
+  shortlist gate and getFreeActionsStatus.
+- **`InterviewInviteController@invite`**: free-action gate removed —
+  unlimited for all firms. Duplicate-invite protection, notifications,
+  push, email all untouched.
+- **`InterviewInviteController@schedule`**: gate added (403
+  `free_limit_reached`, same shape as before). Skipped when the firm
+  already has ANY scheduled invite for this student — so rescheduling the
+  same invite, editing details, or a repeat interview with an
+  already-counted candidate never consumes another action (mirrors the
+  helper's distinct-student count exactly).
+
+### Edge cases verified
+- Pending / declined / expired / cancelled-before-schedule /
+  accepted-but-unscheduled invites: scheduled_at stays NULL → never counted.
+- Completed or cancelled AFTER scheduling: scheduled_at persists → still
+  counted (the action was consumed).
+- Premium firms: canPerformFreeAction short-circuits as before — unchanged.
+
+### Verified
+- php -l clean ×2; tinker recount across all firms with historical actions
+  matches expected old→new deltas (see above).
+
+### Rollback Plan
+- Revert the two controller hunks + helper hunk. Pure logic change, no
+  schema/data migration to undo.
+
+### E2E verification (2026-07-07, local)
+Full browser run (Playwright, isolated e2e-*@example.com seed accounts —
+free firm fp=52, premium firm fp=53 w/ active subscription, students 184-188):
+5 invites at 0 quota cost → 3 acceptances at 0 cost → schedules #1 and #2
+succeed (used 1→2) → #3 blocked with upgrade CTA in UI AND direct API POST
+returns 403 free_limit_reached → premium firm scheduled 3 interviews with no
+prompts. Notification feed rows verified (pending→accepted→scheduled),
+profile_viewed untouched. Screenshots in e:/sys/e2e-screenshots/.

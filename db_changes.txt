@@ -3084,3 +3084,58 @@ ALTER TABLE `jobs`
 
 -- ROLLBACK:
 -- ALTER TABLE `jobs` DROP COLUMN `created_via`;
+
+
+-- =====================================================================
+-- 2026-07-07 — Employment Status (new isolated student feature)
+-- Additive only. Independent of Career Status (looking_for) — no existing
+-- column, API, or profile-completion logic is touched.
+-- 1) student_profiles.employment_status: quick-lookup flag so Admin can
+--    later filter students by Looking / Joined.
+-- 2) student_employment_history: full employment record (org, joining
+--    date, designation, whether found via StartYourStory). Exactly one
+--    row per user has is_current = 1; switching back to "looking" clears
+--    is_current but keeps rows for analytics.
+-- Used by: GET/POST /student/employment (StudentEmploymentController).
+-- =====================================================================
+
+ALTER TABLE `student_profiles`
+  ADD COLUMN `employment_status` ENUM('looking','joined')
+  NOT NULL DEFAULT 'looking' AFTER `looking_for`;
+
+CREATE TABLE `student_employment_history` (
+  `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id`             BIGINT UNSIGNED NOT NULL,
+  `organization_name`   VARCHAR(255) NOT NULL,
+  `designation`         VARCHAR(255) NULL,
+  `joined_date`         DATE NOT NULL,
+  `joined_via_platform` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_current`          TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at`          TIMESTAMP NULL,
+  `updated_at`          TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_seh_user` (`user_id`),
+  KEY `idx_seh_user_current` (`user_id`, `is_current`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- ALTER TABLE `student_profiles` DROP COLUMN `employment_status`;
+-- DROP TABLE IF EXISTS `student_employment_history`;
+
+
+-- =====================================================================
+-- 2026-07-07 — student_employment_history.firm_id (Employment Status v2)
+-- APPLIED to the local DB via tinker on 2026-07-07.
+-- Links the reported organization to a registered firm when picked from
+-- the FirmSelector dropdown (searchFirms API → firm_profiles.id); NULL
+-- when the student typed a custom name. Mirrors the student_profiles
+-- current_firm_id / current_firm_name convention. Enables future admin
+-- joins (e.g. "students who joined firm X").
+-- =====================================================================
+
+ALTER TABLE `student_employment_history`
+  ADD COLUMN `firm_id` BIGINT UNSIGNED NULL AFTER `user_id`,
+  ADD INDEX `idx_seh_firm` (`firm_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `student_employment_history` DROP INDEX `idx_seh_firm`, DROP COLUMN `firm_id`;

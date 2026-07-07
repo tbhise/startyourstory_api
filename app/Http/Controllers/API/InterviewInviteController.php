@@ -90,16 +90,9 @@ class InterviewInviteController extends Controller
                 ], 409);
             }
 
-            // Free action limit: sending an invite consumes a free action for
-            // non-premium firms (counted via the interview_invite recruiter_action below).
-            $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
-            if (!$freeCheck['allowed']) {
-                return response()->json([
-                    'status'  => false,
-                    'reason'  => 'free_limit_reached',
-                    'message' => $freeCheck['message'],
-                ], 403);
-            }
+            // Interview invitations are UNLIMITED and free for every firm
+            // (2026-07-07). The free-action quota is consumed in schedule()
+            // instead — when the firm actually schedules the interview.
 
             $message = $request->input('message')
                 ?: ($firm->firm_name . ' has invited you for an interview.');
@@ -344,11 +337,27 @@ class InterviewInviteController extends Controller
                 return response()->json(['status' => false, 'message' => 'Candidate has not accepted the invitation yet'], 409);
             }
 
-            // NOTE: no free-action gate here. The free action was already consumed
-            // when the invite was SENT (invite()). Scheduling an already-accepted
-            // invite is a continuation of that paid action, not a new charge — and
-            // gating it would block the firm from scheduling the very interview it
-            // already paid to invite for.
+            // Free action limit (2026-07-07): the quota is consumed HERE, not
+            // when the invite is sent. FreeActionsHelper counts distinct
+            // students with scheduled_at set, so the gate is skipped whenever
+            // this student is already counted for this firm — that makes
+            // rescheduling this invite (or a repeat interview with the same
+            // candidate) free, exactly matching what the count would charge.
+            $alreadyCounted = DB::table('interview_invites')
+                ->where('firm_id', $firm->id)
+                ->where('student_id', $invite->student_id)
+                ->whereNotNull('scheduled_at')
+                ->exists();
+            if (!$alreadyCounted) {
+                $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
+                if (!$freeCheck['allowed']) {
+                    return response()->json([
+                        'status'  => false,
+                        'reason'  => 'free_limit_reached',
+                        'message' => $freeCheck['message'],
+                    ], 403);
+                }
+            }
 
             DB::table('interview_invites')->where('id', $inviteId)->update([
                 'interview_status'           => 'scheduled',

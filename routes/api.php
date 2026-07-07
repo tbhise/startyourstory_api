@@ -36,6 +36,7 @@ use App\Http\Controllers\API\AdminSettingsController;
 use App\Http\Controllers\API\PaymentSettingsController;
 use App\Http\Controllers\API\AdminUserController;
 use App\Http\Controllers\API\SessionController;
+use App\Http\Controllers\API\StudentEmploymentController;
 use App\Http\Controllers\API\FreeContentController;
 use App\Http\Controllers\API\AdminBlogController;
 use App\Http\Controllers\API\BlogController;
@@ -93,6 +94,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfile',        [UserController::class, 'updateProfile']);
     // Lightweight career-status update — updates looking_for only, no full-profile validation.
     Route::patch('/student/career-status', [UserController::class, 'updateCareerStatus']);
+    // Employment Status (isolated feature — independent of career status above).
+    Route::get('/student/employment',  [StudentEmploymentController::class, 'show']);
+    Route::post('/student/employment', [StudentEmploymentController::class, 'update']);
     Route::post('/getProfile',           [UserController::class, 'getProfile']);
 
     // ── Resume Builder drafts (one per user) ──

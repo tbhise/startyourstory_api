@@ -305,3 +305,20 @@ Schedule::job(new SendUnreadDigestPushJob())
 // (2026-07-04) The unread-messages reminder EMAIL job was removed before ever
 // shipping: final strategy is email ONLY on new-conversation requests
 // (NewMessageRequestMail); replies notify via push alone.
+
+/*
+|--------------------------------------------------------------------------
+| Auto-archive expired in-app campaigns (Engagement Hub)
+|--------------------------------------------------------------------------
+| Runs hourly. Any ACTIVE campaign whose ends_at has passed is moved to
+| 'archived'. The runtime engine already refuses to serve past-window
+| campaigns, so this is purely status hygiene — it keeps the admin Active
+| tab accurate without manual intervention. Draft/paused rows are untouched.
+*/
+Schedule::call(function () {
+    DB::table('in_app_campaigns')
+        ->where('status', 'active')
+        ->whereNotNull('ends_at')
+        ->where('ends_at', '<', now())
+        ->update(['status' => 'archived', 'updated_at' => now()]);
+})->hourly()->name('archive-expired-in-app-campaigns')->withoutOverlapping();

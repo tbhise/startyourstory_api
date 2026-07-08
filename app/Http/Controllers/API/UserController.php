@@ -692,7 +692,9 @@ class UserController extends Controller
                         $hasFutureInterview ? 'Interview cancelled' : 'Application withdrawn',
                         $hasFutureInterview
                             ? $user->name . ' deleted their account; their interview for "' . ($app->job_title ?? 'a job') . '" has been cancelled.'
-                            : $user->name . ' withdrew their application for "' . ($app->job_title ?? 'a job') . '".'
+                            : $user->name . ' withdrew their application for "' . ($app->job_title ?? 'a job') . '".',
+                        true,
+                        '/firm-applications'
                     );
                 }
 

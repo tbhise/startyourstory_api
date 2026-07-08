@@ -84,14 +84,16 @@ class ExpirePendingInterviewConfirmationsJob implements ShouldQueue
                         (int) $invite->firm_user_id,
                         'Interview expired',
                         'The candidate did not confirm the interview in time, so it has expired. No interview credit was used.',
-                        false
+                        false,
+                        '/firm-applications'
                     );
                 }
                 NotificationHelper::create(
                     (int) $invite->student_id,
                     'Interview invitation expired',
                     ($invite->firm_name ?: 'A firm') . "'s interview invitation expired because it was not confirmed in time.",
-                    false
+                    false,
+                    '/recruiter-actions'
                 );
             } catch (Throwable $e) {
                 Log::error('Expire interview (invite flow) failed', ['invite_id' => $invite->id, 'error' => $e->getMessage()]);
@@ -128,14 +130,16 @@ class ExpirePendingInterviewConfirmationsJob implements ShouldQueue
                         (int) $app->firm_user_id,
                         'Interview expired',
                         'The candidate did not confirm the interview in time, so it has expired. No interview credit was used.',
-                        false
+                        false,
+                        '/firm-applications'
                     );
                 }
                 NotificationHelper::create(
                     (int) $app->student_id,
                     'Interview expired',
                     ($app->firm_name ?: 'A firm') . "'s interview request expired because it was not confirmed in time.",
-                    false
+                    false,
+                    '/recruiter-actions'
                 );
             } catch (Throwable $e) {
                 Log::error('Expire interview (applications flow) failed', ['application_id' => $app->id, 'error' => $e->getMessage()]);

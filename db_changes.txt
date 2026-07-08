@@ -3068,6 +3068,8 @@ CREATE TABLE `message_attachments` (
 -- DROP TABLE IF EXISTS `message_attachments`;
 -- (also delete storage/app/private/message-attachments/)
 
+-- ====================================== Live ==========================
+
 
 -- =====================================================================
 -- 2026-07-07 — jobs.created_via: Direct Job Post flow marker

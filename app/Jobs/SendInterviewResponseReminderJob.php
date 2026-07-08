@@ -100,7 +100,8 @@ class SendInterviewResponseReminderJob implements ShouldQueue
                     'Interview Response Pending',
                     "{$invite->firm_name} is waiting for your response to an interview invitation. "
                         . 'Please accept or reject the interview request.',
-                    false // explicit richer push dispatched below
+                    false, // explicit richer push dispatched below
+                    '/recruiter-actions'
                 );
 
                 // Push notification (additive layer — queued, failure-safe).

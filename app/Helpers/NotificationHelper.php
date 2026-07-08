@@ -19,6 +19,10 @@ class NotificationHelper
                 'user_id'    => $userId,
                 'title'      => $title,
                 'message'    => $message,
+                // Deep link for the notification bell / Notifications page. Same URL
+                // the push mirror uses; NULL when the caller has no destination, in
+                // which case the UI just marks the entry read on click.
+                'action_url' => $actionUrl,
                 'is_read'    => false,
                 'created_at' => now(),
             ]);

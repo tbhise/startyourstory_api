@@ -469,7 +469,9 @@ class MessagingController extends Controller
                 NotificationHelper::create(
                     $candidateId,
                     'New Message Request',
-                    $firm->firm_name . ' sent you a message request.'
+                    $firm->firm_name . ' sent you a message request.',
+                    true,
+                    '/messages'
                 );
 
                 // Email notification
@@ -572,7 +574,9 @@ class MessagingController extends Controller
                     NotificationHelper::create(
                         $firmUser->id,
                         'New Message Request',
-                        $user->name . ' sent you a message request.'
+                        $user->name . ' sent you a message request.',
+                        true,
+                        '/messages'
                     );
                     try {
                         Mail::to($firmUser->email)->queue(

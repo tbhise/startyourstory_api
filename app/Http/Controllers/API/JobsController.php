@@ -142,7 +142,8 @@ class JobsController extends Controller
                 $user->name .
                     ' applied for ' .
                     $job->title . '.',
-                false // explicit richer push dispatched below
+                false, // explicit richer push dispatched below
+                '/firm-jobs/' . $id . '/applications'
             );
             // Push notification (additive layer — queued on the database driver,
             // so the job row commits atomically with this transaction).

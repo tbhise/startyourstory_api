@@ -90,7 +90,7 @@ class SendFirmApplicantReminderJob implements ShouldQueue
                     : "You have {$total} applicants waiting for review across {$jobCount} job postings.";
 
                 // In-app notification (failure-safe internally).
-                NotificationHelper::create((int) $firmUserId, 'Applicants Awaiting Review', $message, false); // explicit richer push dispatched below
+                NotificationHelper::create((int) $firmUserId, 'Applicants Awaiting Review', $message, false, '/firm-applications'); // explicit richer push dispatched below
 
                 // Push notification (additive layer — queued, failure-safe).
                 SendUserPushJob::dispatch(

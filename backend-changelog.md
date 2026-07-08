@@ -4,6 +4,89 @@
 
 ---
 
+## 2026-07-08 — Engagement Hub Phase 2 refinements (backend)
+
+Behaviour-only refinements to the in-app campaign engine. Architecture, tables
+and API contracts are unchanged.
+
+- **Notification permission (T1)** — `InAppCampaignService::skipForCapabilities`
+  now skips a `notification` campaign when the browser permission is `granted`
+  **OR** `denied` (was: only `granted`). Root cause: a permanently-denied browser
+  will not re-prompt, so re-showing "Enable Notifications" was a dead end. Only
+  the actionable `default` state now shows it; denied users are treated as
+  ineligible (the preferred behaviour from the spec).
+- **Ignored analytics (T3)** — `logEvent` now accepts an `ignored` action
+  (dismissal via ESC / outside-click / X). It is **analytics-only**:
+  `shouldShow` does not reference it, so every frequency rule is unchanged. See
+  the frontend entry for why this event was warranted (the popup is freely
+  dismissable).
+- **Feature-announcement throttle (T6)** — at most ONE `feature_announcement`
+  popup per user per 24h (`FEATURE_ANNOUNCEMENT_THROTTLE_HOURS`). Computed once
+  per resolve via a `shown`-event lookup joined to campaign type; only
+  `feature_announcement` candidates are skipped when throttled. Capability
+  (notification/pwa) and messages campaigns are unaffected.
+- **Auto-archive (T5)** — new hourly scheduled task
+  `archive-expired-in-app-campaigns` in `routes/console.php`: moves `active`
+  campaigns whose `ends_at` has passed to `archived`. Pure status hygiene — the
+  engine already refuses to serve past-window campaigns; draft/paused untouched.
+- Files: `app/Services/Engagement/InAppCampaignService.php`, `routes/console.php`.
+- Verified: `php -l` clean on both.
+
+---
+
+## 2026-07-08 — Notifications API: single unified response shape (comment/contract)
+
+Follow-up to the entry below. `FirmDashboardController::getNotifications` already
+returned one object (`data` + pagination meta); clarified that it is the single
+contract for both callers (the bell now also sends `page`/`per_page`) and removed
+the "backward-compatible flat array" framing. No behavior change — the endpoint
+still defaults to page 1 / per_page 25 when params are omitted.
+
+**Pagination choice — offset kept over `cursorPaginate()` (reviewed):**
+- The UI shows "Page X of Y · N total" and explicit Prev/Next — that needs a
+  `total` count, which cursor pagination deliberately omits.
+- Per-firm volume is small and `per_page` is capped at 50, so `OFFSET` cost is
+  negligible (no deep-offset performance problem here).
+- The dropdown only ever reads page 1. Offset drift from a newly inserted top row
+  is minor and self-corrects on the 45s refetch. Cursor pagination's real win
+  (infinite scroll over huge high-write tables) doesn't apply.
+
+---
+
+## 2026-07-08 — Notification bell deep links (action_url) + paginated list
+
+Enables click-through redirection for the firm/student notification bell. The
+`notifications` table stored no destination, and `NotificationHelper::create`
+already RECEIVED an `$actionUrl` (used only for the push mirror) but discarded it
+for the bell. Now that URL is persisted so the new firm Notifications page and
+the dropdown can route on click.
+
+- **Migration `2026_07_08_000001_add_action_url_to_notifications_table`**: adds
+  nullable `action_url` (guarded with `Schema::hasColumn`, since the legacy
+  `notifications` table has no migration of record). NULL = no destination; the
+  UI just marks such entries read.
+- **`NotificationHelper::create`**: now inserts `action_url` (the existing 5th
+  param) into the row. Signature unchanged — fully backward compatible.
+- **Call sites now pass a destination** (mirroring the URL their `SendUserPushJob`
+  already uses): `JobsController` (new application → `/firm-jobs/{id}/applications`),
+  `InterviewInviteController` (accept/decline/reschedule/cancel → `/firm-dashboard`),
+  `MessagingController` (message requests → `/messages`), `UserController`
+  (withdrawal/cancel → `/firm-applications`), `SendFirmApplicantReminderJob`
+  (→ `/firm-applications`), `SendInterviewResponseReminderJob`
+  (→ `/recruiter-actions`), `ExpirePendingInterviewConfirmationsJob` (firm →
+  `/firm-applications`, student → `/recruiter-actions`). Admin/wallet/support
+  notifications keep `action_url` NULL (ambiguous role/destination).
+- **`FirmDashboardController::getNotifications`**: now paginates. Backward
+  compatible — the bell calls it param-less and still reads `data` as the latest
+  25 flat array; passing `page` (+ optional `per_page`, capped 50) returns the
+  same `data` array plus `total`, `page`, `per_page`, `has_more`, `unread_count`.
+- **Deploy note**: run `php artisan migrate` to add the column. Existing rows get
+  NULL `action_url` (bell still marks them read; no navigation) — new
+  notifications carry their destination going forward.
+- Verified: `php -l` clean on all changed files.
+
+---
+
 ## 2026-07-04 — Push spam reduction: message aggregation, gates restored (tuned), interview collapse tags
 
 Ends the 2026-07-03 TEST MODE (push on every message) and replaces it with the

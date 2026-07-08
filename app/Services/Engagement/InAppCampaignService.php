@@ -25,6 +25,11 @@ class InAppCampaignService
 {
     private const LATER_SNOOZE_HOURS = 24;
 
+    // Cross-campaign cap: at most ONE feature_announcement popup per user within
+    // this window. Capability campaigns (notification/pwa) and messages are NOT
+    // subject to this — they are gated by live capability state instead.
+    private const FEATURE_ANNOUNCEMENT_THROTTLE_HOURS = 24;
+
     public function __construct(
         private AudienceMatcher $audience = new AudienceMatcher(),
     ) {}
@@ -57,13 +62,24 @@ class InAppCampaignService
             ->orderByDesc('id')
             ->get();
 
+        // Feature-announcement throttle: computed once. True when the user has
+        // already been SHOWN any feature_announcement within the window, in which
+        // case further feature_announcements are skipped (but capability/messages
+        // campaigns still resolve normally).
+        $featureAnnouncementThrottled = $this->featureAnnouncementThrottled((int) $user->id);
+
         foreach ($candidates as $c) {
             // Type-aware capability gate: skip when the campaign's real-world
             // condition means it should not show on this client (notification
-            // already granted, PWA already installed, or a messages nudge whose
-            // prerequisites aren't met). Eligibility changes automatically as the
-            // client's permission / install state changes.
+            // already granted OR permanently denied, PWA already installed, or a
+            // messages nudge whose prerequisites aren't met). Eligibility changes
+            // automatically as the client's permission / install state changes.
             if ($this->skipForCapabilities($c->type, $caps)) {
+                continue;
+            }
+
+            // Throttle: never stack multiple feature announcements in one window.
+            if ($c->type === 'feature_announcement' && $featureAnnouncementThrottled) {
                 continue;
             }
 
@@ -84,7 +100,11 @@ class InAppCampaignService
 
     /**
      * Should a capability campaign be skipped given the client's live state?
-     *   notification → skip once notifications are granted (requirement done).
+     *   notification → skip once notifications are granted OR permanently denied.
+     *                  Only the 'default' (undecided) state is actionable: the
+     *                  Enable button can open the browser prompt. Once 'denied',
+     *                  the browser will not re-prompt, so re-showing the campaign
+     *                  is a dead end — those users are treated as ineligible.
      *   pwa          → skip once the app is installed (requirement done).
      *   messages     → skip UNLESS notifications are granted AND the app is
      *                  installed (the nudge only targets already-equipped users).
@@ -96,17 +116,35 @@ class InAppCampaignService
         $pwa   = $caps['pwa'] ?? '';
 
         return match ($type) {
-            'notification' => $notif === 'granted',
+            'notification' => in_array($notif, ['granted', 'denied'], true),
             'pwa'          => $pwa === 'installed',
             'messages'     => !($notif === 'granted' && $pwa === 'installed'),
             default        => false,
         };
     }
 
-    /** Record one interaction event. Returns false if the action is unknown. */
+    /** True when this user was shown any feature_announcement within the window. */
+    private function featureAnnouncementThrottled(int $userId): bool
+    {
+        return DB::table('in_app_campaign_events as e')
+            ->join('in_app_campaigns as c', 'c.id', '=', 'e.campaign_id')
+            ->where('e.user_id', $userId)
+            ->where('e.action', 'shown')
+            ->where('c.type', 'feature_announcement')
+            ->where('e.created_at', '>=', now()->subHours(self::FEATURE_ANNOUNCEMENT_THROTTLE_HOURS))
+            ->exists();
+    }
+
+    /** Record one interaction event. Returns false if the action is unknown.
+     *
+     * 'ignored' is analytics-only: recorded when the popup is dismissed via
+     * ESC / outside-click / the X button (no button used). It deliberately plays
+     * NO part in frequency logic (shouldShow ignores it), so capping behaviour is
+     * unchanged — it only makes silent dismissals measurable.
+     */
     public function logEvent(int $campaignId, int $userId, string $action): bool
     {
-        $allowed = ['shown', 'clicked_primary', 'clicked_secondary', 'later', 'opt_out', 'completed'];
+        $allowed = ['shown', 'clicked_primary', 'clicked_secondary', 'later', 'opt_out', 'completed', 'ignored'];
         if (!in_array($action, $allowed, true)) {
             return false;
         }

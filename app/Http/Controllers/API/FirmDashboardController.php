@@ -502,16 +502,34 @@ class FirmDashboardController extends Controller
         try {
 
             $authUser = $request->attributes->get('auth_user');
-            // return $authUser;
-            $notifications = DB::table('notifications')
-                ->where('user_id', $authUser->id)
+
+            $base = DB::table('notifications')->where('user_id', $authUser->id);
+
+            // Unread badge count is independent of the current page.
+            $unreadCount = (clone $base)->where('is_read', false)->count();
+
+            // Single unified response shape for both callers: the bell dropdown
+            // requests page 1 with per_page=25 and ignores the pagination meta;
+            // the Notifications page uses the same fields to paginate.
+            $page    = max(1, (int) $request->input('page', 1));
+            $perPage = min(50, max(1, (int) $request->input('per_page', 25)));
+
+            $total = (clone $base)->count();
+
+            $notifications = $base
                 ->orderBy('created_at', 'desc')
-                ->limit(25)
+                ->offset(($page - 1) * $perPage)
+                ->limit($perPage)
                 ->get();
 
             return response()->json([
-                'status' => true,
-                'data' => $notifications
+                'status'       => true,
+                'data'         => $notifications,
+                'total'        => $total,
+                'page'         => $page,
+                'per_page'     => $perPage,
+                'has_more'     => ($page * $perPage) < $total,
+                'unread_count' => $unreadCount,
             ]);
         } catch (\Exception $e) {
             Log::error(

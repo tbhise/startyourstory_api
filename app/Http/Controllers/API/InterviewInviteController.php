@@ -262,7 +262,8 @@ class InterviewInviteController extends Controller
                     $firm->user_id,
                     'Interview invitation ' . $verb,
                     $user->name . ' has ' . $verb . ' your interview invitation.',
-                    false // explicit richer push dispatched below
+                    false, // explicit richer push dispatched below
+                    '/firm-dashboard'
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -516,7 +517,8 @@ class InterviewInviteController extends Controller
                     $firm->user_id,
                     $bellTitle,
                     $bellBody,
-                    false // explicit richer push dispatched below
+                    false, // explicit richer push dispatched below
+                    '/firm-dashboard'
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -645,7 +647,8 @@ class InterviewInviteController extends Controller
                         $firm->user_id,
                         'Interview cancelled',
                         'The candidate cancelled the interview invitation.',
-                        false // explicit richer push dispatched below
+                        false, // explicit richer push dispatched below
+                        '/firm-dashboard'
                     );
 
                     // Push notification (additive layer — queued, never blocks the request).

@@ -13,6 +13,7 @@ use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Helpers\AuthHelper;
+use App\Helpers\FirmActivityHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
@@ -970,6 +971,11 @@ class UserController extends Controller
                         'action_status' => $actionStatus,
                         'created_at' => now(),
                     ]);
+                // Firm Activity Center feed (non-blocking) — inside the 24h
+                // dedupe guard above so repeat views don't spam the timeline.
+                if ($actionType === 'profile_viewed') {
+                    FirmActivityHelper::log($firm->id, FirmActivityHelper::PROFILE_VIEWED, 'Viewed profile of ' . $student->name);
+                }
             }
             return response()->json([
                 'status' => true,

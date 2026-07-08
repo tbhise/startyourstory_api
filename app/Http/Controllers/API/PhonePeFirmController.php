@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
+use App\Helpers\FirmActivityHelper;
 use App\Services\ActivityTracker;
 use App\Enums\ActivityType;
 
@@ -218,6 +219,8 @@ class PhonePeFirmController extends Controller
                     'plan'            => $subscription->plan,
                     'amount'          => (float) $subscription->amount,
                 ]);
+                // Firm Activity Center feed (non-blocking).
+                FirmActivityHelper::log($firmProfile->id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
 
                 return response()->json(['status' => true, 'message' => 'Payment verified successfully']);
             }
@@ -327,6 +330,8 @@ class PhonePeFirmController extends Controller
                     'plan'            => $subscription->plan,
                     'amount'          => (float) $subscription->amount,
                 ]);
+                // Firm Activity Center feed (non-blocking).
+                FirmActivityHelper::log($subscription->firm_id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
             } else {
                 DB::table('firm_subscriptions')
                     ->where('id', $subscription->id)

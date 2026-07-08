@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
+use App\Helpers\FirmActivityHelper;
 use App\Services\ActivityTracker;
 use App\Enums\ActivityType;
 
@@ -420,6 +421,11 @@ class FirmController extends Controller
             // create() also fans out to the admin notification center + FCM.
             $wasAlreadyCompleted = (bool) ($user->profile_completed ?? false);
             $verificationStatus  = $firmProfile?->verification_status ?? 'pending';
+            // Firm Activity Center feed (non-blocking) — only on the
+            // incomplete→complete transition, never on later edits.
+            if ($isProfileCompleted && !$wasAlreadyCompleted) {
+                FirmActivityHelper::log($firmId, FirmActivityHelper::PROFILE_COMPLETED, 'Completed Profile');
+            }
             if ($isProfileCompleted && !$wasAlreadyCompleted && $verificationStatus === 'pending') {
                 \App\Services\Notifications\AdminNotificationService::firmVerification(
                     $request->firm_name ?: ($firmProfile?->firm_name ?? 'A firm'),
@@ -1215,6 +1221,8 @@ class FirmController extends Controller
                 'job_id'    => $jobId,
                 'job_title' => $request->title,
             ]);
+            // Firm Activity Center feed (non-blocking).
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::JOB_POSTED, 'Posted Job "' . $request->title . '"');
             /*
         |--------------------------------------------------------------------------
         | Response
@@ -1312,6 +1320,8 @@ class FirmController extends Controller
                 'job_title' => $request->title,
                 'source'    => 'quick_post',
             ]);
+            // Firm Activity Center feed (non-blocking).
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::JOB_POSTED, 'Posted Job "' . $request->title . '"');
 
             return response()->json([
                 'status' => true,
@@ -2110,6 +2120,8 @@ class FirmController extends Controller
                     'updated_at' => now(),
                 ]);
             DB::commit();
+            // Firm Activity Center feed (non-blocking).
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::JOB_EDITED, 'Edited Job "' . $request->title . '"');
             return response()->json([
                 'status' => true,
                 'message' => 'Job updated successfully',

@@ -31,6 +31,7 @@ class SystemSettingService
         'free_applications_count'      => 3,
         'application_fee_amount'       => 49,
         'minimum_wallet_recharge'      => 150,
+        'interview_confirmation_timeout_days' => 5,
     ];
 
     /**
@@ -139,5 +140,16 @@ class SystemSettingService
     public static function getMinimumWalletRecharge(): float
     {
         return (float) self::get('minimum_wallet_recharge', self::DEFAULTS['minimum_wallet_recharge']);
+    }
+
+    /**
+     * Days a student has to confirm a scheduled interview before it
+     * auto-expires (Phase 2 interview credit lifecycle). Clamped to >= 1 so a
+     * misconfigured 0 can never expire interviews instantly.
+     */
+    public static function getInterviewConfirmationTimeoutDays(): int
+    {
+        $days = (int) self::get('interview_confirmation_timeout_days', self::DEFAULTS['interview_confirmation_timeout_days']);
+        return max(1, $days);
     }
 }

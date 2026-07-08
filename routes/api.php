@@ -108,6 +108,8 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::delete('/resume',             [ResumeController::class, 'deleteResume']);
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::get('/firm/free-actions/status',              [UserController::class, 'getFreeActionsStatus']);
+    // Firm Activity Center (Phase 1, display only) — credits summary + firm_activities timeline
+    Route::get('/firm/activity-center',                  [\App\Http\Controllers\API\FirmActivityController::class, 'activityCenter']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
     Route::post('/student/directory-visibility',        [UserController::class, 'updateDirectoryVisibility']);
@@ -154,6 +156,11 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // Separate from /admin/fcm/token: user tokens live in user_fcm_tokens.
     Route::post('/fcm/token',   [\App\Http\Controllers\API\UserPushController::class, 'registerToken']);
     Route::delete('/fcm/token', [\App\Http\Controllers\API\UserPushController::class, 'deleteToken']);
+
+    // ── Engagement Hub — in-app campaign prompt engine (Phase 3) ──
+    // Dashboard asks for the active campaign for a trigger; backend decides.
+    Route::get('/engagement/active',        [\App\Http\Controllers\API\EngagementController::class, 'active']);
+    Route::post('/engagement/{id}/event',   [\App\Http\Controllers\API\EngagementController::class, 'event']);
 
     Route::get('/referrals', [ReferralController::class, 'index']);
 
@@ -508,6 +515,16 @@ Route::post('/admin/campaigns/test',      [CampaignController::class, 'test']);
 Route::post('/admin/campaigns/send',      [CampaignController::class, 'send']);
 Route::get('/admin/campaigns/stats',      [CampaignController::class, 'stats']);
 Route::get('/admin/campaigns',            [CampaignController::class, 'index']);
+
+// ── Admin — Engagement Hub / In-App Campaigns (Phase 3) ───────────────────────
+// Auto-guarded by AdminAuthMiddleware on all /admin/* paths.
+Route::prefix('admin/in-app-campaigns')->group(function () {
+    Route::get('/',        [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'index']);
+    Route::post('/',       [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'store']);
+    Route::get('/{id}',    [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'show']);
+    Route::post('/{id}',   [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'update']);
+    Route::delete('/{id}', [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'destroy']);
+});
 
 // ── Admin — Blog Module (Phase 1) ─────────────────────────────────────────────
 Route::prefix('admin/blog')->group(function () {

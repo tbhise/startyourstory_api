@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\AuthHelper;
+use App\Helpers\FirmActivityHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Jobs\SendUserPushJob;
@@ -167,6 +168,8 @@ class InterviewInviteController extends Controller
                 'invite_id'  => $inviteId,
                 'student_id' => (int) $studentId,
             ]);
+            // Firm Activity Center feed (non-blocking).
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::INTERVIEW_INVITE_SENT, 'Sent Interview Invitation to ' . $student->name);
 
             return response()->json([
                 'status'  => true,
@@ -337,26 +340,18 @@ class InterviewInviteController extends Controller
                 return response()->json(['status' => false, 'message' => 'Candidate has not accepted the invitation yet'], 409);
             }
 
-            // Free action limit (2026-07-07): the quota is consumed HERE, not
-            // when the invite is sent. FreeActionsHelper counts distinct
-            // students with scheduled_at set, so the gate is skipped whenever
-            // this student is already counted for this firm — that makes
-            // rescheduling this invite (or a repeat interview with the same
-            // candidate) free, exactly matching what the count would charge.
-            $alreadyCounted = DB::table('interview_invites')
-                ->where('firm_id', $firm->id)
-                ->where('student_id', $invite->student_id)
-                ->whereNotNull('scheduled_at')
-                ->exists();
-            if (!$alreadyCounted) {
-                $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
-                if (!$freeCheck['allowed']) {
-                    return response()->json([
-                        'status'  => false,
-                        'reason'  => 'free_limit_reached',
-                        'message' => $freeCheck['message'],
-                    ], 403);
-                }
+            // Scheduling gate (Phase 2, 2026-07-08): the credit is CONSUMED at
+            // student confirmation, not here. Scheduling is gated by distinct
+            // in-flight + confirmed candidates so a firm cannot queue more
+            // interviews than its free limit could ever confirm. Rescheduling
+            // this candidate (already committed) is always allowed.
+            $freeCheck = FreeActionsHelper::canScheduleInterview($firm->id, (int) $invite->student_id);
+            if (!$freeCheck['allowed']) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'free_limit_reached',
+                    'message' => $freeCheck['message'],
+                ], 403);
             }
 
             DB::table('interview_invites')->where('id', $inviteId)->update([
@@ -398,6 +393,13 @@ class InterviewInviteController extends Controller
                 'student_id'     => (int) $invite->student_id,
                 'interview_date' => $request->interview_date,
             ]);
+            // Firm Activity Center feed (non-blocking).
+            $inviteStudentName = DB::table('users')->where('id', $invite->student_id)->value('name');
+            FirmActivityHelper::log(
+                $firm->id,
+                FirmActivityHelper::INTERVIEW_SCHEDULED,
+                'Scheduled Interview with ' . ($inviteStudentName ?: 'candidate #' . $invite->student_id)
+            );
 
             return response()->json([
                 'status'  => true,
@@ -421,7 +423,7 @@ class InterviewInviteController extends Controller
     {
         try {
             $request->validate([
-                'response'        => 'required|string|in:Confirmed,Reschedule Requested',
+                'response'        => 'required|string|in:Confirmed,Rejected,Reschedule Requested',
                 'reschedule_date' => 'nullable|date',
                 'reschedule_note' => 'nullable|string',
             ]);
@@ -440,6 +442,16 @@ class InterviewInviteController extends Controller
                 return response()->json(['status' => false, 'message' => 'No scheduled interview to respond to'], 409);
             }
 
+            // Max ONE reschedule request per interview (Phase 2). After that the
+            // student may only Confirm or Reject.
+            if ($request->response === 'Reschedule Requested' && (int) $invite->reschedule_count >= 1) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'reschedule_limit',
+                    'message' => 'You have already requested a reschedule once. Please confirm or reject the interview.',
+                ], 409);
+            }
+
             $update = [
                 'student_interview_response' => $request->response,
                 'student_response_note'      => $request->reschedule_note,
@@ -447,8 +459,17 @@ class InterviewInviteController extends Controller
             ];
             if ($request->response === 'Confirmed') {
                 $update['interview_status'] = 'confirmed';
-            } else {
-                $update['reschedule_date'] = $request->reschedule_date;
+                // CONSUME the interview credit — the single consumption point for
+                // the invite flow. Set once; never cleared (survives completion).
+                if (empty($invite->interview_credit_consumed_at)) {
+                    $update['interview_credit_consumed_at'] = now();
+                }
+            } elseif ($request->response === 'Rejected') {
+                $update['interview_status'] = 'rejected';
+                $update['active_flag']      = null; // frees the pair; no credit consumed
+            } else { // Reschedule Requested
+                $update['reschedule_date']  = $request->reschedule_date;
+                $update['reschedule_count'] = (int) $invite->reschedule_count + 1;
             }
 
             DB::table('interview_invites')->where('id', $inviteId)->update($update);
@@ -458,42 +479,66 @@ class InterviewInviteController extends Controller
                 ->where('action_type', 'interview_invite')
                 ->where('action_status', 'scheduled')
                 ->update([
-                    'action_status' => $request->response === 'Confirmed' ? 'confirmed' : 'reschedule_requested',
+                    'action_status' => match ($request->response) {
+                        'Confirmed' => 'confirmed',
+                        'Rejected'  => 'rejected',
+                        default     => 'reschedule_requested',
+                    },
                 ]);
 
             // Notify the firm (lands in the firm's notification bell).
             $firm = DB::table('firm_profiles')->where('id', $invite->firm_id)->first();
             if ($firm) {
-                $confirmed = $request->response === 'Confirmed';
+                [$bellTitle, $bellBody, $pushTitle, $pushBody] = match ($request->response) {
+                    'Confirmed' => [
+                        'Interview confirmed',
+                        $user->name . ' confirmed the scheduled interview.',
+                        $user->name . ' confirmed the interview',
+                        'The interview is locked in.',
+                    ],
+                    'Rejected' => [
+                        'Interview rejected',
+                        $user->name . ' rejected the scheduled interview.',
+                        $user->name . ' rejected the interview',
+                        'The interview slot is now free.',
+                    ],
+                    default => [
+                        'Reschedule requested',
+                        $user->name . ' requested to reschedule the interview.',
+                        $user->name . ' requested a new interview time',
+                        $request->reschedule_date
+                            ? 'Proposed: ' . date('D, d M Y', strtotime($request->reschedule_date))
+                            : 'Review the reschedule request.',
+                    ],
+                };
+
                 NotificationHelper::create(
                     $firm->user_id,
-                    $confirmed ? 'Interview confirmed' : 'Reschedule requested',
-                    $confirmed
-                        ? $user->name . ' confirmed the scheduled interview.'
-                        : $user->name . ' requested to reschedule the interview.',
+                    $bellTitle,
+                    $bellBody,
                     false // explicit richer push dispatched below
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
                 SendUserPushJob::dispatch(
                     (int) $firm->user_id,
-                    $confirmed
-                        ? $user->name . ' confirmed the interview'
-                        : $user->name . ' requested a new interview time',
-                    $confirmed
-                        ? 'The interview is locked in.'
-                        : ($request->reschedule_date
-                            ? 'Proposed: ' . date('D, d M Y', strtotime($request->reschedule_date))
-                            : 'Review the reschedule request.'),
+                    $pushTitle,
+                    $pushBody,
                     '/firm-dashboard',
                     [],
                     'interview_' . $invite->id // replaces older notifications for this invite
                 );
             }
 
+            $message = match ($request->response) {
+                'Confirmed' => 'Interview confirmed',
+                'Rejected'  => 'Interview rejected',
+                default     => 'Reschedule requested',
+            };
+
             return response()->json([
                 'status'  => true,
-                'message' => $request->response === 'Confirmed' ? 'Interview confirmed' : 'Reschedule requested',
+                'message' => $message,
                 'data'    => ['student_interview_response' => $request->response],
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {

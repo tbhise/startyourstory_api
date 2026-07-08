@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\AuthHelper;
+use App\Helpers\FirmActivityHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\SubscriptionHelper;
@@ -367,6 +368,7 @@ class JobsController extends Controller
                     'applications.student_interview_response',
                     'applications.student_response_note',
                     'applications.recruiter_notes',
+                    'applications.interview_reschedule_count',
                     // job
                     'jobs.*',
                     // firm
@@ -430,6 +432,8 @@ class JobsController extends Controller
                     $job->student_response_note,
                     'recruiter_notes' =>
                     $job->recruiter_notes,
+                    'interview_reschedule_count' =>
+                    (int) ($job->interview_reschedule_count ?? 0),
                     /*
                 |--------------------------------------------------------------------------
                 | Job Data
@@ -1269,10 +1273,15 @@ class JobsController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
-        | Free Action Limit Check
+        | Scheduling Gate (Phase 2, 2026-07-08)
         |--------------------------------------------------------------------------
+        | Credit is consumed at STUDENT confirmation (respondInterview 'Accepted'),
+        | not here. Scheduling is gated by distinct in-flight + confirmed
+        | candidates so a firm can't queue more interviews than its free limit
+        | could ever confirm. Re-requesting for an already-committed candidate is
+        | allowed.
         */
-            $freeCheck = FreeActionsHelper::canPerformFreeAction($firm->id);
+            $freeCheck = FreeActionsHelper::canScheduleInterview($firm->id, (int) $application->student_id);
             if (!$freeCheck['allowed']) {
                 return response()->json([
                     'status'  => false,
@@ -1543,6 +1552,12 @@ class JobsController extends Controller
                 'student_id'     => (int) $application->student_id,
                 'interview_date' => $request->interview_date,
             ]);
+            // Firm Activity Center feed (non-blocking).
+            FirmActivityHelper::log(
+                $firm->id,
+                FirmActivityHelper::INTERVIEW_SCHEDULED,
+                'Scheduled Interview with ' . $updatedApplication->name . ' for "' . $updatedApplication->job_title . '"'
+            );
 
             return response()->json([
                 'status' => true,
@@ -1644,12 +1659,14 @@ class JobsController extends Controller
                     'applications.interview_mode',
                     'applications.interview_note',
                     'applications.student_interview_response',
+                    'applications.interview_reschedule_count',
                     'interview_invites.invite_status',
                     'interview_invites.interview_status',
                     'interview_invites.interview_date as invite_interview_date',
                     'interview_invites.interview_mode as invite_interview_mode',
                     'interview_invites.interview_note as invite_interview_note',
-                    'interview_invites.student_interview_response as invite_student_response'
+                    'interview_invites.student_interview_response as invite_student_response',
+                    'interview_invites.reschedule_count as invite_reschedule_count'
                 )
                 ->where(
                     'recruiter_actions.student_id',
@@ -1755,6 +1772,12 @@ class JobsController extends Controller
                     $item->invite_status ?? null,
                     'interview_status' =>
                     $item->interview_status ?? null,
+                    // How many times the student has requested a reschedule for
+                    // this interview (max 1 allowed — UI hides the button after).
+                    'reschedule_count' =>
+                    $item->action_type === 'interview_invite'
+                        ? (int) ($item->invite_reschedule_count ?? 0)
+                        : (int) ($item->interview_reschedule_count ?? 0),
                 ];
             });
             /*
@@ -1886,6 +1909,21 @@ class JobsController extends Controller
             }
             /*
         |--------------------------------------------------------------------------
+        | Max ONE reschedule request (Phase 2)
+        |--------------------------------------------------------------------------
+        */
+            if (
+                $request->response === 'Reschedule Requested'
+                && (int) ($application->interview_reschedule_count ?? 0) >= 1
+            ) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'reschedule_limit',
+                    'message' => 'You have already requested a reschedule once. Please accept or reject the interview.',
+                ], 409);
+            }
+            /*
+        |--------------------------------------------------------------------------
         | Update Application
         |--------------------------------------------------------------------------
         */
@@ -1907,15 +1945,21 @@ class JobsController extends Controller
             if ($request->response === 'Reschedule Requested') {
                 $updateData['interview_date'] =
                     $request->reschedule_date;
+                $updateData['interview_reschedule_count'] =
+                    (int) ($application->interview_reschedule_count ?? 0) + 1;
             }
             /*
         |--------------------------------------------------------------------------
-        | Accepted
+        | Accepted — CONSUME the interview credit (single consumption point for
+        | the applications flow; set once, never cleared).
         |--------------------------------------------------------------------------
         */
             if ($request->response === 'Accepted') {
                 $updateData['recruiter_status'] =
                     'Interview Confirmed';
+                if (empty($application->interview_credit_consumed_at)) {
+                    $updateData['interview_credit_consumed_at'] = now();
+                }
             }
             /*
         |--------------------------------------------------------------------------

@@ -4719,3 +4719,221 @@ succeed (used 1→2) → #3 blocked with upgrade CTA in UI AND direct API POST
 returns 403 free_limit_reached → premium firm scheduled 3 interviews with no
 prompts. Notification feed rows verified (pending→accepted→scheduled),
 profile_viewed untouched. Screenshots in e:/sys/e2e-screenshots/.
+
+---
+
+## 2026-07-08 — Firm Activity Center (Phase 1: display-only infrastructure)
+
+Additive only — no existing endpoint, business rule, or table was modified.
+New firm-facing activity feed + Interview Credits summary behind one new
+GET endpoint. "Interview Credits" reuses `FreeActionsHelper::getStatus()`
+verbatim (the same numbers the scheduling gate already enforces) — no new
+credit logic.
+
+### New
+- **`firm_activities` table** (see db_changes.txt 2026-07-08, applied to the
+  local DB via tinker): id, firm_id (→ firm_profiles.id), action,
+  description, created_at. firm_name is never stored (resolved via the firm
+  relationship). Index (firm_id, created_at).
+- **`app/Helpers/FirmActivityHelper.php`** — the single write path
+  (`FirmActivityHelper::log($firmId, ACTION, $description)`); controllers
+  never insert directly. Never throws (mirrors ActivityTracker's contract);
+  called post-commit so only completed actions are recorded.
+- **`app/Http/Controllers/API/FirmActivityController.php`** +
+  **`GET /firm/activity-center`** (authed group, firm-role check in
+  controller, next to /firm/free-actions/status): returns
+  `{credits, activities, pagination}` — credits from FreeActionsHelper,
+  activities newest-first with page/per_page (max 50).
+
+### Hooked call sites (one additive line each, after the existing success
+### point / ActivityTracker call — host flows unchanged)
+- `FirmController@createJob` / `@quickCreateJob` → `Posted Job "T"`
+- `FirmController@updateJob` → `Edited Job "T"`
+- `FirmController` firm profile update → `Completed Profile` (only on the
+  incomplete→complete transition, same guard variables the admin
+  verification notification already uses)
+- `JobsController@scheduleInterview` → `Scheduled Interview with S for "T"`
+- `InterviewInviteController@invite` → `Sent Interview Invitation to S`
+- `InterviewInviteController@schedule` → `Scheduled Interview with S`
+- `PhonePeFirmController@verify` + `@webhook` → `Purchased Premium (plan)`
+- `UserController@trackRecruiterAction` (`profile_viewed` only, inside the
+  existing 24h dedupe guard) → `Viewed profile of S`
+
+### Verified
+- `php -l` clean on all 8 touched files.
+- tinker: CREATE TABLE applied; FirmActivityHelper::log smoke test inserted
+  and read back a correct row (then removed).
+
+### Rollback Plan
+- Remove the route + FirmActivityController + FirmActivityHelper, revert the
+  one-line hooks (each is a single `FirmActivityHelper::log(...)` call plus
+  imports), `DROP TABLE IF EXISTS firm_activities;`. No existing behaviour
+  depends on any of it.
+
+---
+
+## 2026-07-08 — Phase 2: Interview Credit Lifecycle (consume-on-confirm)
+
+Business-rule change only — no interview module redesign, no messaging /
+notification / premium changes. A free interview credit is now CONSUMED only
+when the STUDENT confirms a scheduled interview (previously at firm schedule
+time). Applies to BOTH interview paths (invite flow + applications flow — per
+product decision). Reject and timeout-expiry consume nothing; because credits
+are counted only when consumed, an unconfirmed interview is simply never
+charged, so there is no refund logic.
+
+### Schema (db_changes.txt 2026-07-08; applied to local DB via tinker)
+- `interview_invites`: + `interview_credit_consumed_at`, + `reschedule_count`;
+  `interview_status` enum gains `rejected`, `expired`.
+- `applications`: + `interview_credit_consumed_at`, + `interview_reschedule_count`.
+- Backfill set `interview_credit_consumed_at` for already-confirmed interviews
+  (interview_invites.interview_status IN confirmed/completed;
+  applications.recruiter_status = 'Interview Confirmed') so live firms' consumed
+  counts are preserved. Scheduled-but-unconfirmed interviews are intentionally
+  freed under the new rule.
+- `system_settings`: seeded `interview_confirmation_timeout_days = 5` (integer,
+  category 'interview', editable) — renders in the existing admin settings UI.
+
+### Backend
+- **FreeActionsHelper** rewritten: `used` = DISTINCT students with
+  `interview_credit_consumed_at` set, deduped across both flows. New
+  `canScheduleInterview($firmId, $studentId)` gates scheduling by distinct
+  in-flight + confirmed candidates (an already-committed candidate / reschedule
+  is always allowed). `getStatus()` gains `can_schedule_new`. `getUsedCount`,
+  `canPerformFreeAction`, `getStatus` keep their shapes (back-compatible).
+- **SystemSettingService**: `getInterviewConfirmationTimeoutDays()` (default 5,
+  clamped >= 1) + DEFAULTS entry.
+- **InterviewInviteController@schedule**: gate swapped to canScheduleInterview
+  (removed the old scheduled_at "alreadyCounted" skip). **@confirm**: accepts
+  `Rejected` now; consumes the credit on `Confirmed`; enforces max ONE
+  reschedule (409 `reschedule_limit`); firm bell/push copy covers reject.
+- **JobsController@scheduleInterview**: gate swapped to canScheduleInterview.
+  **@respondInterview**: consumes the credit on `Accepted`; max ONE reschedule
+  (409). **@getRecruiterActions** / **@getAppliedJobs**: expose reschedule
+  count so the student UI can hide the button after one use.
+- **ExpirePendingInterviewConfirmationsJob** (new, hourly via console.php):
+  expires student-pending scheduled interviews past
+  interview_confirmation_timeout_days in BOTH flows (invite ->
+  interview_status 'expired'; applications -> recruiter_status 'Interview
+  Expired'). Consumes NO credit. LEFT-joins firm_profiles so a row is never
+  un-expirable; per-row try/catch. A pending reschedule (firm's court) is left
+  alone; the clock is scheduled_at (invites) /
+  COALESCE(reschedule_accepted_at, interview_requested_at) (applications).
+
+### Verified
+- `php -l` clean on all touched files.
+- `schedule:list` shows `expire-pending-interview-confirmations` hourly.
+- tinker simulation (isolated + real firm rows, cleaned up): scheduling
+  consumes 0; student confirm consumes exactly 1; in-flight+confirmed gate
+  blocks the 3rd NEW candidate but allows reschedules of committed ones;
+  expiry transitions only past-cutoff pending rows and consumes nothing;
+  cross-flow dedup confirmed (same student in both flows counts once).
+
+### Rollback Plan
+- Revert the code hunks (FreeActionsHelper, SystemSettingService, the two
+  controllers, console.php) + delete ExpirePendingInterviewConfirmationsJob.
+- Run the db_changes.txt 2026-07-08 ROLLBACK block (drop the 4 columns, revert
+  the enum, delete the setting row + its audit rows).
+- Old behaviour (consume-at-schedule) returns; no data migration needed beyond
+  the column drops.
+
+---
+
+## 2026-07-08 — Phase 3: Engagement Hub (generic In-App Campaign Engine)
+
+Additive only. One reusable, data-driven in-app popup engine. New campaigns
+(notification / pwa / messages / feature announcement) are authored in admin
+and shown on the dashboard with NO frontend deploy. Existing push / PWA /
+messages prompts are untouched — this only ADDS capability.
+
+### Schema (db_changes.txt 2026-07-08; applied via tinker)
+- `in_app_campaigns` — title, subtitle, image, two buttons (label+action+value),
+  `type`, `audience` (JSON), `trigger_type`, `priority`, `frequency`,
+  `cooldown_hours`, `starts_at`, `ends_at`, `status`. type/trigger/frequency are
+  VARCHAR (extensible).
+- `in_app_campaign_events` — (campaign_id, user_id, action ∈ shown /
+  clicked_primary / clicked_secondary / later / opt_out). Drives per-user
+  frequency + "Don't Ask Again".
+
+### Audience — reuse, no duplication
+- `App\Services\Engagement\AudienceMatcher` REUSES the email campaign filter:
+  `ReEngagementCampaignService::buildEligibilityQuery($filters)->where('users.id',$uid)->exists()`
+  for role / email-verification / profile-completion (the 'all' role maps to the
+  user's own effective role so only verification+profile filter). It ADDS only
+  the plan (premium/free) dimension the email system lacks — firms via
+  `SubscriptionHelper::isPremiumFirm`, students via active `student_subscriptions`.
+  "Verified" = EMAIL verified, matching the reused filter's semantics.
+
+### Engine + endpoints
+- `App\Services\Engagement\InAppCampaignService::resolveForUser($user,$trigger)`
+  returns the highest-priority campaign passing status + date window + trigger +
+  audience + per-user frequency, and logs `shown`. Frequency: one_time,
+  every_login (24h "Later" snooze), cooldown (cooldown_hours since last
+  show/Later), never_again (until first interaction); opt_out always wins.
+  Elapsed-time math uses raw timestamps (Carbon 3 diff is signed).
+- `EngagementController` (auth group): `GET /engagement/active?trigger=…`,
+  `POST /engagement/{id}/event`. Wrapped so the popup engine can never break a
+  dashboard load.
+- `AdminInAppCampaignController` (admin group, auto-guarded): index/show/store/
+  update/destroy; image via `ImageHelper::optimizeToWebp('in-app-campaigns')`;
+  audited via `AdminActivityLogger`. Routes `admin/in-app-campaigns/*`.
+
+### Verified
+- `php -l` clean on all new files; `route:list` shows the 4 routes.
+- tinker engine sim (isolated + real rows, cleaned up): one_time cap, priority
+  ordering, audience reuse (firm-only correctly excludes a student; verified
+  filter excludes a verified user from an unverified-only campaign), opt_out
+  override, cooldown (shown → suppressed <cooldown → shown after), every_login
+  24h Later snooze.
+
+### Rollback
+- Remove the two services, EngagementController, AdminInAppCampaignController,
+  the route blocks; run the db_changes.txt 2026-07-08 ROLLBACK (drop both
+  tables). Nothing else depends on it.
+
+---
+
+## 2026-07-08 — Phase 3 FIX: In-App Campaign completion (notification popup kept reappearing)
+
+### Root cause
+The engine treated campaign `type` (notification/pwa/messages) as display-only
+metadata. Nothing ever checked the real-world requirement — browser notification
+permission and PWA install are CLIENT-only signals that were never sent to the
+backend, so the engine could not know the requirement was satisfied. A
+`notification` campaign with `frequency=every_login` therefore returned on every
+dashboard load even after the user granted permission (clicking Enable recorded
+`clicked_primary`, which does not suppress under every_login).
+
+### Fix (backend)
+- `InAppCampaignService::resolveForUser($user,$trigger,$caps)` — new `$caps`
+  (`notif`, `pwa`) + `skipForCapabilities()`: notification campaigns skip once
+  `notif==='granted'`; pwa once `pwa==='installed'`; messages require BOTH
+  (nudge only for equipped users). Reactive — eligibility follows live client
+  state, no stored record for notification/pwa.
+- Added `completed` event: permanent suppression alongside `opt_out` in
+  `shouldShow` (used by the messages "opened Messages" completion). `logEvent`
+  now accepts `completed`.
+- `EngagementController@active` reads `notif` + `pwa` query params and forwards
+  them.
+
+### API changes
+- `GET /engagement/active` now accepts `notif` and `pwa` query params.
+- `POST /engagement/{id}/event` now accepts action `completed`.
+
+### Database
+- None. `in_app_campaign_events.action` is VARCHAR — `completed` needs no schema
+  change. No migration.
+
+### Verified (tinker, isolated FIX_* rows + the user's real campaign #8)
+- notification: default/denied → shown; **granted → not shown** (bug fixed;
+  verified against real campaign #8, 0 new events logged).
+- pwa: not_installed → shown; installed → not shown.
+- messages: shown only when notif granted AND pwa installed AND
+  trigger=interview_confirmed; after `completed` → not shown; wrong trigger →
+  not shown.
+- feature_announcement: never capability-gated; one_time respected.
+- priority: highest eligible wins.
+
+### Rollback
+- Revert the resolveForUser/shouldShow/logEvent hunks + the controller hunk.
+  No data migration.

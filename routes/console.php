@@ -5,6 +5,7 @@ use App\Jobs\SendHourlyApplicationDigestJob;
 use App\Jobs\SendInterviewReminder1HourJob;
 use App\Jobs\SendInterviewReminder24HoursJob;
 use App\Jobs\SendInterviewResponseReminderJob;
+use App\Jobs\ExpirePendingInterviewConfirmationsJob;
 use App\Jobs\SendFirmApplicantReminderJob;
 use App\Jobs\SendUnreadDigestPushJob;
 use Illuminate\Foundation\Inspiring;
@@ -256,6 +257,21 @@ Schedule::call(function () {
 Schedule::job(new SendInterviewResponseReminderJob())
     ->hourly()
     ->name('send-interview-response-reminders')
+    ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Auto-expire scheduled interviews the student never confirmed (Phase 2)
+|--------------------------------------------------------------------------
+| Runs hourly. Expires 'scheduled' interviews (both invite + applications
+| flows) whose student response is still pending past the configurable
+| window (system_settings.interview_confirmation_timeout_days, default 5).
+| Consumes NO interview credit — credit is only charged at confirmation.
+| See ExpirePendingInterviewConfirmationsJob.
+*/
+Schedule::job(new ExpirePendingInterviewConfirmationsJob())
+    ->hourly()
+    ->name('expire-pending-interview-confirmations')
     ->withoutOverlapping();
 
 /*

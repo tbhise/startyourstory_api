@@ -3139,3 +3139,156 @@ ALTER TABLE `student_employment_history`
 
 -- ROLLBACK:
 -- ALTER TABLE `student_employment_history` DROP INDEX `idx_seh_firm`, DROP COLUMN `firm_id`;
+
+
+-- =====================================================================
+-- 2026-07-08 — Firm Activity Center (Phase 1: display-only infrastructure)
+-- Additive only. New dedicated firm-facing activity feed, independent of
+-- the admin-facing activity_logs table (different audience + shape).
+-- firm_id references firm_profiles.id (same convention as jobs.firm_id /
+-- recruiter_actions.firm_id). firm_name is NOT stored — resolve via the
+-- firm relationship. Rows are written by App\Helpers\FirmActivityHelper
+-- (the single write path; controllers never insert directly) at existing
+-- action sites: job posted/edited, interview invite sent, interview
+-- scheduled, premium purchased, profile completed, profile viewed.
+-- Read by: GET /firm/activity-center (FirmActivityController).
+-- =====================================================================
+
+CREATE TABLE `firm_activities` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `firm_id`     BIGINT UNSIGNED NOT NULL,
+  `action`      VARCHAR(50)  NOT NULL,
+  `description` VARCHAR(500) NOT NULL,
+  `created_at`  TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_fa_firm_created` (`firm_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `firm_activities`;
+
+
+-- =====================================================================
+-- 2026-07-08 — Phase 2: Interview Credit Lifecycle (consume-on-confirm)
+-- Business-rule change only. A free interview credit is now consumed ONLY
+-- when the STUDENT confirms a scheduled interview (previously consumed when
+-- the FIRM scheduled it). Applies to BOTH interview paths: the invite flow
+-- (interview_invites) and the applications flow (applications). Reject and
+-- timeout-expiry consume nothing (no refund needed — an unconfirmed
+-- interview is simply never counted). Premium firms unchanged.
+--
+-- Consumption is tracked with an explicit `interview_credit_consumed_at`
+-- timestamp (set once on confirm, never cleared) so it survives later
+-- status changes (e.g. confirmed -> completed). FreeActionsHelper counts
+-- distinct students with this set.
+-- Applied to the local DB via tinker on 2026-07-08.
+-- =====================================================================
+
+-- interview_invites: credit marker, reschedule counter (max 1), new terminal
+-- statuses for student reject + auto-expiry.
+ALTER TABLE `interview_invites`
+  ADD COLUMN `interview_credit_consumed_at` TIMESTAMP NULL AFTER `scheduled_at`,
+  ADD COLUMN `reschedule_count` TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `interview_credit_consumed_at`;
+
+ALTER TABLE `interview_invites`
+  MODIFY COLUMN `interview_status`
+  ENUM('not_scheduled','scheduled','confirmed','completed','cancelled','rejected','expired')
+  NOT NULL DEFAULT 'not_scheduled';
+
+-- applications: same credit marker + reschedule counter for the applications
+-- interview path. recruiter_status is free-text VARCHAR — expiry/reject use
+-- new string values ('Interview Expired'), no enum change needed.
+ALTER TABLE `applications`
+  ADD COLUMN `interview_credit_consumed_at` TIMESTAMP NULL AFTER `interview_responded_at`,
+  ADD COLUMN `interview_reschedule_count` TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `interview_credit_consumed_at`;
+
+-- Backfill so currently-consumed counts are preserved. Only interviews that
+-- were CONFIRMED under the old flow keep a consumed credit; scheduled-but-
+-- unconfirmed interviews are intentionally freed (new rule).
+UPDATE `interview_invites`
+  SET `interview_credit_consumed_at` = COALESCE(`scheduled_at`, `updated_at`, NOW())
+  WHERE `interview_status` IN ('confirmed','completed')
+    AND `interview_credit_consumed_at` IS NULL;
+
+UPDATE `applications`
+  SET `interview_credit_consumed_at` = COALESCE(`interview_responded_at`, `updated_at`, NOW())
+  WHERE `recruiter_status` = 'Interview Confirmed'
+    AND `interview_credit_consumed_at` IS NULL;
+
+-- Admin-configurable confirmation timeout (system_settings; read via
+-- SystemSettingService::getInterviewConfirmationTimeoutDays(), default 5).
+INSERT INTO `system_settings`
+  (`setting_key`, `setting_value`, `setting_type`, `title`, `description`, `category`, `is_editable`, `created_at`, `updated_at`)
+SELECT * FROM (
+  SELECT 'interview_confirmation_timeout_days' AS `setting_key`, '5' AS `setting_value`, 'integer' AS `setting_type`,
+         'Interview Confirmation Timeout (days)' AS `title`,
+         'Days a student has to confirm a scheduled interview before it auto-expires (no interview credit is consumed on expiry).' AS `description`,
+         'interview' AS `category`, 1 AS `is_editable`, NOW() AS `created_at`, NOW() AS `updated_at`
+) AS `seed`
+WHERE NOT EXISTS (
+  SELECT 1 FROM `system_settings` s WHERE s.`setting_key` = `seed`.`setting_key`
+);
+
+-- ROLLBACK:
+-- ALTER TABLE `interview_invites`
+--   MODIFY COLUMN `interview_status` ENUM('not_scheduled','scheduled','confirmed','completed','cancelled') NOT NULL DEFAULT 'not_scheduled';
+-- ALTER TABLE `interview_invites` DROP COLUMN `interview_credit_consumed_at`, DROP COLUMN `reschedule_count`;
+-- ALTER TABLE `applications` DROP COLUMN `interview_credit_consumed_at`, DROP COLUMN `interview_reschedule_count`;
+-- DELETE FROM `system_settings` WHERE `setting_key` = 'interview_confirmation_timeout_days';
+-- DELETE FROM `system_setting_audits` WHERE `setting_key` = 'interview_confirmation_timeout_days';
+
+
+-- =====================================================================
+-- 2026-07-08 — Phase 3: Engagement Hub (generic In-App Campaign Engine)
+-- Additive only. One reusable, data-driven in-app popup engine that the
+-- dashboard queries at runtime — new campaigns (notification / pwa /
+-- messages / feature announcement) need NO frontend deploy. Existing
+-- push/PWA/messages prompts are untouched; this only ADDS capability.
+-- Audience filtering REUSES ReEngagementCampaignService::buildEligibilityQuery
+-- (role/verification/profile) and adds only a new plan (premium/free)
+-- dimension. Applied to the local DB via tinker on 2026-07-08.
+-- =====================================================================
+
+CREATE TABLE `in_app_campaigns` (
+  `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `title`               VARCHAR(200) NOT NULL,
+  `subtitle`            VARCHAR(500) NULL,
+  `image`               VARCHAR(255) NULL COMMENT 'relative path on public disk',
+  `primary_btn_label`   VARCHAR(100) NULL,
+  `primary_btn_action`  VARCHAR(40)  NULL COMMENT 'route|url|enable_push|install_pwa|dismiss',
+  `primary_btn_value`   VARCHAR(500) NULL COMMENT 'route path or url when action=route|url',
+  `secondary_btn_label` VARCHAR(100) NULL,
+  `secondary_btn_action` VARCHAR(40) NULL,
+  `secondary_btn_value` VARCHAR(500) NULL,
+  `type`                VARCHAR(40)  NOT NULL DEFAULT 'feature_announcement' COMMENT 'notification|pwa|messages|feature_announcement (extensible)',
+  `audience`            JSON NOT NULL COMMENT '{target_type,verification_status,profile_completion_status,plan}',
+  `trigger_type`        VARCHAR(40)  NOT NULL DEFAULT 'dashboard_login' COMMENT 'dashboard_login|interview_confirmed|manual (extensible)',
+  `priority`            INT NOT NULL DEFAULT 0 COMMENT 'higher wins when several match',
+  `frequency`           VARCHAR(30)  NOT NULL DEFAULT 'one_time' COMMENT 'one_time|every_login|cooldown|never_again',
+  `cooldown_hours`      INT NULL COMMENT 'used when frequency=cooldown',
+  `starts_at`           DATETIME NULL,
+  `ends_at`             DATETIME NULL,
+  `status`              VARCHAR(20)  NOT NULL DEFAULT 'draft' COMMENT 'draft|active|paused|archived',
+  `created_by_admin_id` BIGINT UNSIGNED NULL,
+  `created_at`          TIMESTAMP NULL,
+  `updated_at`          TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_iac_resolve` (`status`, `trigger_type`, `priority`),
+  KEY `idx_iac_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Per-user interaction log — drives frequency capping + "Don't Ask Again".
+CREATE TABLE `in_app_campaign_events` (
+  `id`          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `campaign_id` BIGINT UNSIGNED NOT NULL,
+  `user_id`     BIGINT UNSIGNED NOT NULL,
+  `action`      VARCHAR(20) NOT NULL COMMENT 'shown|clicked_primary|clicked_secondary|later|opt_out',
+  `created_at`  TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_iace_lookup` (`campaign_id`, `user_id`, `action`, `created_at`),
+  KEY `idx_iace_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `in_app_campaign_events`;
+-- DROP TABLE IF EXISTS `in_app_campaigns`;

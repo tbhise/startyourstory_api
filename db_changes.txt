@@ -3294,3 +3294,48 @@ CREATE TABLE `in_app_campaign_events` (
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `in_app_campaign_events`;
 -- DROP TABLE IF EXISTS `in_app_campaigns`;
+
+
+-- =====================================================================
+-- 2026-07-08 — Notification bell deep links (notifications.action_url)
+-- MISSING from this file until now: the column was authored as Laravel
+-- migration 2026_07_08_000001_add_action_url_to_notifications_table but the
+-- SQL was never recorded here, so manual environments never got it. Without
+-- it App\Helpers\NotificationHelper::create() throws
+-- "Unknown column 'action_url'" and NO firm/student bell notifications are
+-- written. Nullable: legacy rows / notifications with no destination stay NULL
+-- and the UI just marks them read on click.
+-- NOTE: this is the firm/student `notifications` table (NOT admin_notifications).
+-- =====================================================================
+
+ALTER TABLE `notifications`
+  ADD COLUMN `action_url` VARCHAR(255) NULL AFTER `message`;
+
+-- ROLLBACK:
+-- ALTER TABLE `notifications` DROP COLUMN `action_url`;
+
+
+-- =====================================================================
+-- 2026-07-09 — Link firm feeds to interview invites (Activity Center +
+-- Notification bell → "Schedule Interview" CTA / rejected final state)
+-- Additive only. A nullable, indexed interview_invite_id lets the Activity
+-- Center (firm_activities) and the Notification bell (notifications) resolve
+-- an invite's LIVE status on read and render the shared ScheduleInterviewDialog
+-- CTA (accepted+not_scheduled) or the final "Interview Invitation Rejected"
+-- state (declined/rejected) — without duplicating any interview state onto the
+-- feed rows. Non-invite rows keep NULL and render exactly as before.
+-- Applied via Laravel migration
+-- 2026_07_09_000001_add_interview_invite_link_to_feeds. SQL equivalent below.
+-- =====================================================================
+
+ALTER TABLE `firm_activities`
+  ADD COLUMN `interview_invite_id` BIGINT UNSIGNED NULL AFTER `action`,
+  ADD KEY `firm_activities_interview_invite_id_index` (`interview_invite_id`);
+
+ALTER TABLE `notifications`
+  ADD COLUMN `interview_invite_id` BIGINT UNSIGNED NULL AFTER `action_url`,
+  ADD KEY `notifications_interview_invite_id_index` (`interview_invite_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `firm_activities` DROP KEY `firm_activities_interview_invite_id_index`, DROP COLUMN `interview_invite_id`;
+-- ALTER TABLE `notifications` DROP KEY `notifications_interview_invite_id_index`, DROP COLUMN `interview_invite_id`;

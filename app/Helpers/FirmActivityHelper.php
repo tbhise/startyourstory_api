@@ -39,8 +39,13 @@ class FirmActivityHelper
      * @param int|string|null $firmId      firm_profiles.id of the acting firm
      * @param string          $action      one of the class constants
      * @param string          $description human-readable line for the timeline
+     * @param int|string|null $inviteId    interview_invites.id this row is about,
+     *                                      so the Activity Center can resolve the
+     *                                      invite's live status on read (Schedule
+     *                                      CTA vs. rejected final state). NULL for
+     *                                      non-invite activities.
      */
-    public static function log(int|string|null $firmId, string $action, string $description): void
+    public static function log(int|string|null $firmId, string $action, string $description, int|string|null $inviteId = null): void
     {
         try {
             if ($firmId === null || (int) $firmId <= 0) {
@@ -48,10 +53,11 @@ class FirmActivityHelper
             }
 
             DB::table('firm_activities')->insert([
-                'firm_id'     => (int) $firmId,
-                'action'      => $action,
-                'description' => mb_substr($description, 0, 500),
-                'created_at'  => now(),
+                'firm_id'             => (int) $firmId,
+                'action'              => $action,
+                'interview_invite_id' => $inviteId !== null ? (int) $inviteId : null,
+                'description'         => mb_substr($description, 0, 500),
+                'created_at'          => now(),
             ]);
         } catch (\Throwable $e) {
             // Best-effort logging: never let a feed insert surface to the caller.

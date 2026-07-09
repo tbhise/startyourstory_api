@@ -168,8 +168,11 @@ class InterviewInviteController extends Controller
                 'invite_id'  => $inviteId,
                 'student_id' => (int) $studentId,
             ]);
-            // Firm Activity Center feed (non-blocking).
-            FirmActivityHelper::log($firm->id, FirmActivityHelper::INTERVIEW_INVITE_SENT, 'Sent Interview Invitation to ' . $student->name);
+            // Firm Activity Center feed (non-blocking). Linked to the invite so
+            // the Activity Center resolves its LIVE status on read — this single
+            // row evolves through "Sent" → "Candidate accepted" (with a Schedule
+            // CTA) → "Interview Scheduled" → rejected final state.
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::INTERVIEW_INVITE_SENT, 'Sent Interview Invitation to ' . $student->name, $inviteId);
 
             return response()->json([
                 'status'  => true,
@@ -263,7 +266,8 @@ class InterviewInviteController extends Controller
                     'Interview invitation ' . $verb,
                     $user->name . ' has ' . $verb . ' your interview invitation.',
                     false, // explicit richer push dispatched below
-                    '/firm-dashboard'
+                    '/firm-notifications', // land where the inline Schedule CTA lives
+                    (int) $inviteId        // resolve live invite status on the Notifications page
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -394,13 +398,10 @@ class InterviewInviteController extends Controller
                 'student_id'     => (int) $invite->student_id,
                 'interview_date' => $request->interview_date,
             ]);
-            // Firm Activity Center feed (non-blocking).
-            $inviteStudentName = DB::table('users')->where('id', $invite->student_id)->value('name');
-            FirmActivityHelper::log(
-                $firm->id,
-                FirmActivityHelper::INTERVIEW_SCHEDULED,
-                'Scheduled Interview with ' . ($inviteStudentName ?: 'candidate #' . $invite->student_id)
-            );
+            // NOTE: No separate Firm Activity Center row is written here. The invite's
+            // original INTERVIEW_INVITE_SENT row (logged in invite(), linked to this
+            // invite) resolves its LIVE status on read, so it now renders as
+            // "Interview Scheduled" — a single evolving timeline entry, no duplicate.
 
             return response()->json([
                 'status'  => true,

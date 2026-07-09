@@ -44,18 +44,43 @@ class FirmActivityController extends Controller
                 ->where('firm_id', $firm->id)
                 ->count();
 
-            $activities = DB::table('firm_activities')
-                ->where('firm_id', $firm->id)
-                ->orderBy('created_at', 'desc')
-                ->orderBy('id', 'desc')
+            // Left-join the linked interview_invites row (+ candidate name) so the
+            // page can render the invite's LIVE state — a "Schedule Interview" CTA
+            // while accepted-but-not-scheduled, or the final rejected state — from
+            // the same source of truth the ScheduleInterviewDialog already writes.
+            // Rows with no interview_invite_id simply return NULL invite fields.
+            $activities = DB::table('firm_activities as fa')
+                ->leftJoin('interview_invites as ii', 'ii.id', '=', 'fa.interview_invite_id')
+                ->leftJoin('users as su', 'su.id', '=', 'ii.student_id')
+                ->where('fa.firm_id', $firm->id)
+                ->orderBy('fa.created_at', 'desc')
+                ->orderBy('fa.id', 'desc')
                 ->offset(($page - 1) * $perPage)
                 ->limit($perPage)
+                ->select(
+                    'fa.id',
+                    'fa.action',
+                    'fa.description',
+                    'fa.created_at',
+                    'fa.interview_invite_id',
+                    'ii.invite_status',
+                    'ii.interview_status',
+                    'ii.interview_date',
+                    'ii.interview_mode',
+                    'su.name as candidate_name',
+                )
                 ->get()
                 ->map(fn ($row) => [
-                    'id'          => (string) $row->id,
-                    'action'      => $row->action,
-                    'description' => $row->description,
-                    'created_at'  => $row->created_at,
+                    'id'                  => (string) $row->id,
+                    'action'              => $row->action,
+                    'description'         => $row->description,
+                    'created_at'          => $row->created_at,
+                    'interview_invite_id' => $row->interview_invite_id ? (string) $row->interview_invite_id : null,
+                    'invite_status'       => $row->invite_status,
+                    'interview_status'    => $row->interview_status,
+                    'interview_date'      => $row->interview_date,
+                    'interview_mode'      => $row->interview_mode,
+                    'candidate_name'      => $row->candidate_name,
                 ])
                 ->values();
 

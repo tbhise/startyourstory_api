@@ -839,6 +839,16 @@ class JobsController extends Controller
 
                     'recruiter_notes' => $item->recruiter_notes,
 
+                    // Distinguish WHY a rejected application is rejected so the
+                    // Rejected tab can show the right reason. A student declining a
+                    // scheduled interview also sets recruiter_status='Rejected', but
+                    // leaves student_interview_response='Rejected' — that's the tell.
+                    'rejection_reason' => $item->recruiter_status === 'Rejected'
+                        ? ($item->student_interview_response === 'Rejected'
+                            ? 'Candidate declined interview invitation.'
+                            : 'Rejected by Firm.')
+                        : null,
+
                     'is_locked' => $isLocked,
 
                     'student' => [
@@ -1968,8 +1978,14 @@ class JobsController extends Controller
         |--------------------------------------------------------------------------
         */
             if ($request->response === 'Rejected') {
-                $updateData['recruiter_status'] =
-                    'Interview Rejected';
+                // Land the application in the firm's existing "Rejected" tab. The tab
+                // filters on recruiter_status === 'Rejected' exactly, so the previous
+                // 'Interview Rejected' value was never picked up (root cause). The
+                // separate student_interview_response = 'Rejected' (set above) is what
+                // lets the UI show the reason "Candidate declined interview invitation"
+                // instead of a plain firm rejection.
+                $updateData['recruiter_status'] = 'Rejected';
+                $updateData['rejected_at']      = now();
             }
             DB::beginTransaction();
             DB::table('applications')

@@ -59,6 +59,16 @@ class FirmDashboardController extends Controller
                 // never see sparse / half-filled candidate cards.
                 ->where('users.profile_completed', true);
 
+            // Exclude students who have marked themselves as JOINED a firm via the
+            // Employment Status card (student_profiles.employment_status='joined') —
+            // they are no longer job-seeking. NULL / 'looking' rows stay visible, so
+            // existing candidates are unaffected. Reversible: switching back to
+            // "looking" re-lists them. No new column — reuses the existing flag.
+            $query->where(function ($q) {
+                $q->whereNull('student_profiles.employment_status')
+                    ->orWhere('student_profiles.employment_status', '!=', 'joined');
+            });
+
             /*
         |--------------------------------------------------------------------------
         | Exclude already_doing_articleship from candidate search
@@ -229,10 +239,12 @@ class FirmDashboardController extends Controller
                     );
                     break;
                 default:
-                    $query->orderBy(
-                        'student_profiles.created_at',
-                        'desc'
-                    );
+                    // Latest Login DESC — reuses the existing users.last_login_at
+                    // (maintained by AuthController on every login; no new tracking).
+                    // MySQL sorts NULLs last under DESC, so never-logged-in students
+                    // fall to the end; profile recency breaks ties deterministically.
+                    $query->orderByDesc('users.last_login_at')
+                        ->orderByDesc('student_profiles.created_at');
                     break;
             }
             /*
@@ -516,10 +528,26 @@ class FirmDashboardController extends Controller
 
             $total = (clone $base)->count();
 
+            // Left-join the linked interview_invites row (+ candidate name) so an
+            // "X accepted your interview invitation" notification can render an
+            // inline "Schedule Interview" CTA (reusing the shared dialog + APIs)
+            // and a decline notification can render the final rejected state — all
+            // resolved from the invite's LIVE status. Non-invite notifications keep
+            // NULL invite fields and render exactly as before.
             $notifications = $base
-                ->orderBy('created_at', 'desc')
+                ->leftJoin('interview_invites as ii', 'ii.id', '=', 'notifications.interview_invite_id')
+                ->leftJoin('users as su', 'su.id', '=', 'ii.student_id')
+                ->orderBy('notifications.created_at', 'desc')
                 ->offset(($page - 1) * $perPage)
                 ->limit($perPage)
+                ->select(
+                    'notifications.*',
+                    'ii.invite_status',
+                    'ii.interview_status',
+                    'ii.interview_date',
+                    'ii.interview_mode',
+                    'su.name as candidate_name',
+                )
                 ->get();
 
             return response()->json([

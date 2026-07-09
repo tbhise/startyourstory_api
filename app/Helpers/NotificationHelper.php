@@ -12,7 +12,8 @@ class NotificationHelper
         string $title,
         string $message,
         bool $sendPush = true,
-        ?string $actionUrl = null
+        ?string $actionUrl = null,
+        ?int $inviteId = null
     ): bool {
         try {
             DB::table('notifications')->insert([
@@ -23,6 +24,11 @@ class NotificationHelper
                 // the push mirror uses; NULL when the caller has no destination, in
                 // which case the UI just marks the entry read on click.
                 'action_url' => $actionUrl,
+                // Link to the interview_invites row (when this notification is about
+                // one), so the Notifications page can resolve the invite's live
+                // status and render an inline "Schedule Interview" CTA or the final
+                // rejected state. NULL for every other notification.
+                'interview_invite_id' => $inviteId,
                 'is_read'    => false,
                 'created_at' => now(),
             ]);

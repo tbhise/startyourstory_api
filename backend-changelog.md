@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-07-09 — Student Directory: hide joined students + order by latest login
+
+Two minimal query changes in `FirmDashboardController@getCandidates`. No schema
+changes — both reuse existing columns. Existing filters/search/pagination are
+untouched.
+
+- **Exclude joined students (§3)** — added a WHERE that drops rows where
+  `student_profiles.employment_status = 'joined'` (the flag the Employment Status
+  card already writes). `NULL` / `'looking'` rows stay visible, so current
+  candidates are unaffected; reversible when a student switches back to looking.
+- **Order by latest login (§4)** — the default sort now orders by
+  `users.last_login_at DESC` (maintained by `AuthController` on every login — no
+  new tracking), with `student_profiles.created_at DESC` as a deterministic
+  tie-breaker. MySQL sorts NULL `last_login_at` last under DESC, so
+  never-logged-in students fall to the end. The `oldest` and `name` sort options
+  are unchanged.
+
+No `db_changes.txt` entry: no columns were added or altered.
+
+---
+
+## 2026-07-09 — Interview scheduling reachable from every firm feed + rejected-tab fix
+
+Makes the firm's Activity Center and Notification bell actionable for the
+invite-based interview flow, and fixes a student-declined interview never
+reaching the firm's "Rejected" tab. No interview scheduling logic was
+duplicated — every entry point still calls `/interview-invites/{id}/schedule`.
+
+- **Migration `2026_07_09_000001_add_interview_invite_link_to_feeds`** — adds a
+  nullable `interview_invite_id` (indexed) to `firm_activities` and
+  `notifications`. Also ran the previously-unapplied
+  `2026_07_08_000001_add_action_url_to_notifications_table` (the column was
+  missing, so `NotificationHelper::create` inserts were failing silently —
+  firm interview notifications were not being written at all). Applied by
+  `--path` because the migrations table is seeded from a dump and a bare
+  `migrate` re-runs the base tables.
+- **`FirmActivityHelper::log` / `NotificationHelper::create`** — accept an
+  optional `$inviteId` and persist it. Backward compatible (defaults to NULL).
+- **`InterviewInviteController`** — `invite()` links the `interview_invite_sent`
+  activity row to the invite; `respond()` links the accept/decline notification
+  to the invite (and deep-links it to `/firm-notifications`); `schedule()` no
+  longer writes a *second* activity row — the linked invite row resolves its
+  live status on read, so it evolves in place ("Sent" → "Candidate accepted" →
+  "Interview Scheduled").
+- **`FirmActivityController::activityCenter` / `FirmDashboardController::getNotifications`**
+  — left-join `interview_invites` (+ candidate name) and return
+  `invite_status`, `interview_status`, `interview_date`, `interview_mode`,
+  `candidate_name`. Non-invite rows return NULL invite fields and are unchanged.
+- **`JobsController::respondInterview`** — a student rejecting a scheduled
+  interview now sets `recruiter_status = 'Rejected'` (+ `rejected_at`) instead
+  of `'Interview Rejected'`. Root cause: the firm's Rejected tab filters on
+  `recruiter_status === 'Rejected'` exactly, so `'Interview Rejected'` was never
+  shown there. `student_interview_response` stays `'Rejected'` to distinguish
+  the reason.
+- **`JobsController::getApplications`** — returns a derived `rejection_reason`
+  ("Candidate declined interview invitation." vs "Rejected by Firm.") for
+  rejected applications.
+
+---
+
 ## 2026-07-08 — Engagement Hub Phase 2 refinements (backend)
 
 Behaviour-only refinements to the in-app campaign engine. Architecture, tables

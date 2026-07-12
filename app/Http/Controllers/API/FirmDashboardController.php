@@ -546,6 +546,13 @@ class FirmDashboardController extends Controller
                     'ii.interview_status',
                     'ii.interview_date',
                     'ii.interview_mode',
+                    // Extra invite fields → "Reschedule Interview" CTA + prefill for
+                    // the shared ScheduleInterviewDialog. Backward-compatible.
+                    'ii.interview_location',
+                    'ii.interview_note',
+                    'ii.student_interview_response',
+                    'ii.reschedule_date',
+                    'ii.student_id as candidate_id',
                     'su.name as candidate_name',
                 )
                 ->get();

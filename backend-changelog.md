@@ -4,6 +4,48 @@
 
 ---
 
+## 2026-07-12 — All interview notifications deep-link to the candidate profile
+
+`InterviewInviteController` only; no schema/API-contract changes.
+
+- **`respond()`** (invite Accepted/Declined) — the firm bell notification and
+  push now deep-link to `/firm-students/{student_id}` instead of
+  `/firm-notifications` / `/firm-dashboard`. The `interview_invite_id` link is
+  kept so the Notifications page still renders the inline Schedule CTA.
+- **`cancel()`** (candidate cancelled) — bell + push now deep-link to
+  `/firm-students/{student_id}` (was `/firm-dashboard`) and the bell entry now
+  links the invite id like the other interview notifications.
+- Together with the earlier `confirm()` change, every interview notification
+  (accepted, declined, confirmed, rejected, reschedule requested, cancelled)
+  now lands on the candidate profile — the primary interview destination.
+
+---
+
+## 2026-07-12 — Activity/notification invite fields, reschedule deep-link, drop profile-view activity
+
+Backward-compatible additions supporting the firm reschedule CTAs and My Activity
+cleanup. No schema changes — all reuse existing `interview_invites` columns.
+
+- **`FirmActivityController@activityCenter`** — the invite left-join now also
+  selects `interview_location`, `interview_note`, `student_interview_response`,
+  `reschedule_date`, and `student_id as candidate_id` (exposed as new response
+  keys). Lets My Activity render a "Reschedule Interview" CTA (candidate asked for
+  a new time) that prefills the shared dialog, and navigate to the candidate
+  profile. Also **excludes `action = 'profile_viewed'`** rows from the feed and
+  its total/pagination.
+- **`FirmDashboardController@getNotifications`** — same extra invite fields added
+  to the notifications left-join so the Notifications page can render the same
+  Reschedule CTA + prefill.
+- **`InterviewInviteController@confirm`** — the firm notification for a
+  Confirmed/Rejected/Reschedule response now links the `interview_invite_id` and
+  deep-links to `/firm-students/{student_id}` (candidate profile) instead of
+  `/firm-dashboard`, for both the bell entry and the push. No response/business
+  logic change.
+- **`UserController@trackRecruiterAction`** — profile views are **no longer
+  logged** to the firm Activity Center (`FirmActivityHelper::PROFILE_VIEWED` call
+  removed). The student-facing `recruiter_actions` "profile_viewed" row is
+  unchanged.
+
 ## 2026-07-09 — Student Directory: hide joined students + order by latest login
 
 Two minimal query changes in `FirmDashboardController@getCandidates`. No schema
@@ -5080,3 +5122,197 @@ dashboard load even after the user granted permission (clicking Enable recorded
 ### Rollback
 - Revert the resolveForUser/shouldShow/logEvent hunks + the controller hunk.
   No data migration.
+
+## 2026-07-11 — Simplified interview flow (direct schedule) + contact sharing on confirmation
+
+### Why
+Product decision: the candidate-profile invite flow forced the student to
+accept twice (accept invitation, then confirm the schedule). The flow is now:
+firm schedules directly → student Accepts / Rejects / requests ONE reschedule.
+Additionally, once BOTH parties have agreed (interview confirmed), each side's
+contact details (mobile + email) become visible to the other — and hide again
+on any later status change.
+
+### API changes
+- **NEW** `POST /candidates/{id}/schedule-interview`
+  (`InterviewInviteController@scheduleDirect`, firm-verified group): validates
+  date/mode/location/note, blocks duplicates via `active_flag = 1`, applies the
+  existing `FreeActionsHelper::canScheduleInterview` gate, and inserts the
+  `interview_invites` row directly as `invite_status='accepted'` +
+  `interview_status='scheduled'` (`student_interview_response='Pending'`).
+  Notifies the student (recruiter_actions row with inline actions, push, email)
+  and logs ActivityTracker `INTERVIEW_SCHEDULED` + a Firm Activity Center row
+  linked to the invite.
+- `POST /interview-invites/{id}/schedule` and
+  `POST /applications/{id}/schedule-interview`: `interview_mode` now accepts
+  `Online`/`Offline` (legacy `Physical`/`Telephonic`/`To Be Discussed` still
+  valid); new optional `interview_location` (venue or meeting link, max 500).
+- `GET /candidates/{id}/interview-invite`: response adds `interview_location`,
+  `student_response_note`, `reschedule_date`, `reschedule_count`, and
+  `student_contact` (`{name,email,mobile}`) — non-null ONLY while
+  `interview_status === 'confirmed'`.
+- `POST /getApplications/{jobId}`: each application adds `interview_location`
+  and `interview_contact` (candidate `{name,email,mobile}`) — non-null ONLY
+  while `recruiter_status === 'Interview Confirmed'`.
+- `POST /getAppliedJobs`: adds `interview_location` and `firm_contact` — same
+  confirmed-only rule (firm user's email/mobile).
+- `POST /getRecruiterActions`: adds `interview_location` and `firm_contact` —
+  non-null only while the action's interview (invite OR application flow) is
+  currently confirmed.
+- Legacy `POST /candidates/{id}/invite-interview` +
+  `/interview-invites/{id}/respond` remain (drain in-flight invites); no UI
+  creates new bare invites.
+
+### Fix folded in
+- "Active invite" checks in `invite()`, `scheduleDirect()` and `cancel()` now
+  use `active_flag = 1` instead of the `invite_status/interview_status`
+  combination. Direct-scheduled rows keep `invite_status='accepted'` after
+  terminal states, so the old status-based check would have blocked the pair
+  forever after a rejection.
+
+### Business rules (unchanged, verified)
+- Interview credit consumed ONLY at student acceptance (`confirm` /
+  `respondInterview 'Accepted'`); never at schedule/invite/reschedule; not
+  refunded on later cancel (set-once semantics).
+- ONE reschedule request per interview (both flows); after the firm
+  reschedules, the student can only Accept or Reject.
+- Expiry / reminder jobs untouched: direct rows are covered by
+  `ExpirePendingInterviewConfirmationsJob` (scheduled+Pending);
+  `SendInterviewResponseReminderJob` only targets legacy `invite_status='pending'`.
+
+### Database
+- `interview_invites.interview_location` VARCHAR(500) NULL,
+  `applications.interview_location` VARCHAR(500) NULL (see db_changes.txt
+  2026-07-11; applied to local DB). Additive only.
+
+### Verified (API-level e2e, 52/52 assertions — real HTTP + DB checks)
+- Scenario 1: schedule → accept → confirmed, credit consumed at accept only,
+  contact unlocked both sides, recruiter_actions + firm_activities rows.
+- Scenario 2: reject → no credit, contact hidden, pair freed.
+- Scenario 3: reschedule (once) → 2nd blocked 409 → firm reschedules →
+  accept → confirmed + credit; free gate blocks 3rd new candidate at limit 2.
+- Scenario 4: cancel confirmed → contact re-hidden, credit not refunded.
+- Legacy invite → accept → schedule (Telephonic) → confirm still works
+  end-to-end, including contact sharing.
+
+### Rollback
+- Remove the new route + `scheduleDirect`, revert the response-field hunks in
+  JobsController, restore status-based active checks. Columns can stay
+  (nullable, additive) or be dropped per db_changes.txt rollback.
+
+## 2026-07-11 — Dynamic firm subscription plans (admin-managed) + renewal extends expiry
+
+### Why
+Firm premium pricing/duration were hardcoded in three places (PhonePeFirmController
+`$plans`, AdminController manual approval, FirmBillingController.planMeta) and the
+frontend mock. Product needs admin-managed plans (3/6/12 months) with MRP/price/
+active/sort, dynamic on the frontend, and renewals that EXTEND validity instead of
+replacing it.
+
+### Database
+- NEW `firm_subscription_plans` catalog (plan_key, name, duration_months, mrp,
+  price, is_active, sort_order). Seeded 3/6/12-month plans active + the legacy
+  1-month plan inactive. See db_changes.txt 2026-07-11. Additive; no change to
+  firm_subscriptions.
+
+### New / changed
+- **NEW `app/Helpers/PlanHelper.php`** — single source of truth: `activePlans()`,
+  `durationMonths()`, `priceFor()` (branch = ½), `isPurchasable()`, `meta()`, and
+  `computeExpiry(planKey, currentExpiry)` — calendar-month math that EXTENDS from
+  the firm's current expiry when still in the future (15-Oct + 6mo = 15-Apr), else
+  from now. `currentActiveExpiry(firmId)` reads the live expiry.
+- **NEW `FirmSubscriptionPlanController`** — `GET /firm/subscription-plans`
+  (public, active plans for the pricing page) + admin CRUD
+  (`POST /admin/subscription-plans[/create|/{id}/update|/{id}/delete]`).
+  Delete is refused when the plan has subscriptions (deactivate instead).
+- **`PhonePeFirmController`** — removed the hardcoded `$plans` array. `initiate`
+  prices from the catalog (snapshot stored on the row). `verify` + `webhook`
+  compute expiry via PlanHelper (renewal-extends) and supersede older active rows
+  so the extended expiry is the single source of truth.
+- **`AdminController::approvePremiumRequest`** — manual approvals now also extend
+  expiry from the current one via PlanHelper (was `premium-yearly?addYear:addMonth`,
+  which replaced it).
+- **`SubscriptionHelper::isPremiumFirm`** — replaced the hardcoded plan-key
+  whitelist with "any active, non-expired, non-free plan", so admin-added keys
+  (e.g. premium-halfyearly) are recognised automatically.
+- **`FirmBillingController::planMeta`** — resolves names via PlanHelper (catalog
+  first, legacy fallback).
+
+### Immutability / compatibility
+- firm_subscriptions.amount is a per-purchase snapshot; catalog price edits never
+  touch historical rows (verified). Legacy plan keys ('premium', 'premium-monthly')
+  still resolve. Manual/PhonePe/admin flows all unchanged in shape.
+
+### Verified (backend, 14/14 assertions — real DB + PlanHelper)
+- Fresh purchase expiry = now + N months; amount = catalog price snapshot.
+- Catalog price change does NOT alter a past purchase's amount.
+- Renewal EXTENDS from current expiry (3mo then 6mo → +9 calendar months); one
+  active row after renewal; premium recognised for the new key.
+- Inactive plan not purchasable; in-use plan not deletable.
+- Student Directory: default order is users.last_login_at DESC (already in place;
+  re-verified via live API — recent > mid > old).
+
+### Rollback
+- Drop firm_subscription_plans; revert the 6 touched files to restore the
+  hardcoded `$plans`/whitelist/planMeta. firm_subscriptions rows are unaffected.
+
+## 2026-07-11 (refinement) — Renewal logic confirmed; two purchase-gate gaps closed
+
+Follow-up to the same-day subscription-plans entry above, per reviewer feedback.
+
+### 1) Renewal logic — verified exactly as specified, no code change needed
+`PlanHelper::computeExpiry` already implements both cases correctly (confirmed
+with the exact example dates via `Carbon::setTestNow`):
+- **Case 1 (still active)**: expiry 15-Oct, purchase 6mo on 10-Oct → `2027-04-15`
+  (extends from the existing expiry).
+- **Case 2 (already expired)**: expiry 15-Oct, purchase on 25-Oct → `2027-04-25`
+  (starts from the purchase/now date).
+Also verified at the DB level: a `firm_subscriptions` row with a stale
+`status='active'` but a PAST `expires_at` (the realistic shape — nothing flips
+status on expiry) is correctly treated as Case 2 by
+`PlanHelper::currentActiveExpiry`, which filters on `expires_at > now()`.
+
+### 2) Free-plan identification — explained, one robustness gap closed
+There is **no dedicated "is free" field**. A firm is Free purely by *absence*:
+`SubscriptionHelper::isPremiumFirm` returns false whenever there is no active,
+non-expired `firm_subscriptions` row with `plan NOT IN (NULL, 'free')`. This
+covers (a) a firm with zero subscription rows, (b) an explicit legacy
+`plan='free'` row (the old `AdminController::addSubscriptions` manual flow),
+and (c) an expired premium row.
+**Gap found & fixed**: nothing stopped an admin from creating a
+`firm_subscription_plans` catalog row keyed `plan_key='free'` — it would have
+been purchasable (shown as a normal paid plan) yet would **never** grant
+premium, because `isPremiumFirm` explicitly excludes `plan='free'`. A firm
+could pay for it and receive nothing.
+- **`FirmSubscriptionPlanController::store()`** — added `not_in:free` to the
+  `plan_key` validation with an explicit error message. `plan_key` is immutable
+  after creation, so this only needs to be blocked at creation time.
+
+### 3) Plan deactivation — confirmed correct; one enforcement gap closed
+Existing subscribers keep Premium until their stored `expires_at` regardless of
+the catalog's `is_active` (never checked by `isPremiumFirm`) — confirmed
+correct, no change needed.
+New purchases of a deactivated plan were blocked for the **online (PhonePe)**
+flow (`initiate` already calls `PlanHelper::isPurchasable`), but **NOT** for the
+**manual/bank-transfer** flow — `submitPremiumRequest` validated `plan` as any
+string, so a deactivated (or nonexistent) plan key could still be submitted and
+later approved.
+- **`AdminController::submitPremiumRequest`** — added the same
+  `PlanHelper::isPurchasable($request->plan)` gate PhonePe already has, returning
+  422 "This plan is no longer available for purchase." Mirrors the online flow
+  exactly so both checkout paths enforce Active/Inactive identically.
+
+### Verified
+- Renewal Case 1 & Case 2 match the spec's exact example dates (2027-04-15 /
+  2027-04-25), plus the expired-status-active DB edge case.
+- `POST /admin/subscription-plans/create` with `plan_key=free` → rejected
+  ("reserved and cannot be used for a paid plan").
+- `POST /premium-requests` with `plan=premium-monthly` (inactive) → rejected
+  ("no longer available for purchase"); same call with `plan=premium-quarterly`
+  (active) → succeeds unchanged.
+- Full three-task Playwright suite re-run clean (10/10) after these changes;
+  `tsc --noEmit` and `npm run build` both green.
+
+### Rollback
+- Revert the `not_in:free` validation rule and the `isPurchasable` gate in
+  `submitPremiumRequest`. No schema change.

@@ -11,16 +11,15 @@ use Illuminate\Support\Facades\Validator;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
 use App\Helpers\FirmActivityHelper;
+use App\Helpers\PlanHelper;
 use App\Services\ActivityTracker;
 use App\Enums\ActivityType;
 
 class PhonePeFirmController extends Controller
 {
-    private array $plans = [
-        'premium-monthly'   => ['amount' => 499,  'days' => 30],
-        'premium-quarterly' => ['amount' => 1299, 'days' => 90],
-        'premium-yearly'    => ['amount' => 9999, 'days' => 365],
-    ];
+    // Plan pricing/duration now come from the admin-managed
+    // firm_subscription_plans catalog via PlanHelper (2026-07-11). No hardcoded
+    // amounts — deactivated plans are no longer purchasable.
 
     private function getFirmUser(Request $request): ?object
     {
@@ -55,14 +54,13 @@ class PhonePeFirmController extends Controller
             }
 
             $planId = $request->plan_id;
-            if (!isset($this->plans[$planId])) {
-                return response()->json(['status' => false, 'message' => 'Invalid plan selected'], 422);
+            if (!PlanHelper::isPurchasable($planId)) {
+                return response()->json(['status' => false, 'message' => 'Invalid or unavailable plan selected'], 422);
             }
 
-            $amount = $this->plans[$planId]['amount'];
-            if (!empty($firmProfile->is_branch)) {
-                $amount = (int) floor($amount / 2);
-            }
+            // Price snapshot taken at purchase time (branch offices pay half).
+            // Stored on the row so future catalog price changes never alter it.
+            $amount = (int) round(PlanHelper::priceFor($planId, !empty($firmProfile->is_branch)));
 
             // Remove stale pending PhonePe subscription records for this firm
             DB::table('firm_subscriptions')
@@ -174,12 +172,11 @@ class PhonePeFirmController extends Controller
 
             $gatewayPaymentId = $statusData['paymentDetails'][0]['transactionId'] ?? null;
 
-            $days = match ($subscription->plan) {
-                'premium-monthly'   => 30,
-                'premium-quarterly' => 90,
-                'premium-yearly'    => 365,
-                default             => 30,
-            };
+            // Renewal-aware expiry: extend from the firm's current active expiry
+            // when it is still in the future, else from now. Excludes THIS pending
+            // row (not yet active) so it never counts as its own base.
+            $currentExpiry = PlanHelper::currentActiveExpiry((int) $firmProfile->id);
+            $expiresAt = PlanHelper::computeExpiry($subscription->plan, $currentExpiry);
 
             DB::beginTransaction();
 
@@ -193,9 +190,18 @@ class PhonePeFirmController extends Controller
                         'status'             => 'active',
                         'payment_date'       => now(),
                         'starts_at'          => now(),
-                        'expires_at'         => now()->addDays($days),
+                        'expires_at'         => $expiresAt,
                         'updated_at'         => now(),
                     ]);
+
+                // Supersede any OTHER active subscription rows for this firm so the
+                // renewal's extended expiry is the single source of truth (their
+                // remaining validity was already folded into $expiresAt above).
+                DB::table('firm_subscriptions')
+                    ->where('firm_id', $firmProfile->id)
+                    ->where('id', '!=', $subscription->id)
+                    ->where('status', 'active')
+                    ->update(['status' => 'expired', 'updated_at' => now()]);
 
                 DB::table('firm_profiles')
                     ->where('id', $firmProfile->id)
@@ -290,12 +296,10 @@ class PhonePeFirmController extends Controller
             $isSuccess        = ($payload['state'] ?? '') === 'COMPLETED';
             $gatewayPaymentId = $payload['paymentDetails'][0]['transactionId'] ?? null;
 
-            $days = match ($subscription->plan) {
-                'premium-monthly'   => 30,
-                'premium-quarterly' => 90,
-                'premium-yearly'    => 365,
-                default             => 30,
-            };
+            // Renewal-aware expiry (same rule as verify()): extend from the firm's
+            // current active expiry when still in the future, else from now.
+            $currentExpiry = PlanHelper::currentActiveExpiry((int) $subscription->firm_id);
+            $expiresAt = PlanHelper::computeExpiry($subscription->plan, $currentExpiry);
 
             DB::beginTransaction();
 
@@ -309,9 +313,16 @@ class PhonePeFirmController extends Controller
                         'status'             => 'active',
                         'payment_date'       => now(),
                         'starts_at'          => now(),
-                        'expires_at'         => now()->addDays($days),
+                        'expires_at'         => $expiresAt,
                         'updated_at'         => now(),
                     ]);
+
+                // Supersede any OTHER active rows (their validity is folded in above).
+                DB::table('firm_subscriptions')
+                    ->where('firm_id', $subscription->firm_id)
+                    ->where('id', '!=', $subscription->id)
+                    ->where('status', 'active')
+                    ->update(['status' => 'expired', 'updated_at' => now()]);
 
                 DB::table('firm_profiles')
                     ->where('id', $subscription->firm_id)

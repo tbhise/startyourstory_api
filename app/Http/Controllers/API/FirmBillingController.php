@@ -25,15 +25,9 @@ class FirmBillingController extends Controller
      */
     private function planMeta(?string $plan): array
     {
-        return match ($plan) {
-            'premium-monthly'   => ['name' => 'Premium Monthly Plan',   'duration' => '1 Month'],
-            'premium-quarterly' => ['name' => 'Premium Quarterly Plan', 'duration' => '3 Months'],
-            'premium-yearly'    => ['name' => 'Premium Yearly Plan',    'duration' => '12 Months'],
-            // Legacy value: manual approval normalises 'premium-yearly' to 'premium'.
-            'premium'           => ['name' => 'Premium Yearly Plan',    'duration' => '12 Months'],
-            'free', null, ''    => ['name' => 'Free Plan',              'duration' => '—'],
-            default             => ['name' => ucwords(str_replace('-', ' ', (string) $plan)), 'duration' => '—'],
-        };
+        // Resolves via the admin-managed plan catalog first, with legacy-key
+        // fallbacks (2026-07-11). Historical rows keep their stored amount.
+        return \App\Helpers\PlanHelper::meta($plan);
     }
 
     /**

@@ -16,6 +16,7 @@ use App\Http\Controllers\API\InterviewInviteController;
 use App\Http\Controllers\API\NotificationController;
 use App\Http\Controllers\API\AdminController;
 use App\Http\Controllers\API\PhonePeFirmController;
+use App\Http\Controllers\API\FirmSubscriptionPlanController;
 use App\Http\Controllers\API\PhonePeEngagementController;
 use App\Http\Controllers\API\FirmBillingController;
 use App\Http\Middleware\FirmVerifiedMiddleware;
@@ -203,6 +204,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
         Route::post('/applications/{id}/schedule-interview',  [JobsController::class, 'scheduleInterview']);
 
         // Interview invites (from candidate profile) — firm side
+        // Simplified flow (2026-07-11): schedule directly, no separate invite step.
+        Route::post('/candidates/{id}/schedule-interview',    [InterviewInviteController::class, 'scheduleDirect']);
+        // Legacy — kept only for invites already in flight before the simplification.
         Route::post('/candidates/{id}/invite-interview',      [InterviewInviteController::class, 'invite']);
         Route::get('/candidates/{id}/interview-invite',       [InterviewInviteController::class, 'candidateInvite']);
         Route::post('/interview-invites/{id}/schedule',       [InterviewInviteController::class, 'schedule']);
@@ -312,6 +316,13 @@ Route::post('/admin/referral-transactions',              [AdminReferralControlle
 
 Route::post('/admin/subscriptions',        [AdminController::class, 'getAdminSubscriptions']);
 Route::post('/admin/addSubscriptions',     [AdminController::class, 'addSubscriptions']);
+
+// Firm subscription plan catalog (admin-managed pricing; 2026-07-11).
+// Admin CRUD (admin_token enforced inside the controller).
+Route::post('/admin/subscription-plans',             [FirmSubscriptionPlanController::class, 'adminIndex']);
+Route::post('/admin/subscription-plans/create',      [FirmSubscriptionPlanController::class, 'store']);
+Route::post('/admin/subscription-plans/{id}/update', [FirmSubscriptionPlanController::class, 'update']);
+Route::post('/admin/subscription-plans/{id}/delete', [FirmSubscriptionPlanController::class, 'destroy']);
 Route::post('/premium-requests',           [AdminController::class, 'submitPremiumRequest']);
 Route::post('/admin/premium-requests',     [AdminController::class, 'getPremiumRequests']);
 Route::post(
@@ -355,6 +366,10 @@ Route::prefix('admin/training-partners')->group(function () {
 
     Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
 
+
+// Active firm subscription plans for the pricing + checkout page (dynamic; no
+// hardcoded pricing). Public read — the checkout itself is auth-gated below.
+Route::get('/firm/subscription-plans', [FirmSubscriptionPlanController::class, 'publicIndex']);
 
 Route::post('/payments/phonepe/initiate', [PhonePeFirmController::class, 'initiate'])->middleware('throttle:payment-initiate');
 Route::post('/payments/phonepe/verify',   [PhonePeFirmController::class, 'verify']);

@@ -16,9 +16,15 @@ class SubscriptionHelper
         // We intentionally do NOT trust firm_profiles.is_premium — that denormalized
         // flag is never reset on expiry, which let expired-premium firms keep
         // bypassing every paywall. Premium is now always derived dynamically.
+        //
+        // Any active, non-expired, non-free plan counts as premium. This replaced
+        // a hardcoded plan-key whitelist (2026-07-11) so admin-added plan keys
+        // (e.g. premium-halfyearly) are recognised automatically — every real plan
+        // key is 'premium*'; only 'free'/NULL are excluded.
         return DB::table('firm_subscriptions')
             ->where('firm_id', $firmId)
-            ->whereIn('plan', ['premium', 'premium-monthly', 'premium-quarterly', 'premium-yearly'])
+            ->whereNotNull('plan')
+            ->where('plan', '!=', 'free')
             ->where('status', 'active')
             ->where(function ($q) {
                 $q->whereNull('expires_at')->orWhere('expires_at', '>', now());

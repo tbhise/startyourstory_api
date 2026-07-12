@@ -17,9 +17,11 @@ use Illuminate\Support\Facades\Log;
 
 class InterviewInviteController extends Controller
 {
-    // Invites that block a new invite between the same firm + student.
-    private const ACTIVE_INVITE_STATUSES   = ['pending', 'accepted'];
-    private const ACTIVE_INTERVIEW_STATUSES = ['scheduled', 'confirmed'];
+    // NOTE (2026-07-11): "is this invite active?" is answered by active_flag = 1,
+    // not by status combinations. Direct-scheduled rows keep invite_status =
+    // 'accepted' even after terminal states (rejected/cancelled/expired), so a
+    // status-based check would block the pair forever; active_flag is cleared on
+    // every terminal transition and is what the race-safe unique index enforces.
 
     /*
     |--------------------------------------------------------------------------
@@ -78,10 +80,7 @@ class InterviewInviteController extends Controller
             $active = DB::table('interview_invites')
                 ->where('firm_id', $firm->id)
                 ->where('student_id', $studentId)
-                ->where(function ($q) {
-                    $q->whereIn('invite_status', self::ACTIVE_INVITE_STATUSES)
-                        ->orWhereIn('interview_status', self::ACTIVE_INTERVIEW_STATUSES);
-                })
+                ->where('active_flag', 1)
                 ->first();
             if ($active) {
                 return response()->json([
@@ -191,6 +190,167 @@ class InterviewInviteController extends Controller
 
     /*
     |--------------------------------------------------------------------------
+    | Firm: Schedule an interview directly  (POST /candidates/{studentId}/schedule-interview)
+    |--------------------------------------------------------------------------
+    | Simplified flow (2026-07-11): the separate invite -> student-accept step is
+    | gone. The firm picks date/time/mode/location up front and the interview
+    | lands with the student already 'scheduled' — the student then Accepts,
+    | Rejects, or requests ONE reschedule via confirm(). The legacy invite() /
+    | respond() endpoints stay only to drain invites that were in flight before
+    | this change.
+    */
+    public function scheduleDirect(Request $request, $studentId = null)
+    {
+        try {
+            $request->validate([
+                'interview_date'     => 'required|date',
+                // Online/Offline are the current UI values; the older modes stay
+                // valid so legacy clients and reschedules of old rows keep working.
+                'interview_mode'     => 'required|string|in:Online,Offline,Physical,Telephonic,To Be Discussed',
+                'interview_location' => 'nullable|string|max:500',
+                'interview_note'     => 'nullable|string',
+            ]);
+
+            [$firm, $err] = $this->resolveFirm($request);
+            if ($err) return $err;
+
+            $student = DB::table('users')
+                ->where('id', $studentId)
+                ->where('role', 'student')
+                ->where('is_deleted', false)
+                ->first();
+            if (!$student) {
+                return response()->json(['status' => false, 'message' => 'Candidate not found'], 404);
+            }
+
+            // Duplicate prevention: block if an active invite already exists.
+            $active = DB::table('interview_invites')
+                ->where('firm_id', $firm->id)
+                ->where('student_id', $studentId)
+                ->where('active_flag', 1)
+                ->first();
+            if ($active) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'invite_exists',
+                    'message' => 'An active interview already exists for this candidate.',
+                ], 409);
+            }
+
+            // Scheduling gate: the credit is CONSUMED at student acceptance, not
+            // here. Same in-flight + confirmed gate as the applications flow.
+            $freeCheck = FreeActionsHelper::canScheduleInterview($firm->id, (int) $studentId);
+            if (!$freeCheck['allowed']) {
+                return response()->json([
+                    'status'  => false,
+                    'reason'  => 'free_limit_reached',
+                    'message' => $freeCheck['message'],
+                ], 403);
+            }
+
+            // invite_status is stored as 'accepted' so every downstream check that
+            // predates the simplified flow (schedule() reschedules, activity-feed
+            // resolution, active-pair logic) keeps working unchanged — there is
+            // simply no separate acceptance step anymore.
+            try {
+                $inviteId = DB::table('interview_invites')->insertGetId([
+                    'firm_id'                    => $firm->id,
+                    'student_id'                 => $studentId,
+                    'message'                    => $firm->firm_name . ' scheduled an interview with you.',
+                    'invite_status'              => 'accepted',
+                    'interview_status'           => 'scheduled',
+                    'interview_date'             => $request->interview_date,
+                    'interview_mode'             => $request->interview_mode,
+                    'interview_location'         => $request->interview_location,
+                    'interview_note'             => $request->interview_note,
+                    'student_interview_response' => 'Pending',
+                    'active_flag'                => 1,
+                    'invited_at'                 => now(),
+                    'scheduled_at'               => now(),
+                    'created_at'                 => now(),
+                    'updated_at'                 => now(),
+                ]);
+            } catch (\Illuminate\Database\QueryException $e) {
+                if ((int) ($e->errorInfo[1] ?? 0) === 1062) { // duplicate active invite (race lost)
+                    return response()->json([
+                        'status'  => false,
+                        'reason'  => 'invite_exists',
+                        'message' => 'An active interview already exists for this candidate.',
+                    ], 409);
+                }
+                throw $e;
+            }
+
+            // In-app notification (student's recruiter_actions feed) — lands
+            // directly in the scheduled state with inline Accept/Reject/Reschedule.
+            DB::table('recruiter_actions')->insert([
+                'firm_id'             => $firm->id,
+                'student_id'          => $studentId,
+                'visible_to'          => 'student',
+                'interview_invite_id' => $inviteId,
+                'action_type'         => 'interview_invite',
+                'title'               => 'Interview scheduled',
+                'message'             => $firm->firm_name . ' scheduled an interview with you. Please respond.',
+                'action_status'       => 'scheduled',
+                'created_at'          => now(),
+            ]);
+
+            // Push notification (additive layer — queued, never blocks the request).
+            $pushWhen = date('D, d M Y \a\t h:i A', strtotime($request->interview_date));
+            SendUserPushJob::dispatch(
+                (int) $studentId,
+                $firm->firm_name . ' scheduled an interview with you',
+                $pushWhen . ' · ' . $request->interview_mode . ' — tap to respond.',
+                '/recruiter-actions',
+                [],
+                'interview_' . $inviteId
+            );
+
+            // Email (immediate / queued).
+            try {
+                app(EmailNotificationService::class)->sendInterviewInvite(
+                    $student->email,
+                    $student->name,
+                    $firm->firm_name,
+                    $firm->firm_name . ' has scheduled an interview with you on ' . $pushWhen
+                        . ' (' . $request->interview_mode . '). Please log in to accept, reject or request a reschedule.'
+                );
+            } catch (\Throwable $e) {
+                Log::error('Failed to queue direct-schedule interview email', [
+                    'invite_id' => $inviteId,
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+
+            // Activity log (async, non-blocking).
+            ActivityTracker::log(ActivityTracker::FIRM, $firm->user_id, ActivityType::INTERVIEW_SCHEDULED, [
+                'invite_id'      => (int) $inviteId,
+                'student_id'     => (int) $studentId,
+                'interview_date' => $request->interview_date,
+            ]);
+            // Firm Activity Center feed — linked to the invite so the row resolves
+            // its LIVE status on read (Scheduled → Confirmed / Rejected / Completed).
+            FirmActivityHelper::log($firm->id, FirmActivityHelper::INTERVIEW_SCHEDULED, 'Scheduled Interview with ' . $student->name, $inviteId);
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Interview scheduled',
+                'data'    => [
+                    'invite_id'        => (string) $inviteId,
+                    'invite_status'    => 'accepted',
+                    'interview_status' => 'scheduled',
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json(['status' => false, 'message' => $e->errors()], 422);
+        } catch (\Exception $e) {
+            Log::error('Direct Schedule Interview Error', ['message' => $e->getMessage(), 'line' => $e->getLine()]);
+            return response()->json(['status' => false, 'message' => 'Unexpected server error while scheduling interview.'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Firm: Current invite state for a candidate  (GET /candidates/{studentId}/interview-invite)
     |--------------------------------------------------------------------------
     */
@@ -205,9 +365,31 @@ class InterviewInviteController extends Controller
             ->orderByDesc('id')
             ->first();
 
+        $data = $invite ? $this->formatInvite($invite) : null;
+
+        // Contact sharing: the student's contact becomes visible ONLY while the
+        // interview is confirmed — never before, and it re-hides on any terminal
+        // state (rejected / cancelled / expired / completed).
+        if ($data !== null) {
+            $data['student_contact'] = null;
+            if ($invite->interview_status === 'confirmed') {
+                $student = DB::table('users')
+                    ->where('id', $invite->student_id)
+                    ->select('name', 'email', 'mobile')
+                    ->first();
+                if ($student) {
+                    $data['student_contact'] = [
+                        'name'   => $student->name,
+                        'email'  => $student->email,
+                        'mobile' => $student->mobile,
+                    ];
+                }
+            }
+        }
+
         return response()->json([
             'status' => true,
-            'data'   => $invite ? $this->formatInvite($invite) : null,
+            'data'   => $data,
         ]);
     }
 
@@ -261,12 +443,15 @@ class InterviewInviteController extends Controller
                 ->first();
             if ($firm) {
                 $verb = $newStatus === 'accepted' ? 'accepted' : 'declined';
+                // Interview notifications deep-link to the candidate profile — the
+                // primary destination for interview workflows.
+                $interviewUrl = '/firm-students/' . $invite->student_id;
                 NotificationHelper::create(
                     $firm->user_id,
                     'Interview invitation ' . $verb,
                     $user->name . ' has ' . $verb . ' your interview invitation.',
                     false, // explicit richer push dispatched below
-                    '/firm-notifications', // land where the inline Schedule CTA lives
+                    $interviewUrl,
                     (int) $inviteId        // resolve live invite status on the Notifications page
                 );
 
@@ -277,7 +462,7 @@ class InterviewInviteController extends Controller
                     $newStatus === 'accepted'
                         ? 'You can now schedule the interview.'
                         : 'The invitation has been closed.',
-                    '/firm-dashboard',
+                    $interviewUrl,
                     [],
                     'interview_' . $invite->id // replaces older notifications for this invite
                 );
@@ -326,9 +511,10 @@ class InterviewInviteController extends Controller
     {
         try {
             $request->validate([
-                'interview_date' => 'required|date',
-                'interview_mode' => 'required|string|in:Physical,Telephonic,To Be Discussed',
-                'interview_note' => 'nullable|string',
+                'interview_date'     => 'required|date',
+                'interview_mode'     => 'required|string|in:Online,Offline,Physical,Telephonic,To Be Discussed',
+                'interview_location' => 'nullable|string|max:500',
+                'interview_note'     => 'nullable|string',
             ]);
 
             [$firm, $err] = $this->resolveFirm($request);
@@ -363,6 +549,7 @@ class InterviewInviteController extends Controller
                 'interview_status'           => 'scheduled',
                 'interview_date'             => $request->interview_date,
                 'interview_mode'             => $request->interview_mode,
+                'interview_location'         => $request->interview_location,
                 'interview_note'             => $request->interview_note,
                 'student_interview_response' => 'Pending',
                 'scheduled_at'               => now(),
@@ -514,12 +701,18 @@ class InterviewInviteController extends Controller
                     ],
                 };
 
+                // Deep-link to the candidate profile (primary interview destination)
+                // and link the invite so the Notifications page can resolve the live
+                // status and render the inline Reschedule/confirmed/rejected control.
+                $interviewUrl = '/firm-students/' . $invite->student_id;
+
                 NotificationHelper::create(
                     $firm->user_id,
                     $bellTitle,
                     $bellBody,
                     false, // explicit richer push dispatched below
-                    '/firm-dashboard'
+                    $interviewUrl,
+                    (int) $invite->id
                 );
 
                 // Push notification (additive layer — queued, never blocks the request).
@@ -527,7 +720,7 @@ class InterviewInviteController extends Controller
                     (int) $firm->user_id,
                     $pushTitle,
                     $pushBody,
-                    '/firm-dashboard',
+                    $interviewUrl,
                     [],
                     'interview_' . $invite->id // replaces older notifications for this invite
                 );
@@ -624,8 +817,7 @@ class InterviewInviteController extends Controller
                 return response()->json(['status' => false, 'message' => 'Not authorized to cancel this invitation'], 403);
             }
 
-            $active = in_array($invite->invite_status, self::ACTIVE_INVITE_STATUSES, true)
-                || in_array($invite->interview_status, self::ACTIVE_INTERVIEW_STATUSES, true);
+            $active = (int) ($invite->active_flag ?? 0) === 1;
             if (!$active) {
                 return response()->json(['status' => false, 'message' => 'Invitation is not active'], 409);
             }
@@ -644,12 +836,15 @@ class InterviewInviteController extends Controller
             if ($isOwnerStudent) {
                 $firm = DB::table('firm_profiles')->where('id', $invite->firm_id)->first();
                 if ($firm) {
+                    // Interview notifications deep-link to the candidate profile.
+                    $interviewUrl = '/firm-students/' . $invite->student_id;
                     NotificationHelper::create(
                         $firm->user_id,
                         'Interview cancelled',
                         'The candidate cancelled the interview invitation.',
                         false, // explicit richer push dispatched below
-                        '/firm-dashboard'
+                        $interviewUrl,
+                        (int) $invite->id
                     );
 
                     // Push notification (additive layer — queued, never blocks the request).
@@ -657,7 +852,7 @@ class InterviewInviteController extends Controller
                         (int) $firm->user_id,
                         $user->name . ' cancelled the interview',
                         'The interview slot is now free.',
-                        '/firm-dashboard',
+                        $interviewUrl,
                         [],
                         'interview_' . $invite->id // replaces older notifications for this invite
                     );
@@ -683,8 +878,12 @@ class InterviewInviteController extends Controller
             'interview_status'           => $invite->interview_status,
             'interview_date'             => $invite->interview_date,
             'interview_mode'             => $invite->interview_mode,
+            'interview_location'         => $invite->interview_location ?? null,
             'interview_note'             => $invite->interview_note,
             'student_interview_response' => $invite->student_interview_response,
+            'student_response_note'      => $invite->student_response_note,
+            'reschedule_date'            => $invite->reschedule_date,
+            'reschedule_count'           => (int) ($invite->reschedule_count ?? 0),
         ];
     }
 }

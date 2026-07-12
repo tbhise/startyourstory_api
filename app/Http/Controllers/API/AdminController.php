@@ -16,6 +16,7 @@ use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\AuthHelper;
+use App\Helpers\PlanHelper;
 use App\Services\AdminActivityLogger;
 
 class AdminController extends Controller
@@ -432,6 +433,22 @@ class AdminController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => $validator->errors()->first()
+                ], 422);
+            }
+            /*
+        |--------------------------------------------------------------------------
+        | Plan must be an ACTIVE catalog plan (2026-07-11). Mirrors the same
+        | gate PhonePeFirmController::initiate already applies to the online
+        | flow — an admin-deactivated plan can no longer be purchased through
+        | EITHER checkout path, even via a direct API call that bypasses the
+        | (already-filtered-to-active) frontend selector.
+        |--------------------------------------------------------------------------
+        */
+            if (!PlanHelper::isPurchasable($request->plan)) {
+                DB::rollBack();
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'This plan is no longer available for purchase.',
                 ], 422);
             }
             /*
@@ -914,9 +931,6 @@ class AdminController extends Controller
                 ], 422);
             }
             $startsAt = now();
-            $expiresAt =
-                $premiumRequest->plan ===
-                'premium-yearly' ? now()->addYear() : now()->addMonth();
 
             // Resolve the firm's REAL firm_profiles.id. premium_requests.firm_id
             // has historically been stored as the USER id (the firm payment page
@@ -939,6 +953,12 @@ class AdminController extends Controller
                 ], 404);
             }
             $firmProfileId = $firmProfile->id;
+
+            // Renewal-aware expiry: extend from the firm's current active expiry
+            // (calendar-month math via the plan catalog) so remaining validity is
+            // never lost. Falls back to a fresh term when no live subscription.
+            $currentExpiry = PlanHelper::currentActiveExpiry((int) $firmProfileId);
+            $expiresAt = PlanHelper::computeExpiry($premiumRequest->plan, $currentExpiry);
 
             $existingSubscription =
                 DB::table('firm_subscriptions')

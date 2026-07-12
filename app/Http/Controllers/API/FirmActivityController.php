@@ -40,8 +40,12 @@ class FirmActivityController extends Controller
             $perPage = min(50, max(1, (int) $request->input('per_page', 20)));
             $page    = max(1, (int) $request->input('page', 1));
 
+            // Profile views are no longer meaningful business actions — exclude any
+            // historical 'profile_viewed' rows so the timeline (and its total/paging)
+            // only reflects real actions (interviews, messages, subscriptions, …).
             $total = (int) DB::table('firm_activities')
                 ->where('firm_id', $firm->id)
+                ->where('action', '!=', 'profile_viewed')
                 ->count();
 
             // Left-join the linked interview_invites row (+ candidate name) so the
@@ -53,6 +57,7 @@ class FirmActivityController extends Controller
                 ->leftJoin('interview_invites as ii', 'ii.id', '=', 'fa.interview_invite_id')
                 ->leftJoin('users as su', 'su.id', '=', 'ii.student_id')
                 ->where('fa.firm_id', $firm->id)
+                ->where('fa.action', '!=', 'profile_viewed')
                 ->orderBy('fa.created_at', 'desc')
                 ->orderBy('fa.id', 'desc')
                 ->offset(($page - 1) * $perPage)
@@ -67,6 +72,14 @@ class FirmActivityController extends Controller
                     'ii.interview_status',
                     'ii.interview_date',
                     'ii.interview_mode',
+                    // Extra invite fields so the timeline can render a "Reschedule
+                    // Interview" CTA (candidate asked for a new time) and prefill the
+                    // shared ScheduleInterviewDialog. Backward-compatible additions.
+                    'ii.interview_location',
+                    'ii.interview_note',
+                    'ii.student_interview_response',
+                    'ii.reschedule_date',
+                    'ii.student_id as candidate_id',
                     'su.name as candidate_name',
                 )
                 ->get()
@@ -80,6 +93,11 @@ class FirmActivityController extends Controller
                     'interview_status'    => $row->interview_status,
                     'interview_date'      => $row->interview_date,
                     'interview_mode'      => $row->interview_mode,
+                    'interview_location'  => $row->interview_location,
+                    'interview_note'      => $row->interview_note,
+                    'student_interview_response' => $row->student_interview_response,
+                    'reschedule_date'     => $row->reschedule_date,
+                    'candidate_id'        => $row->candidate_id ? (string) $row->candidate_id : null,
                     'candidate_name'      => $row->candidate_name,
                 ])
                 ->values();

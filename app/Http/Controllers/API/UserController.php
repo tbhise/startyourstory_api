@@ -973,11 +973,10 @@ class UserController extends Controller
                         'action_status' => $actionStatus,
                         'created_at' => now(),
                     ]);
-                // Firm Activity Center feed (non-blocking) — inside the 24h
-                // dedupe guard above so repeat views don't spam the timeline.
-                if ($actionType === 'profile_viewed') {
-                    FirmActivityHelper::log($firm->id, FirmActivityHelper::PROFILE_VIEWED, 'Viewed profile of ' . $student->name);
-                }
+                // NOTE: profile views are intentionally NOT logged to the firm
+                // Activity Center — the "My Actions" timeline shows only meaningful
+                // business actions (interviews, messages, subscriptions, …). The
+                // student-facing recruiter_actions row above is unchanged.
             }
             return response()->json([
                 'status' => true,

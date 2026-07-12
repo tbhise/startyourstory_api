@@ -24,49 +24,36 @@ in student profile section -
 
 in profile page there is another card Employement Status
 
-Change name Employement Status to Have you joined a firm ?
-
-If he selects yes then let him add firms and joining date along with existingin form questions and after saving that form on success message - Ask use to change Update career status also so it can stay relevant.
 
 --
-If employement status is selected to yes then dont show these students in student directory in firm dashboard
+If employement status is selected to yes then dont show these students in student directory in firm dashboard ==Done
 
 ---
 
-in studnets directory in firm dashboard -- show students who has recent login -- order by login desc
+in studnets directory in firm dashboard -- show students who has recent login -- order by login desc ==Done
 
 --------------------------------------------------
 
-Current interview invite process is very lengthy --- it should be like on click on invite to interview -if should ask for date to schedule on this student can accept or reject --it will reduce one step
+Current interview invite process is very lengthy --- it should be like on click on invite to interview -if should ask for date to schedule on this student can accept or reject --it will reduce one step   ==Done
 
-Update career status process --
+Update career status process --   ==Done
 
-after schedule interview and candidate accepts and firm accepts too --then show contact number and email of firm to student and vice versa -- along with it open out inbuilt chat box and encourage them to chat in it
+after schedule interview and candidate accepts and firm accepts too --then show contact number and email of firm to student and vice versa -- along with it open out inbuilt chat box and encourage them to chat in it   ==Done
 
-show firm and student count in homepage
+show firm and student count in homepage   ==Done
 
+retain filters on firm dashoard  ==Done
+
+3 months and 6 months plan  ==Done
 ---
+
+
+
+
+
 ---future Updates :-
 
 IT/OC , CA library , Vanacies for student on daily basis
 
 Study material --
 
-
-============================================================
-Audit complete. The admin isn't being notified intentionally — the decline flow only targets the firm. The admin receives it because admin impersonation ("Login as User") silently registers the admin's browser as one of the firm's push devices, and nothing ever un-registers it.
-
-What the decline flow actually does (correct by design)
-When a candidate declines, InterviewInviteController.php:256-297 notifies only the firm: a bell entry via NotificationHelper::create($firm->user_id, ...), a push via SendUserPushJob::dispatch($firm->user_id, ...), and an email to the firm. There is no admin call here, and AdminNotificationService.php has no interview-related type at all — nothing writes interview declines into the admin_notifications feed. So what the admin sees is a browser push aimed at the firm, delivered to the admin's device.
-
-The leak chain
-Impersonation starts — a super admin uses "Login as User" on a firm; AdminImpersonationController.php:151 sets an auth_token cookie in the admin's own browser and lands them on /firm-dashboard.
-The firm shell auto-registers push — firm-shell.tsx:677 calls useUserPushRegistration(...), which silently registers whenever Notification.permission === "granted" (user-push.ts:130-139). The admin's browser already has permission granted (admin push uses the same origin, same Firebase project, same VAPID key, and same service worker — stated in user-push.ts:8-13), so the browser mints one FCM token valid for both audiences.
-The write isn't blocked — POST fcm/token is not in the impersonation deny-list (BlockImpersonationWrites.php:31-90), so UserPushController.php:46-63 upserts the admin's device token into user_fcm_tokens with user_id = <firm's user id>.
-Nothing cleans it up — exiting impersonation (ImpersonationBanner.tsx:55-70) only calls adminStopImpersonation(), which deletes the session and clears the cookie (AdminImpersonationController.php:173-219) — it never touches user_fcm_tokens. unregisterUserPush() runs only in the normal user logout path (auth.ts:12). And even if it were called mid-impersonation, DELETE /fcm/token would be rejected anyway — the middleware blocks all DELETE verbs during impersonation (BlockImpersonationWrites.php:126-128).
-The decline fires — SendUserPushJob → UserPushService::sendToUser plucks all tokens for the firm's user_id (UserPushService.php:54-57), which now includes the admin's browser. The admin gets "X declined your interview invite."
-Scope of the problem
-This isn't decline-specific: the admin's device will receive every push meant for that firm (accepts, messages, digests — everything routed through NotificationHelper/SendUserPushJob) until the stale row dies. FCM only prunes it on an UNREGISTERED/INVALID response (UserPushService.php:106), which won't happen since the token is live.
-It compounds across every firm/student the admin has ever impersonated in that browser — except the upsert-on-unique-token reassigns, so the token belongs to the most recently impersonated user at any time.
-Note the asymmetry: user-push.ts:143-145 explicitly documents that logout cleanup exists "so the next user of the browser doesn't receive the previous user's notifications" — the impersonation exit path just never got the equivalent.
-If/when you want it fixed, the obvious candidates are: add fcm/token to the impersonation POST deny-list (prevents the registration entirely), and/or have impersonate/stop delete user_fcm_tokens rows created during that session. But per your instruction — audit only, nothing changed.

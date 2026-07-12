@@ -3339,3 +3339,74 @@ ALTER TABLE `notifications`
 -- ROLLBACK:
 -- ALTER TABLE `firm_activities` DROP KEY `firm_activities_interview_invite_id_index`, DROP COLUMN `interview_invite_id`;
 -- ALTER TABLE `notifications` DROP KEY `notifications_interview_invite_id_index`, DROP COLUMN `interview_invite_id`;
+
+
+-- =====================================================================
+-- 2026-07-11 — Simplified interview flow + contact sharing
+-- Change 1: the candidate-profile invite flow no longer has a separate
+--   "accept invitation" step. POST /candidates/{id}/schedule-interview creates
+--   the interview_invites row directly in interview_status='scheduled'
+--   (invite_status stored as 'accepted' so all legacy checks keep working).
+--   The student then Accepts / Rejects / requests ONE reschedule (existing
+--   confirm endpoint). Credit still consumed ONLY at student acceptance.
+--   Legacy invite/respond endpoints remain to drain in-flight invites.
+-- Change 2: interview location / meeting link is now collected in the
+--   Schedule Interview dialog (mode is Online/Offline; legacy modes stay
+--   valid). New nullable column on both interview tables. Additive only.
+-- Contact sharing needs NO schema change — contact fields are resolved
+--   live from users at read time, only while status is confirmed.
+-- =====================================================================
+
+ALTER TABLE `interview_invites`
+  ADD COLUMN `interview_location` VARCHAR(500) NULL AFTER `interview_mode`;
+
+ALTER TABLE `applications`
+  ADD COLUMN `interview_location` VARCHAR(500) NULL AFTER `interview_mode`;
+
+-- ROLLBACK:
+-- ALTER TABLE `interview_invites` DROP COLUMN `interview_location`;
+-- ALTER TABLE `applications` DROP COLUMN `interview_location`;
+
+
+-- =====================================================================
+-- 2026-07-11 — Firm subscription plan catalog (admin-managed pricing)
+-- Additive only. Makes firm premium plans dynamic (Name / Duration months /
+-- MRP / Current Price / Active / Sort Order) instead of hardcoded in
+-- PhonePeFirmController + FirmBillingController + frontend mock.
+-- Read by App\Helpers\PlanHelper (pricing, calendar-month expiry, renewal
+-- extension). Historical firm_subscriptions rows keep their own snapshot
+-- amount, so editing a plan's price never mutates past purchases.
+-- Applied to the local DB on 2026-07-11.
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS `firm_subscription_plans` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `plan_key`        VARCHAR(50)  NOT NULL,               -- e.g. premium-quarterly (matches firm_subscriptions.plan)
+  `name`            VARCHAR(100) NOT NULL,               -- display name, e.g. "3 Months"
+  `duration_months` SMALLINT UNSIGNED NOT NULL,          -- calendar months (addMonths) — 15-Oct + 6 = 15-Apr
+  `mrp`             DECIMAL(10,2) NOT NULL DEFAULT 0,    -- strikethrough / original price
+  `price`           DECIMAL(10,2) NOT NULL DEFAULT 0,    -- current price
+  `is_active`       TINYINT(1) NOT NULL DEFAULT 1,       -- Active/Inactive (never hard-delete in-use plans)
+  `sort_order`      INT NOT NULL DEFAULT 0,
+  `created_at`      TIMESTAMP NULL,
+  `updated_at`      TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_fsp_plan_key` (`plan_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Seed: 3/6/12-month plans active; the legacy 1-month plan seeded INACTIVE for
+-- backward compatibility (historical rows resolve their name; not purchasable).
+INSERT IGNORE INTO `firm_subscription_plans`
+  (`plan_key`, `name`, `duration_months`, `mrp`, `price`, `is_active`, `sort_order`, `created_at`, `updated_at`) VALUES
+  ('premium-monthly',    '1 Month',   1,   699,  499, 0, 0, NOW(), NOW()),
+  ('premium-quarterly',  '3 Months',  3,  1799, 1299, 1, 1, NOW(), NOW()),
+  ('premium-halfyearly', '6 Months',  6,  3499, 2499, 1, 2, NOW(), NOW()),
+  ('premium-yearly',     '12 Months', 12, 11999, 9999, 1, 3, NOW(), NOW());
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `firm_subscription_plans`;
+--
+-- NOTE: no change to firm_subscriptions / users schema. Student Directory
+-- ordering (last_login DESC) already used the existing users.last_login_at
+-- column (no migration). Firm dashboard filter persistence is client-side
+-- localStorage only (no DB).

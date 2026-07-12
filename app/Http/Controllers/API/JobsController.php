@@ -358,6 +358,12 @@ class JobsController extends Controller
                     '=',
                     'firm_profiles.id'
                 )
+                ->leftJoin(
+                    'users as firm_users',
+                    'firm_profiles.user_id',
+                    '=',
+                    'firm_users.id'
+                )
                 ->select(
                     // application
                     'applications.id as application_id',
@@ -365,6 +371,7 @@ class JobsController extends Controller
                     'applications.applied_at',
                     'applications.interview_date',
                     'applications.interview_mode',
+                    'applications.interview_location',
                     'applications.interview_note',
                     'applications.student_interview_response',
                     'applications.student_response_note',
@@ -374,7 +381,10 @@ class JobsController extends Controller
                     'jobs.*',
                     // firm
                     'firm_profiles.firm_name',
-                    'firm_profiles.logo_path'
+                    'firm_profiles.logo_path',
+                    // firm contact — exposed to the student ONLY when confirmed
+                    'firm_users.email as firm_email',
+                    'firm_users.mobile as firm_mobile'
                 )
                 ->where(
                     'applications.student_id',
@@ -425,6 +435,19 @@ class JobsController extends Controller
                     $job->interview_date,
                     'interview_mode' =>
                     $job->interview_mode,
+                    'interview_location' =>
+                    $job->interview_location,
+                    // Contact sharing (2026-07-11): the firm's contact is visible
+                    // ONLY while the interview is confirmed — it re-hides on any
+                    // later status change (rejected/cancelled/expired).
+                    'firm_contact' =>
+                    $job->recruiter_status === 'Interview Confirmed'
+                        ? [
+                            'name'   => $job->firm_name,
+                            'email'  => $job->firm_email,
+                            'mobile' => $job->firm_mobile,
+                        ]
+                        : null,
                     'interview_note' =>
                     $job->interview_note,
                     'student_interview_response' =>
@@ -746,6 +769,7 @@ class JobsController extends Controller
                     'applications.selected_at',
                     'applications.interview_date',
                     'applications.interview_mode',
+                    'applications.interview_location',
                     'applications.interview_note',
                     'applications.student_interview_response',
                     'applications.student_response_note',
@@ -753,6 +777,7 @@ class JobsController extends Controller
                     'applications.is_visible_to_firm',
                     'users.name',
                     'users.email',
+                    'users.mobile',
                     'users.profile_image',
                     'student_profiles.city',
                     'student_profiles.gender',
@@ -831,7 +856,20 @@ class JobsController extends Controller
 
                     'interview_mode' => $item->interview_mode,
 
+                    'interview_location' => $item->interview_location,
+
                     'interview_note' => $item->interview_note,
+
+                    // Contact sharing (2026-07-11): the candidate's contact is
+                    // visible ONLY while the interview is confirmed — it re-hides
+                    // on any later status change (rejected/cancelled/expired).
+                    'interview_contact' => $item->recruiter_status === 'Interview Confirmed'
+                        ? [
+                            'name'   => $item->name,
+                            'email'  => $item->email,
+                            'mobile' => $item->mobile,
+                        ]
+                        : null,
 
                     'student_interview_response' => $item->student_interview_response,
 
@@ -1208,8 +1246,12 @@ class JobsController extends Controller
             $request->validate([
                 'interview_date' =>
                 'required|date',
+                // Online/Offline are the current UI values; older modes stay valid
+                // so historical data and legacy clients keep working.
                 'interview_mode' =>
-                'required|string|in:Physical,Telephonic,To Be Discussed',
+                'required|string|in:Online,Offline,Physical,Telephonic,To Be Discussed',
+                'interview_location' =>
+                'nullable|string|max:500',
                 'interview_note' =>
                 'nullable|string',
             ]);
@@ -1333,6 +1375,8 @@ class JobsController extends Controller
                     $request->interview_date,
                     'interview_mode' =>
                     $request->interview_mode,
+                    'interview_location' =>
+                    $request->interview_location,
                     'interview_note' =>
                     $request->interview_note,
                     'student_interview_response' =>
@@ -1661,20 +1705,31 @@ class JobsController extends Controller
                     '=',
                     'interview_invites.id'
                 )
+                ->leftJoin(
+                    'users as firm_users',
+                    'firm_profiles.user_id',
+                    '=',
+                    'firm_users.id'
+                )
                 ->select(
                     'recruiter_actions.*',
                     'firm_profiles.firm_name',
                     'firm_profiles.logo_path',
+                    'firm_users.email as firm_email',
+                    'firm_users.mobile as firm_mobile',
                     'jobs.title as job_title',
                     'applications.interview_date',
                     'applications.interview_mode',
+                    'applications.interview_location',
                     'applications.interview_note',
                     'applications.student_interview_response',
                     'applications.interview_reschedule_count',
+                    'applications.recruiter_status as application_recruiter_status',
                     'interview_invites.invite_status',
                     'interview_invites.interview_status',
                     'interview_invites.interview_date as invite_interview_date',
                     'interview_invites.interview_mode as invite_interview_mode',
+                    'interview_invites.interview_location as invite_interview_location',
                     'interview_invites.interview_note as invite_interview_note',
                     'interview_invites.student_interview_response as invite_student_response',
                     'interview_invites.reschedule_count as invite_reschedule_count'
@@ -1766,10 +1821,28 @@ class JobsController extends Controller
                     $item->action_type === 'interview_invite'
                         ? $item->invite_interview_mode
                         : $item->interview_mode,
+                    'interview_location' =>
+                    $item->action_type === 'interview_invite'
+                        ? $item->invite_interview_location
+                        : $item->interview_location,
                     'interview_note' =>
                     $item->action_type === 'interview_invite'
                         ? $item->invite_interview_note
                         : $item->interview_note,
+                    // Contact sharing (2026-07-11): the firm's contact is visible
+                    // ONLY while this action's interview is currently confirmed —
+                    // it re-hides on any later status change.
+                    'firm_contact' =>
+                    (
+                        ($item->action_type === 'interview_invite' && ($item->interview_status ?? null) === 'confirmed')
+                        || (!empty($item->application_id) && ($item->application_recruiter_status ?? null) === 'Interview Confirmed')
+                    )
+                        ? [
+                            'name'   => $item->firm_name,
+                            'email'  => $item->firm_email,
+                            'mobile' => $item->firm_mobile,
+                        ]
+                        : null,
                     'student_response' =>
                     $item->action_type === 'interview_invite'
                         ? $item->invite_student_response

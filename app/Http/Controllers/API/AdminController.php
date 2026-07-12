@@ -10,7 +10,6 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Vinkla\Hashids\Facades\Hashids;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use App\Services\Notifications\EmailNotificationService;
 use App\Helpers\ReferralHelper;
@@ -230,6 +229,9 @@ class AdminController extends Controller
 
             $formatted =
                 $subscriptions->map(function ($item) {
+                    // Friendly display name for the raw plan key (catalog first,
+                    // then legacy fallbacks) so the UI never string-matches keys.
+                    $meta = PlanHelper::meta($item->plan);
                     return [
                         'id' => (string) $item->id,
                         'firm_id' => (string) $item->firm_id,
@@ -237,6 +239,7 @@ class AdminController extends Controller
                         'contact' => $item->contact_person,
                         'firm_email' => $item->firm_email,
                         'plan' => $item->plan,
+                        'plan_label' => $meta['name'],
                         'status' => $item->status,
                         'starts_at' => $item->starts_at ? date('d M Y', strtotime($item->starts_at)) : null,
                         'expires_at' => $item->expires_at ? date('d M Y', strtotime($item->expires_at)) : null,
@@ -274,6 +277,27 @@ class AdminController extends Controller
             ]);
         }
     }
+    /**
+     * Admin manual plan assignment (rewritten 2026-07-12).
+     *
+     * Mirrors the PhonePe activation exactly, with PlanHelper as the single
+     * source of truth for duration/expiry/renewal:
+     *  - `plan` must be an ACTIVE catalog plan (same isPurchasable gate as
+     *    initiate/submitPremiumRequest). The old 'free'/'premium' binary and
+     *    the free-typed status/starts_at/expires_at inputs are gone — expiry
+     *    is always computed from the plan's duration, extending the firm's
+     *    current active subscription when one exists (renewal-aware).
+     *  - The row is keyed on firm_profiles.id (the id every premium check in
+     *    SubscriptionHelper uses). The old code stored users.id, which made
+     *    manual assignments invisible to isPremiumFirm — the firm never
+     *    actually became premium.
+     *  - payment_status is set to 'paid' (gateway 'manual', amount 0) so the
+     *    row appears on the firm's Billing page and its active-plan summary,
+     *    matching approvePremiumRequest's manual-payment convention.
+     *
+     * API contract: `firm_id` is still the firm USER id (what /master/companies
+     * returns to the admin UI); it is resolved to firm_profiles.id here.
+     */
     public function addSubscriptions(Request $request)
     {
         try {
@@ -281,10 +305,7 @@ class AdminController extends Controller
                 $request->all(),
                 [
                     'firm_id' => 'required|exists:firm_profiles,user_id',
-                    'plan' => 'required|in:free,premium',
-                    'status' => 'required|in:active,expired,cancelled',
-                    'starts_at' => 'nullable|date',
-                    'expires_at' => 'nullable|date',
+                    'plan' => 'required|string',
                 ]
             );
             if ($validator->fails()) {
@@ -292,6 +313,12 @@ class AdminController extends Controller
                     'status' => false,
                     'message' => $validator->errors()->first(),
                 ]);
+            }
+            if (!PlanHelper::isPurchasable($request->plan)) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid or unavailable plan selected',
+                ], 422);
             }
             $firm = DB::table('firm_profiles')
                 ->where('user_id', $request->firm_id)
@@ -302,36 +329,59 @@ class AdminController extends Controller
                     'message' => 'Firm not found'
                 ]);
             }
+            $firmProfileId = (int) $firm->id;
+
+            // Renewal-aware expiry — identical to the PhonePe verify/webhook
+            // paths: extend from the current active expiry when still in the
+            // future, otherwise start a fresh term from now.
+            $currentExpiry = PlanHelper::currentActiveExpiry($firmProfileId);
+            $expiresAt = PlanHelper::computeExpiry($request->plan, $currentExpiry);
+
             DB::beginTransaction();
-            DB::table('firm_subscriptions')
-                ->where('firm_id', $request->firm_id)
-                ->where('status', 'active')
-                ->update([
-                    'status' => 'expired',
-                    'updated_at' => now(),
-                ]);
             $subscriptionId =
                 DB::table('firm_subscriptions')
                 ->insertGetId([
-                    'firm_id' => $request->firm_id,
+                    'firm_id' => $firmProfileId,
                     'plan' => $request->plan,
-                    'status' => $request->status,
-                    'starts_at' => !empty($request->starts_at) ? Carbon::parse($request->starts_at)->format('Y-m-d H:i:s') : now(),
-                    'expires_at' => !empty($request->expires_at) ? Carbon::parse($request->expires_at)->format('Y-m-d H:i:s') : null,
+                    'amount' => 0,
+                    'currency' => 'INR',
+                    'payment_gateway' => 'manual',
+                    'payment_method' => 'manual',
+                    'payment_status' => 'paid',
+                    'payment_date' => now(),
+                    'remarks' => 'Assigned by admin',
+                    'status' => 'active',
+                    'starts_at' => now(),
+                    'expires_at' => $expiresAt,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
 
-            // Sync is_premium flag on firm_profiles
-            $isPremiumPlan = str_contains($request->plan, 'premium') && $request->status === 'active';
+            // Supersede any OTHER active rows for this firm — their remaining
+            // validity was already folded into $expiresAt above (same rule as
+            // the PhonePe verify/webhook paths).
+            DB::table('firm_subscriptions')
+                ->where('firm_id', $firmProfileId)
+                ->where('id', '!=', $subscriptionId)
+                ->where('status', 'active')
+                ->update(['status' => 'expired', 'updated_at' => now()]);
+
             DB::table('firm_profiles')
-                ->where('id', $firm->id)
-                ->update(['is_premium' => $isPremiumPlan ? 1 : 0, 'updated_at' => now()]);
+                ->where('id', $firmProfileId)
+                ->update(['is_premium' => 1, 'updated_at' => now()]);
 
             // Firm referral: create a pending ₹2,000 payout if this firm was referred.
-            if ($isPremiumPlan) {
-                ReferralHelper::onFirmPremiumActivated((int) $firm->id);
-            }
+            ReferralHelper::onFirmPremiumActivated($firmProfileId);
+
+            DB::table('payment_logs')->insert([
+                'firm_subscription_id' => $subscriptionId,
+                'event_type'           => 'admin_manual_assignment',
+                'payload'              => json_encode([
+                    'plan'       => $request->plan,
+                    'expires_at' => $expiresAt->toDateTimeString(),
+                ]),
+                'created_at'           => now(),
+            ]);
 
             DB::commit();
             $subscription =
@@ -341,10 +391,10 @@ class AdminController extends Controller
 
             AdminActivityLogger::log(
                 $this->adminFromRequest($request),
-                $isPremiumPlan ? AdminActivityLogger::FIRM_PREMIUM_CHANGED : AdminActivityLogger::SUBSCRIPTION_CREATED,
+                AdminActivityLogger::FIRM_PREMIUM_CHANGED,
                 'firm',
                 $request->firm_id,
-                'Set subscription for ' . ($firm->firm_name ?? ('firm #' . $request->firm_id)) . " to plan '{$request->plan}' (status {$request->status}).",
+                'Assigned subscription plan \'' . $request->plan . '\' to ' . ($firm->firm_name ?? ('firm #' . $request->firm_id)) . ' (expires ' . $expiresAt->format('d M Y') . ').',
                 $request
             );
 
@@ -960,54 +1010,45 @@ class AdminController extends Controller
             $currentExpiry = PlanHelper::currentActiveExpiry((int) $firmProfileId);
             $expiresAt = PlanHelper::computeExpiry($premiumRequest->plan, $currentExpiry);
 
-            $existingSubscription =
-                DB::table('firm_subscriptions')
+            // Always INSERT a new subscription row and supersede any other
+            // active rows — the same lifecycle as the PhonePe verify/webhook
+            // paths and admin manual assignment (2026-07-12). The old code
+            // overwrote the firm's oldest existing row in place, destroying
+            // its purchase history on every approval.
+            $newSubscriptionId = DB::table('firm_subscriptions')
+                ->insertGetId([
+                    'firm_id' => $firmProfileId,
+                    'contact_person' => $premiumRequest->contact_person,
+                    // Real catalog plan_key (the historical 'premium-yearly' →
+                    // 'premium' alias was dropped 2026-07-12; old 'premium' rows
+                    // still resolve via PlanHelper's legacy map).
+                    'plan' => $premiumRequest->plan,
+                    'amount' => $premiumRequest->amount,
+                    'currency' => 'INR',
+                    'payment_gateway' => 'manual',
+                    'payment_method' => 'manual',
+                    'transaction_id' => $premiumRequest->transaction_id,
+                    // A manually-approved payment IS paid — mark it so, otherwise
+                    // billing/reporting (which filter on payment_status) hide it.
+                    'payment_status' => 'paid',
+                    'payment_date' => $premiumRequest->payment_date,
+                    'screenshot_url' => $premiumRequest->screenshot_url,
+                    'remarks' => $request->remarks,
+                    'status' => 'active',
+                    'starts_at' => $startsAt,
+                    'expires_at' => $expiresAt,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            // Supersede any OTHER active rows for this firm — their remaining
+            // validity was already folded into $expiresAt above (renewal-aware
+            // computeExpiry), so the new row is the single source of truth.
+            DB::table('firm_subscriptions')
                 ->where('firm_id', $firmProfileId)
-                ->first();
-            if ($existingSubscription) {
-                DB::table('firm_subscriptions')
-                    ->where('id', $existingSubscription->id)
-                    ->update([
-                        'contact_person' => $premiumRequest->contact_person,
-                        'plan' => $premiumRequest->plan === 'premium-yearly' ? 'premium' : $premiumRequest->plan,
-                        'amount' => $premiumRequest->amount,
-                        'currency' => 'INR',
-                        'payment_gateway' => 'manual',
-                        'payment_method' => 'manual',
-                        'transaction_id' => $premiumRequest->transaction_id,
-                        // A manually-approved payment IS paid — mark it so, otherwise
-                        // billing/reporting (which filter on payment_status) hide it.
-                        'payment_status' => 'paid',
-                        'payment_date' => $premiumRequest->payment_date,
-                        'screenshot_url' => $premiumRequest->screenshot_url,
-                        'remarks' => $request->remarks,
-                        'status' => 'active',
-                        'starts_at' => $startsAt,
-                        'expires_at' => $expiresAt,
-                        'updated_at' => now(),
-                    ]);
-            } else {
-                DB::table('firm_subscriptions')
-                    ->insert([
-                        'firm_id' => $firmProfileId,
-                        'contact_person' => $premiumRequest->contact_person,
-                        'plan' => $premiumRequest->plan === 'premium-yearly' ? 'premium' : $premiumRequest->plan,
-                        'amount' => $premiumRequest->amount,
-                        'currency' => 'INR',
-                        'payment_gateway' => 'manual',
-                        'payment_method' => 'manual',
-                        'transaction_id' => $premiumRequest->transaction_id,
-                        'payment_status' => 'paid',
-                        'payment_date' => $premiumRequest->payment_date,
-                        'screenshot_url' => $premiumRequest->screenshot_url,
-                        'remarks' => $request->remarks,
-                        'status' => 'active',
-                        'starts_at' => $startsAt,
-                        'expires_at' => $expiresAt,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-            }
+                ->where('id', '!=', $newSubscriptionId)
+                ->where('status', 'active')
+                ->update(['status' => 'expired', 'updated_at' => now()]);
             DB::table('premium_requests')
                 ->where('id', $premiumRequest->id)
                 ->update([

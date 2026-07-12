@@ -5316,3 +5316,75 @@ later approved.
 ### Rollback
 - Revert the `not_in:free` validation rule and the `isPurchasable` gate in
   `submitPremiumRequest`. No schema change.
+
+## 2026-07-12 — Admin manual plan assignment rebuilt on the plan catalog (3/6/12 months)
+
+### Context
+Audit found the manual assignment flow (`POST /admin/addSubscriptions`) was
+broken in three independent ways: it only accepted `plan in:free,premium`
+(no durations), it stored `firm_subscriptions.firm_id = users.id` while every
+premium entitlement check (`SubscriptionHelper::isPremiumFirm`) queries by
+`firm_profiles.id` (so a manual assignment never actually granted premium),
+and expiry was a free-typed nullable date (a blank value = lifetime premium).
+Since production has no premium firms yet, the flow was rebuilt cleanly
+instead of layering compatibility on the wrong keying.
+
+### Changed — `AdminController::addSubscriptions` (rewritten)
+- Contract is now `{ firm_id (firm USER id, unchanged), plan (catalog plan_key) }`.
+  `status` / `starts_at` / `expires_at` inputs removed.
+- Plan must pass the same `PlanHelper::isPurchasable` gate as PhonePe initiate
+  and `submitPremiumRequest` — only ACTIVE catalog plans (3/6/12 months) are
+  assignable; deactivated plans are rejected identically to checkout.
+- Row is keyed on `firm_profiles.id` (resolved from the incoming user id), so
+  `isPremiumFirm`, billing, the daily expiry sweep and the payment page's
+  "Current plan" indicator all see it.
+- Expiry is computed by `PlanHelper::computeExpiry` with
+  `PlanHelper::currentActiveExpiry` as the base — identical renewal-aware
+  behaviour to the PhonePe verify/webhook paths (extends a live subscription,
+  fresh term otherwise). No duplicated expiry logic.
+- Activation mirrors the payment flow: supersedes other active rows (their
+  remaining validity is folded into the computed expiry), sets
+  `is_premium = 1`, fires `ReferralHelper::onFirmPremiumActivated`, and writes
+  a `payment_logs` row (`event_type = admin_manual_assignment`).
+- The row carries `payment_gateway/payment_method = 'manual'`,
+  `payment_status = 'paid'`, `amount = 0`, remarks "Assigned by admin" — so it
+  appears on the firm's Billing page (which filters out `payment_status =
+  'pending'`) and drives its "active plan" summary.
+
+### Changed — other
+- **`AdminController::getAdminSubscriptions`** — each row now also returns
+  `plan_label` (via `PlanHelper::meta`) so the admin UI renders friendly
+  duration names instead of string-matching raw plan keys.
+- **`AdminController::approvePremiumRequest`** — no longer rewrites
+  `premium-yearly` → legacy `'premium'`; the real catalog plan_key is stored
+  (both the update and insert branches). Historical `'premium'` rows still
+  resolve through `PlanHelper`'s legacy fallback map (kept — read-only compat).
+- **Revoke**: decided against manual revoke. No revoke endpoint was ever
+  implemented server-side (the old admin UI button hit a nonexistent route);
+  the UI button was removed. Lifecycle is Free → Premium → Expiry → Renewal.
+
+### Not changed (verified untouched)
+PhonePe initiate/verify/webhook, branch half-pricing, `SubscriptionHelper`
+gates (applications/messaging/candidate access/contact visibility),
+`FirmBillingController`, plan catalog CRUD, daily expiry sweep, referral logic.
+
+### DB
+No schema change, no migration. Existing dev rows keyed on users.id from the
+old flow remain as inert history (production has none).
+
+### Rollback
+Revert `AdminController.php` — no other backend file was touched.
+
+## 2026-07-12 (refinement) — approvePremiumRequest preserves subscription history
+
+- **`AdminController::approvePremiumRequest`** — approval now always INSERTS a
+  new `firm_subscriptions` row and supersedes any OTHER active rows
+  (`status → expired`), matching the PhonePe verify/webhook and admin
+  manual-assignment lifecycle exactly. Previously it overwrote the firm's
+  FIRST existing subscription row (of any status) in place, destroying that
+  purchase's history on every manual approval. Expiry still comes from
+  `PlanHelper::computeExpiry` + `currentActiveExpiry` (renewal-aware) — no
+  new expiry/renewal logic introduced.
+- Removed the now-unused `Carbon` import (last consumer was the old
+  `addSubscriptions` free-typed date parsing).
+- No API contract change, no schema change, no migration.

@@ -7,6 +7,7 @@ use App\Helpers\AuthHelper;
 use App\Helpers\FirmActivityHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
+use App\Helpers\RecruiterActionHelper;
 use App\Jobs\SendUserPushJob;
 use App\Services\Notifications\EmailNotificationService;
 use App\Services\ActivityTracker;
@@ -124,17 +125,15 @@ class InterviewInviteController extends Controller
                 throw $e;
             }
 
-            // In-app notification (reuses recruiter_actions feed).
-            DB::table('recruiter_actions')->insert([
-                'firm_id'             => $firm->id,
-                'student_id'          => $studentId,
-                'visible_to'          => 'student',
-                'interview_invite_id' => $inviteId,
-                'action_type'         => 'interview_invite',
-                'title'               => 'Interview invitation',
-                'message'             => $firm->firm_name . ' has invited you for an interview.',
-                'action_status'       => 'pending',
-                'created_at'          => now(),
+            // In-app notification (reuses recruiter_actions feed). ONE row per
+            // invite for its whole lifecycle — see RecruiterActionHelper.
+            RecruiterActionHelper::logInvite($inviteId, [
+                'firm_id'       => $firm->id,
+                'student_id'    => $studentId,
+                'visible_to'    => 'student',
+                'title'         => 'Interview invitation',
+                'message'       => $firm->firm_name . ' has invited you for an interview.',
+                'action_status' => 'pending',
             ]);
 
             // Push notification (additive layer — queued, never blocks the request).
@@ -283,16 +282,13 @@ class InterviewInviteController extends Controller
 
             // In-app notification (student's recruiter_actions feed) — lands
             // directly in the scheduled state with inline Accept/Reject/Reschedule.
-            DB::table('recruiter_actions')->insert([
-                'firm_id'             => $firm->id,
-                'student_id'          => $studentId,
-                'visible_to'          => 'student',
-                'interview_invite_id' => $inviteId,
-                'action_type'         => 'interview_invite',
-                'title'               => 'Interview scheduled',
-                'message'             => $firm->firm_name . ' scheduled an interview with you. Please respond.',
-                'action_status'       => 'scheduled',
-                'created_at'          => now(),
+            RecruiterActionHelper::logInvite($inviteId, [
+                'firm_id'       => $firm->id,
+                'student_id'    => $studentId,
+                'visible_to'    => 'student',
+                'title'         => 'Interview scheduled',
+                'message'       => $firm->firm_name . ' scheduled an interview with you. Please respond.',
+                'action_status' => 'scheduled',
             ]);
 
             // Push notification (additive layer — queued, never blocks the request).
@@ -430,10 +426,7 @@ class InterviewInviteController extends Controller
             }
             DB::table('interview_invites')->where('id', $inviteId)->update($inviteUpdate);
 
-            DB::table('recruiter_actions')
-                ->where('interview_invite_id', $inviteId)
-                ->where('action_type', 'interview_invite')
-                ->update(['action_status' => $newStatus]);
+            RecruiterActionHelper::updateInviteStatus($inviteId, $newStatus);
 
             // Notify the firm (lands in the firm's notification bell + email).
             $firm = DB::table('firm_profiles')
@@ -556,16 +549,19 @@ class InterviewInviteController extends Controller
                 'updated_at'                 => now(),
             ]);
 
-            DB::table('recruiter_actions')->insert([
-                'firm_id'             => $firm->id,
-                'student_id'          => $invite->student_id,
-                'visible_to'          => 'student',
-                'interview_invite_id' => $inviteId,
-                'action_type'         => 'interview_invite',
-                'title'               => 'Interview scheduled',
-                'message'             => $firm->firm_name . ' scheduled your interview. Please confirm your availability.',
-                'action_status'       => 'scheduled',
-                'created_at'          => now(),
+            // ROOT-CAUSE FIX (2026-07-13): this used to INSERT a second
+            // interview_invite row for an invite that already had one (from
+            // invite()), and a third on every reschedule. The read query resolves
+            // all live state from the joined invite, so those extra rows rendered
+            // as identical duplicate cards. Update the invite's single row
+            // instead — resurfaced as unread, which is what the student needs.
+            RecruiterActionHelper::logInvite($inviteId, [
+                'firm_id'       => $firm->id,
+                'student_id'    => $invite->student_id,
+                'visible_to'    => 'student',
+                'title'         => 'Interview scheduled',
+                'message'       => $firm->firm_name . ' scheduled your interview. Please confirm your availability.',
+                'action_status' => 'scheduled',
             ]);
 
             // Push notification (additive layer — queued, never blocks the request).
@@ -663,17 +659,13 @@ class InterviewInviteController extends Controller
 
             DB::table('interview_invites')->where('id', $inviteId)->update($update);
 
-            DB::table('recruiter_actions')
-                ->where('interview_invite_id', $inviteId)
-                ->where('action_type', 'interview_invite')
-                ->where('action_status', 'scheduled')
-                ->update([
-                    'action_status' => match ($request->response) {
-                        'Confirmed' => 'confirmed',
-                        'Rejected'  => 'rejected',
-                        default     => 'reschedule_requested',
-                    },
-                ]);
+            // The student performed this transition themselves — move the invite's
+            // single row to the new status without resurfacing it as unread.
+            RecruiterActionHelper::updateInviteStatus($inviteId, match ($request->response) {
+                'Confirmed' => 'confirmed',
+                'Rejected'  => 'rejected',
+                default     => 'reschedule_requested',
+            });
 
             // Notify the firm (lands in the firm's notification bell).
             $firm = DB::table('firm_profiles')->where('id', $invite->firm_id)->first();
@@ -772,10 +764,7 @@ class InterviewInviteController extends Controller
                 'active_flag'      => null, // frees the pair for a future invite
                 'updated_at'       => now(),
             ]);
-            DB::table('recruiter_actions')
-                ->where('interview_invite_id', $inviteId)
-                ->where('action_type', 'interview_invite')
-                ->update(['action_status' => 'completed']);
+            RecruiterActionHelper::updateInviteStatus($inviteId, 'completed');
 
             return response()->json([
                 'status'  => true,
@@ -827,10 +816,7 @@ class InterviewInviteController extends Controller
                 'active_flag'      => null, // frees the pair for a future invite
                 'updated_at'       => now(),
             ]);
-            DB::table('recruiter_actions')
-                ->where('interview_invite_id', $inviteId)
-                ->where('action_type', 'interview_invite')
-                ->update(['action_status' => 'cancelled']);
+            RecruiterActionHelper::updateInviteStatus($inviteId, 'cancelled');
 
             // Notify the firm bell if the candidate cancelled.
             if ($isOwnerStudent) {

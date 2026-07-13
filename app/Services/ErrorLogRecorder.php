@@ -151,8 +151,16 @@ class ErrorLogRecorder
             // were stripped by sanitize()); full detail stays in laravel.log.
             $summary = mb_substr($summary, 0, self::SUMMARY_MAX);
 
+            // Correlation ID set by RequestIdMiddleware — lets admins match this
+            // row to the frontend error row and the laravel.log lines.
+            $requestId = $request?->attributes->get('request_id');
+
             DB::table('error_logs')->insert([
                 'source'        => 'api',
+                'request_id'    => is_string($requestId) ? mb_substr($requestId, 0, 64) : null,
+                'category'      => self::categoryFor($status),
+                'method'        => $request ? mb_substr($request->method(), 0, 10) : null,
+                'endpoint'      => $url ? '/' . ltrim($url, '/') : null,
                 'message'       => $summary,
                 'error_summary' => $summary,
                 'status'        => $status,
@@ -243,6 +251,24 @@ class ErrorLogRecorder
         ) ?? $msg;
 
         return $msg;
+    }
+
+    /**
+     * Error category for a backend-recorded row, from the HTTP status. Uses the
+     * same vocabulary as the frontend classifier so the admin category filter
+     * covers both sources. (ValidationException/AuthenticationException are on
+     * the SKIP list, so 422/401 mostly appear via recordLog'd controller lines.)
+     */
+    private static function categoryFor(int $status): string
+    {
+        return match (true) {
+            $status === 413                   => 'Payload Too Large',
+            $status === 422                   => 'Validation Error',
+            $status === 401 || $status === 403 => 'Authentication Error',
+            $status === 502 || $status === 504 => 'Reverse Proxy Failure',
+            $status >= 500                    => 'Backend Exception',
+            default                           => 'Backend Error',
+        };
     }
 
     /**

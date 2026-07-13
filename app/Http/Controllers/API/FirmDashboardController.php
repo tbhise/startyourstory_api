@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\RecruiterActionHelper;
 use App\Helpers\SubscriptionHelper;
 
 class FirmDashboardController extends Controller
@@ -485,16 +486,24 @@ class FirmDashboardController extends Controller
             $message = $type === 'resume'
                 ? $firm->firm_name . ' downloaded your resume.'
                 : $firm->firm_name . ' downloaded your marksheet.';
-            DB::table('recruiter_actions')->insert([
-                'student_id'     => (int) $studentId,
-                'firm_id'        => $firm->id,
-                'job_id'         => null,
-                'application_id' => null,
-                'visible_to'     => 'student',
-                'action_type'    => $type . '_downloaded',
-                'message'        => $message,
-                'created_at'     => now(),
-            ]);
+            // Re-opening the same document is not a new event. One row per
+            // firm+student+document per 24h keeps the timeline meaningful while
+            // still recording a genuine later download as real history.
+            RecruiterActionHelper::logOnce(
+                [
+                    'student_id'     => (int) $studentId,
+                    'firm_id'        => $firm->id,
+                    'job_id'         => null,
+                    'application_id' => null,
+                    'visible_to'     => 'student',
+                    'action_type'    => $type . '_downloaded',
+                    'title'          => $type === 'resume' ? 'Resume downloaded' : 'Marksheet downloaded',
+                    'message'        => $message,
+                    'action_status'  => 'downloaded',
+                ],
+                ['firm_id', 'student_id', 'action_type'],
+                RecruiterActionHelper::DEFAULT_DEDUPE_HOURS,
+            );
 
             $audit('SUCCESS');
             return response()->download($fullPath);

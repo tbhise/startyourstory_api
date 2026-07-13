@@ -4,6 +4,134 @@
 
 ---
 
+## 2026-07-14 — Duplicate Recruiter Action entries: root-cause fix
+
+Duplicate cards in the student Application Activity timeline were duplicate DB
+rows, not a rendering artifact. Three paths each INSERTed a fresh
+`interview_invite` row for the SAME `interview_invite_id` (invite sent →
+scheduled → rescheduled). Because `getRecruiterActions` LEFT JOINs
+`interview_invites` and derives ALL displayed state (invite_status,
+interview_status, interview_date, student_response, reschedule_count) from the
+JOINED invite rather than from the action row, those extra rows rendered as
+byte-identical cards with duplicate Accept/Reject controls.
+
+### New — `app/Helpers/RecruiterActionHelper.php`
+Single write path for `recruiter_actions` (mirrors the `FirmActivityHelper`
+contract; best-effort, never throws — a feed row must never fail the interview
+or application operation that caused it). Controllers no longer insert directly.
+
+- `logInvite($inviteId, …)` — **upserts THE single row per interview invite**.
+  Refreshes `created_at` + resets `is_read` so a new development resurfaces the
+  interview at the top of the timeline as unread (what the old insert-a-new-row
+  behaviour achieved, minus the duplicate card).
+- `updateInviteStatus($inviteId, $status)` — moves the invite's row to a new
+  status WITHOUT resurfacing it (student-driven transitions: confirm/reject/
+  reschedule; terminal ones: completed/cancelled/expired).
+- `logOnce($attrs, $uniqueBy, $withinHours = null)` — insert only if no
+  equivalent row exists; optional recency window. Replaces the racy
+  check-then-insert pattern (a double-click could interleave two rows).
+- `log($attrs)` — plain insert for genuinely new, non-repeatable events.
+
+### Call sites converted
+- **`InterviewInviteController`** — `invite()`, `directSchedule()` →
+  `logInvite`; **`schedule()` → `logInvite` (was the duplicate INSERT; also fired
+  again on every reschedule)**; `respond()`, `confirm()`, `complete()`,
+  `cancel()` → `updateInviteStatus`. The old `respond()` update carried a
+  `where(action_status,'scheduled')` guard that only existed to pick one of the
+  duplicates — dropped, since exactly one row now exists.
+- **`JobsController`** — shortlist/reject/select + interview_requested →
+  `logOnce` (same uniqueness the old checks expressed, now race-safe);
+  reschedule_accepted → `logOnce` keyed incl. `action_date` (a later reschedule
+  is real history, the same one twice is not); student-response firm row → `log`.
+- **`FirmDashboardController`** — resume/marksheet download → `logOnce` with a
+  24h window. Re-opening the same document is no longer a new timeline row.
+  Also now writes `title`/`action_status` (previously NULL).
+- **`UserController`** — profile_viewed / candidate_saved / candidate_rejected →
+  `logOnce` (24h, same window as before); account-deletion firm row → `log`.
+- **`ExpirePendingInterviewConfirmationsJob`** → `updateInviteStatus`.
+
+### Unread count / mark-as-read consistency
+`getRecruiterActions`' unread count filtered on `student_id` but omitted the
+`visible_to = 'student'` filter the list query applies — so it counted
+firm-visible tracking rows (`interview_confirmed`, `application_withdrawn`, …)
+the student can never see or clear, and the badge could never reach zero. Both
+the count (`JobsController`) and the mark-read update
+(`NotificationController::updateReadStatus`) now scope to `visible_to='student'`,
+exactly mirroring the list query.
+
+### Migration — `2026_07_13_000002_dedupe_recruiter_actions_and_add_invite_unique_index`
+1. Collapses existing duplicates: keeps the **latest** row (`MAX(id)`) per
+   `(interview_invite_id, action_type)` — it carries the invite's current stage.
+   Read state is preserved: if the student had read ANY row of the group, the
+   survivor stays read rather than popping back up as unread.
+2. Adds `UNIQUE (interview_invite_id, action_type)` — `uniq_ra_invite_action`.
+
+Scope is deliberately narrow: **only rows sharing an `interview_invite_id` are
+touched.** Rows with `interview_invite_id IS NULL` (profile views, downloads,
+shortlists, application-flow events, firm tracking rows) are untouched — no
+unrelated activity history is removed. MySQL permits unlimited NULLs in a unique
+index, so those rows remain unconstrained by it.
+
+`down()` drops the index only; the deleted duplicates were redundant renderings
+of a single interview and are not restored.
+
+### Unchanged
+Interview business logic, credit consumption, free-limit gating, email/push
+notification behaviour, and the Recruiter Actions page design.
+
+---
+
+## 2026-07-13 — Error logging: request correlation, classification & diagnostics
+
+Extends the existing error-logging pipeline (no parallel system). Pairs with the
+frontend `error-diagnostics` change. Migration:
+`2026_07_13_000001_add_diagnostics_to_error_logs.php` (see db_changes.txt).
+
+- **New `RequestIdMiddleware`** (prepended to the global `api` group):
+  - Accepts the frontend's `X-Request-ID` header (validated `[A-Za-z0-9_-]{8,64}`,
+    else a UUID is generated) → `$request->attributes['request_id']`.
+  - `Log::withContext(['request_id' => …])` — every laravel.log line for the
+    request now carries the ID, so an admin error-log row can be grepped
+    straight to the backend log lines.
+  - Response gets `X-Request-ID` + `X-Response-Time` (ms measured in PHP; lets
+    the client separate server processing time from network time). Both exposed
+    to the browser via `config/cors.php` → `exposed_headers`.
+  - Nginx correlation (server config, NOT in this repo): add
+    `rid=$http_x_request_id` to the access-log `log_format`.
+- **`error_logs` table** — new nullable columns `request_id, category,
+  error_code, method, endpoint, page, duration_ms, browser, os, device,
+  diagnostics (JSON)` + indexes on (category, created_at), endpoint,
+  request_id. Old rows/clients remain valid.
+- **`ErrorLogController`**:
+  - `store()` accepts the new fields — category validated against a whitelist
+    (unknown values coerced to "Unknown Transport Failure"), everything
+    length-capped, diagnostics recursively sanitized server-side (secret-looking
+    keys stripped, strings capped, depth/size limits) as defense-in-depth on
+    the public endpoint. Endpoint now throttled (60/min per IP).
+  - `index()` — new filters: `category` (exact or grouped bucket:
+    network/timeout/upload/backend/validation/auth/cancelled), `browser`,
+    `device`, `method`, `endpoint`, `page_route`, `user_id`; search also matches
+    endpoint and exact request_id.
+  - `stats()` — adds per-bucket counts (network/timeout/upload/backend/
+    validation/auth) for the admin summary cards.
+  - New `analytics()` (`GET /admin/error-logs/analytics?days=N`) — top
+    categories/endpoints/browsers/devices/routes, most affected users, daily
+    trend.
+- **`ErrorLogRecorder`** — backend rows now also store `request_id` (from the
+  middleware), `category` (status-derived: 413 Payload Too Large, 422
+  Validation, 401/403 Authentication, 502/504 Reverse Proxy Failure, 5xx
+  Backend Exception), `method`, `endpoint`.
+- **New public `GET /ping`** (204, throttled 30/min, no DB) — connectivity probe
+  used by the client after a no-response failure to distinguish "backend down"
+  from "user offline".
+- **Security review finding resolved**: the audit flagged `/admin/error-logs*`
+  as possibly unauthenticated. VERIFIED FALSE — the global `AdminAuthMiddleware`
+  (bootstrap/app.php, C1) enforces an active admin session on every `admin/*`
+  path, including these. No route change needed; a comment now documents this
+  in routes/api.php.
+
+---
+
 ## 2026-07-12 — All interview notifications deep-link to the candidate profile
 
 `InterviewInviteController` only; no schema/API-contract changes.

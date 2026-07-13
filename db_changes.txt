@@ -3410,3 +3410,39 @@ INSERT IGNORE INTO `firm_subscription_plans`
 -- ordering (last_login DESC) already used the existing users.last_login_at
 -- column (no migration). Firm dashboard filter persistence is client-side
 -- localStorage only (no DB).
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## ERROR LOGS — diagnostics columns — added 2026-07-13
+## ═══════════════════════════════════════════════════════════════════════════════
+## Rich client-error diagnostics + end-to-end request correlation. Frequently
+## filtered fields become dedicated indexed columns; the full structured blob
+## (network state, payload/files, timeline, connectivity probe, session, raw
+## axios error) lives in the `diagnostics` JSON column. All nullable — old rows
+## and old clients stay valid.
+## Idempotent via migration (checks hasColumn). Or run: php artisan migrate
+##   (migration: database/migrations/2026_07_13_000001_add_diagnostics_to_error_logs.php)
+
+ALTER TABLE `error_logs`
+  ADD COLUMN `request_id`  VARCHAR(64)  NULL AFTER `source`,
+  ADD COLUMN `category`    VARCHAR(40)  NULL AFTER `request_id`,
+  ADD COLUMN `error_code`  VARCHAR(40)  NULL AFTER `category`,
+  ADD COLUMN `method`      VARCHAR(10)  NULL AFTER `error_code`,
+  ADD COLUMN `endpoint`    VARCHAR(255) NULL AFTER `method`,
+  ADD COLUMN `page`        VARCHAR(255) NULL AFTER `endpoint`,
+  ADD COLUMN `duration_ms` INT UNSIGNED NULL AFTER `page`,
+  ADD COLUMN `browser`     VARCHAR(40)  NULL AFTER `duration_ms`,
+  ADD COLUMN `os`          VARCHAR(40)  NULL AFTER `browser`,
+  ADD COLUMN `device`      VARCHAR(20)  NULL AFTER `os`,
+  ADD COLUMN `diagnostics` JSON         NULL AFTER `stack`,
+  ADD KEY `idx_error_category_created` (`category`, `created_at`),
+  ADD KEY `idx_error_endpoint`         (`endpoint`),
+  ADD KEY `idx_error_request_id`       (`request_id`);
+
+-- ROLLBACK:
+-- ALTER TABLE `error_logs`
+--   DROP KEY `idx_error_category_created`, DROP KEY `idx_error_endpoint`, DROP KEY `idx_error_request_id`,
+--   DROP COLUMN `request_id`, DROP COLUMN `category`, DROP COLUMN `error_code`,
+--   DROP COLUMN `method`, DROP COLUMN `endpoint`, DROP COLUMN `page`,
+--   DROP COLUMN `duration_ms`, DROP COLUMN `browser`, DROP COLUMN `os`,
+--   DROP COLUMN `device`, DROP COLUMN `diagnostics`;

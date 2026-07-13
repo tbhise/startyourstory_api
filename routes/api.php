@@ -511,11 +511,18 @@ Route::get('/creator-marketplace/payments/phonepe/webhook',  fn() => response()-
 
 // ── Error Logging ─────────────────────────────────────────────────────────────
 // Public — no auth required so errors during login/registration are captured too
-Route::post('/error-logs',                [ErrorLogController::class, 'store']);
+Route::post('/error-logs',                [ErrorLogController::class, 'store'])->middleware('throttle:60,1');
 
-// Admin — viewing and managing logs
+// Public connectivity probe — used by the client error logger after a
+// no-response failure to tell "backend down" from "user offline". No DB, no
+// auth, tiny response. 204 keeps it as cheap as possible.
+Route::get('/ping', fn() => response()->noContent())->middleware('throttle:30,1');
+
+// Admin — viewing and managing logs. NOTE: /admin/* is enforced by the global
+// AdminAuthMiddleware (bootstrap/app.php) — these are NOT publicly accessible.
 Route::get('/admin/error-logs',           [ErrorLogController::class, 'index']);
 Route::get('/admin/error-logs/stats',     [ErrorLogController::class, 'stats']);
+Route::get('/admin/error-logs/analytics', [ErrorLogController::class, 'analytics']);
 Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']);
 
 // Admin — Email Logs (read-only analytics + click tracking)

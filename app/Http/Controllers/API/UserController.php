@@ -14,6 +14,7 @@ use App\Services\Notifications\EmailNotificationService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Helpers\AuthHelper;
 use App\Helpers\FirmActivityHelper;
+use App\Helpers\RecruiterActionHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
@@ -700,7 +701,7 @@ class UserController extends Controller
 
                 // Firm-visible tracking entry.
                 if (!empty($app->firm_id)) {
-                    DB::table('recruiter_actions')->insert([
+                    RecruiterActionHelper::log([
                         'firm_id'        => $app->firm_id,
                         'student_id'     => $user->id,
                         'visible_to'     => 'firm',
@@ -817,14 +818,14 @@ class UserController extends Controller
         try {
             $user = $request->attributes->get('auth_user');
             $userId = $user->id;
-            // Student profile image only: jpg/jpeg/png/webp, max 4 MB (4096 KB).
+            // Student profile image only: png/jpg/jpeg, max 1 MB (1024 KB).
             $request->validate([
-                'profile_image' => 'required|image|mimes:jpg,jpeg,png,webp|max:4096',
+                'profile_image' => 'required|image|mimes:jpg,jpeg,png|max:1024',
             ], [
                 'profile_image.required' => 'Please select a profile image to upload.',
-                'profile_image.image'    => 'Profile image must be a JPG, PNG, or WEBP file.',
-                'profile_image.mimes'    => 'Profile image must be a JPG, PNG, or WEBP file.',
-                'profile_image.max'      => 'Profile image size must be less than 4 MB.',
+                'profile_image.image'    => 'Profile image must be a PNG, JPG, or JPEG file.',
+                'profile_image.mimes'    => 'Profile image must be a PNG, JPG, or JPEG file.',
+                'profile_image.max'      => 'Profile image size must be less than 1 MB.',
             ]);
             $imagePath = null;
             if ($request->hasFile('profile_image')) {
@@ -955,29 +956,27 @@ class UserController extends Controller
                     $actionStatus = 'saved';
                     break;
             }
-            $alreadyExists = DB::table('recruiter_actions')
-                ->where('firm_id', $firm->id)
-                ->where('student_id', $studentId)
-                ->where('action_type', $actionType)
-                ->where('created_at', '>=', now()->subHours(24))
-                ->first();
-            if (!$alreadyExists) {
-                DB::table('recruiter_actions')
-                    ->insert([
-                        'firm_id' => $firm->id,
-                        'student_id' => $studentId,
-                        'action_type' => $actionType,
-                        'title' => $title,
-                        'message' => $message,
-                        'visible_to' => 'student',
-                        'action_status' => $actionStatus,
-                        'created_at' => now(),
-                    ]);
-                // NOTE: profile views are intentionally NOT logged to the firm
-                // Activity Center — the "My Actions" timeline shows only meaningful
-                // business actions (interviews, messages, subscriptions, …). The
-                // student-facing recruiter_actions row above is unchanged.
-            }
+            // Repeatable action (a firm may view/save the same candidate again) —
+            // deduped to one row per 24h. Same window as before, now enforced
+            // inside the single write path rather than by a racy check-then-insert.
+            //
+            // NOTE: profile views are intentionally NOT logged to the firm
+            // Activity Center — the "My Actions" timeline shows only meaningful
+            // business actions (interviews, messages, subscriptions, …). The
+            // student-facing recruiter_actions row below is unchanged.
+            RecruiterActionHelper::logOnce(
+                [
+                    'firm_id' => $firm->id,
+                    'student_id' => $studentId,
+                    'action_type' => $actionType,
+                    'title' => $title,
+                    'message' => $message,
+                    'visible_to' => 'student',
+                    'action_status' => $actionStatus,
+                ],
+                ['firm_id', 'student_id', 'action_type'],
+                RecruiterActionHelper::DEFAULT_DEDUPE_HOURS,
+            );
             return response()->json([
                 'status' => true,
                 'message' => 'Recruiter action tracked successfully',

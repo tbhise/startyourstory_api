@@ -10,6 +10,78 @@ use App\Helpers\AuthHelper;
 
 class ErrorLogController extends Controller
 {
+    /**
+     * Allowed values for the client-supplied `category` column. Anything else
+     * is stored as "Unknown Transport Failure" so a hostile client can't
+     * inject arbitrary strings into an indexed/filterable column.
+     */
+    private const CATEGORIES = [
+        'Request Timeout', 'Upload Timeout', 'Download Timeout',
+        'Server Processing Timeout', 'Reverse Proxy Timeout', 'Gateway Timeout',
+        'Payload Too Large', 'Offline', 'Slow Network',
+        'DNS Failure', 'SSL Failure', 'Connection Refused', 'Connection Reset',
+        'API Unreachable', 'Reverse Proxy Failure', 'CORS Failure',
+        'Backend Exception', 'Backend Error', 'Validation Error',
+        'Authentication Error', 'Session Expired',
+        'Browser Cancelled Request', 'Navigation Cancelled Request',
+        'Application Cancelled Request', 'Upload Interrupted',
+        'Render Error', 'Frontend Error', 'Unknown Transport Failure',
+    ];
+
+    /** Max stored size of the diagnostics JSON blob (chars). */
+    private const DIAGNOSTICS_MAX = 20000;
+
+    /** Keys (case-insensitive substring match) always stripped from diagnostics. */
+    private const SECRET_KEYS = [
+        'password', 'passwd', 'pwd', 'secret', 'token', 'authorization',
+        'auth', 'api_key', 'apikey', 'bearer', 'session', 'cookie', 'otp',
+    ];
+
+    /**
+     * Recursively drop secret-looking keys and oversized string values from the
+     * client-supplied diagnostics array. Defense-in-depth: the frontend already
+     * never collects these, but the endpoint is public so we re-sanitize here.
+     */
+    private static function sanitizeDiagnostics(mixed $value, int $depth = 0): mixed
+    {
+        if ($depth > 6) {
+            return null;
+        }
+        if (is_array($value)) {
+            $clean = [];
+            $count = 0;
+            foreach ($value as $k => $v) {
+                if (++$count > 100) {
+                    break;
+                }
+                if (is_string($k)) {
+                    $lk = strtolower($k);
+                    foreach (self::SECRET_KEYS as $secret) {
+                        if (str_contains($lk, $secret)) {
+                            continue 2;
+                        }
+                    }
+                }
+                $clean[$k] = self::sanitizeDiagnostics($v, $depth + 1);
+            }
+            return $clean;
+        }
+        if (is_string($value)) {
+            return mb_substr($value, 0, 2000);
+        }
+        if (is_scalar($value) || $value === null) {
+            return $value;
+        }
+        return null;
+    }
+
+    /** Short nullable string helper for the new columns. */
+    private static function str(Request $request, string $key, int $max): ?string
+    {
+        $v = $request->input($key);
+        return is_string($v) && $v !== '' ? mb_substr($v, 0, $max) : null;
+    }
+
     /*
     |--------------------------------------------------------------------------
     | POST /error-logs
@@ -49,8 +121,50 @@ class ErrorLogController extends Controller
                 $userRole = $user->role;
             }
 
+            // ── Diagnostics fields (2026-07-13) — all optional, all capped ──
+            // The body carries the ID of the FAILED request (what we correlate
+            // on) — NOT this log-submission request's own middleware-set ID.
+            $requestId = self::str($request, 'request_id', 64);
+            if ($requestId && ! preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestId)) {
+                $requestId = null;
+            }
+
+            $category = $request->input('category');
+            $category = in_array($category, self::CATEGORIES, true)
+                ? $category
+                : ($category ? 'Unknown Transport Failure' : null);
+
+            $duration = $request->input('duration_ms');
+            $duration = is_numeric($duration) ? min((int) $duration, 4294967295) : null;
+
+            $diagnostics = $request->input('diagnostics');
+            if (is_array($diagnostics)) {
+                $diagnostics = json_encode(
+                    self::sanitizeDiagnostics($diagnostics),
+                    JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+                );
+                if ($diagnostics === false || strlen($diagnostics) > self::DIAGNOSTICS_MAX) {
+                    $diagnostics = $diagnostics === false
+                        ? null
+                        : json_encode(['truncated' => true, 'raw' => mb_substr($diagnostics, 0, self::DIAGNOSTICS_MAX)]);
+                }
+            } else {
+                $diagnostics = null;
+            }
+
             DB::table('error_logs')->insert([
                 'source'     => $source,
+                'request_id' => is_string($requestId) ? mb_substr($requestId, 0, 64) : null,
+                'category'   => $category,
+                'error_code' => self::str($request, 'error_code', 40),
+                'method'     => self::str($request, 'method', 10),
+                'endpoint'   => self::str($request, 'endpoint', 255),
+                'page'       => self::str($request, 'page', 255),
+                'duration_ms'=> $duration,
+                'browser'    => self::str($request, 'browser', 40),
+                'os'         => self::str($request, 'os', 40),
+                'device'     => self::str($request, 'device', 20),
+                'diagnostics'=> $diagnostics,
                 'message'    => $message,
                 // Frontend rows: the submitted message IS the raw error — mirror it
                 // into error_summary (≤1000) so the dashboard's raw view is uniform.
@@ -96,8 +210,40 @@ class ErrorLogController extends Controller
                 $query->where(function ($q) use ($search) {
                     $q->where('message', 'like', "%{$search}%")
                       ->orWhere('error_summary', 'like', "%{$search}%")
-                      ->orWhere('url', 'like', "%{$search}%");
+                      ->orWhere('url', 'like', "%{$search}%")
+                      ->orWhere('endpoint', 'like', "%{$search}%")
+                      ->orWhere('request_id', $search);
                 });
+            }
+
+            // ── Diagnostics filters (2026-07-13) — all optional ──
+            // `category` accepts either an exact category or one of the grouped
+            // buckets the admin UI exposes (network / timeout / upload / …).
+            $category = trim((string) $request->get('category', ''));
+            if ($category !== '') {
+                $groups = self::categoryGroups();
+                if (isset($groups[$category])) {
+                    $query->whereIn('category', $groups[$category]);
+                } else {
+                    $query->where('category', $category);
+                }
+            }
+            foreach (['browser', 'device', 'method'] as $col) {
+                $v = trim((string) $request->get($col, ''));
+                if ($v !== '') {
+                    $query->where($col, $v);
+                }
+            }
+            $endpoint = trim((string) $request->get('endpoint', ''));
+            if ($endpoint !== '') {
+                $query->where('endpoint', 'like', "%{$endpoint}%");
+            }
+            $page_route = trim((string) $request->get('page_route', ''));
+            if ($page_route !== '') {
+                $query->where('page', 'like', "%{$page_route}%");
+            }
+            if (is_numeric($request->get('user_id'))) {
+                $query->where('user_id', (int) $request->get('user_id'));
             }
 
             $total = (clone $query)->count();
@@ -137,6 +283,21 @@ class ErrorLogController extends Controller
             $today    = DB::table('error_logs')->whereDate('created_at', today())->count();
             $errors5xx = DB::table('error_logs')->where('status', '>=', 500)->count();
 
+            // Per-bucket counts for the admin summary cards (one grouped query).
+            $byCategory = DB::table('error_logs')
+                ->whereNotNull('category')
+                ->selectRaw('category, COUNT(*) as c')
+                ->groupBy('category')
+                ->pluck('c', 'category');
+            $bucketCount = function (array $categories) use ($byCategory): int {
+                $sum = 0;
+                foreach ($categories as $cat) {
+                    $sum += (int) ($byCategory[$cat] ?? 0);
+                }
+                return $sum;
+            };
+            $groups = self::categoryGroups();
+
             return response()->json([
                 'status' => true,
                 'data'   => [
@@ -145,10 +306,106 @@ class ErrorLogController extends Controller
                     'frontend'  => $frontend,
                     'today'     => $today,
                     'errors5xx' => $errors5xx,
+                    'network'    => $bucketCount($groups['network']),
+                    'timeout'    => $bucketCount($groups['timeout']),
+                    'upload'     => $bucketCount($groups['upload']),
+                    'backend'    => $bucketCount($groups['backend']),
+                    'validation' => $bucketCount($groups['validation']),
+                    'auth'       => $bucketCount($groups['auth']),
                 ],
             ]);
         } catch (\Exception $e) {
             Log::error('ErrorLogController@stats: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * Grouped category buckets shared by stats(), index() filtering and the
+     * admin UI's filter tabs.
+     *
+     * @return array<string, string[]>
+     */
+    private static function categoryGroups(): array
+    {
+        return [
+            'network' => [
+                'Offline', 'Slow Network', 'DNS Failure', 'SSL Failure',
+                'Connection Refused', 'Connection Reset', 'API Unreachable',
+                'Reverse Proxy Failure', 'CORS Failure', 'Unknown Transport Failure',
+            ],
+            'timeout' => [
+                'Request Timeout', 'Upload Timeout', 'Download Timeout',
+                'Server Processing Timeout', 'Reverse Proxy Timeout', 'Gateway Timeout',
+            ],
+            'upload' => ['Payload Too Large', 'Upload Timeout', 'Upload Interrupted'],
+            'backend' => ['Backend Exception', 'Backend Error'],
+            'validation' => ['Validation Error'],
+            'auth' => ['Authentication Error', 'Session Expired'],
+            'cancelled' => [
+                'Browser Cancelled Request', 'Navigation Cancelled Request',
+                'Application Cancelled Request',
+            ],
+        ];
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GET /admin/error-logs/analytics
+    | Aggregations for the dashboard: top categories/endpoints/browsers/devices/
+    | routes, most affected users, and a 14-day trend. Optional ?days=N window
+    | (default 14, max 90) applies to everything.
+    |--------------------------------------------------------------------------
+    */
+    public function analytics(Request $request)
+    {
+        try {
+            $days  = min(90, max(1, (int) $request->get('days', 14)));
+            $since = now()->subDays($days)->startOfDay();
+
+            $top = function (string $column) use ($since) {
+                return DB::table('error_logs')
+                    ->where('created_at', '>=', $since)
+                    ->whereNotNull($column)
+                    ->where($column, '!=', '')
+                    ->selectRaw("{$column} as label, COUNT(*) as count")
+                    ->groupBy($column)
+                    ->orderByDesc('count')
+                    ->limit(8)
+                    ->get();
+            };
+
+            $users = DB::table('error_logs')
+                ->where('created_at', '>=', $since)
+                ->whereNotNull('user_id')
+                ->selectRaw('user_id, MAX(user_role) as user_role, COUNT(*) as count')
+                ->groupBy('user_id')
+                ->orderByDesc('count')
+                ->limit(8)
+                ->get();
+
+            $trend = DB::table('error_logs')
+                ->where('created_at', '>=', $since)
+                ->selectRaw('DATE(created_at) as day, COUNT(*) as count')
+                ->groupBy('day')
+                ->orderBy('day')
+                ->get();
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'days'       => $days,
+                    'categories' => $top('category'),
+                    'endpoints'  => $top('endpoint'),
+                    'browsers'   => $top('browser'),
+                    'devices'    => $top('device'),
+                    'routes'     => $top('page'),
+                    'users'      => $users,
+                    'trend'      => $trend,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('ErrorLogController@analytics: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

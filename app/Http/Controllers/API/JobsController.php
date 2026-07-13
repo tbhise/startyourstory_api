@@ -11,6 +11,7 @@ use App\Helpers\AuthHelper;
 use App\Helpers\FirmActivityHelper;
 use App\Helpers\FreeActionsHelper;
 use App\Helpers\NotificationHelper;
+use App\Helpers\RecruiterActionHelper;
 use App\Helpers\SubscriptionHelper;
 use App\Helpers\WalletHelper;
 use App\Helpers\SysCoinHelper;
@@ -1148,22 +1149,14 @@ class JobsController extends Controller
 
             /*
         |--------------------------------------------------------------------------
-        | Prevent Duplicate Recruiter Actions
+        | Recruiter Action (once per application + status)
         |--------------------------------------------------------------------------
+        | A candidate is shortlisted/rejected/selected once per application, so
+        | the row is written once, ever. logOnce() replaces the old check-then-
+        | insert, which could race two rows in on a double-click.
         */
-            $existingAction = DB::table('recruiter_actions')
-                ->where('firm_id', $firm->id)
-                ->where('student_id', $application->student_id)
-                ->where('application_id', $application->id)
-                ->where('action_type', strtolower($status))
-                ->first();
-            /*
-        |--------------------------------------------------------------------------
-        | Insert Recruiter Action
-        |--------------------------------------------------------------------------
-        */
-            if (!$existingAction) {
-                DB::table('recruiter_actions')->insert([
+            RecruiterActionHelper::logOnce(
+                [
                     'firm_id' => $firm->id,
                     'student_id' => $application->student_id,
                     'visible_to' => 'student',
@@ -1189,9 +1182,9 @@ class JobsController extends Controller
                         default => null,
                     },
                     'action_status' => strtolower($status),
-                    'created_at' => now(),
-                ]);
-            }
+                ],
+                ['firm_id', 'student_id', 'application_id', 'action_type'],
+            );
             /*
         |--------------------------------------------------------------------------
         | Fetch Updated Application
@@ -1412,35 +1405,39 @@ class JobsController extends Controller
                     [],
                     'interview_app_' . $application->id // app-flow interview thread tag
                 );
-                DB::table('recruiter_actions')->insert([
-                    'firm_id' =>
-                    $firm->id,
-                    'student_id' =>
-                    $application->student_id,
-                    'visible_to' => 'student',
-                    'job_id' =>
-                    $application->job_id,
-                    'application_id' =>
-                    $application->id,
-                    'action_type' =>
-                    'interview_requested',
-                    'title' =>
-                    'Interview requested',
-                    'message' =>
-                    'The recruiter invited you for an interview.',
-                    'action_status' =>
-                    'pending',
-                    'action_date' =>
-                    $request->interview_date,
-                    'action_note' =>
-                    $request->interview_note,
-                    'meta' => json_encode([
-                        'interview_mode' =>
-                        $request->interview_mode,
-                    ]),
-                    'created_at' =>
-                    now(),
-                ]);
+                // Same uniqueness the check above expresses (one PENDING interview
+                // request per application), but enforced inside the single write
+                // path so a concurrent double-submit cannot slip a second row in.
+                RecruiterActionHelper::logOnce(
+                    [
+                        'firm_id' =>
+                        $firm->id,
+                        'student_id' =>
+                        $application->student_id,
+                        'visible_to' => 'student',
+                        'job_id' =>
+                        $application->job_id,
+                        'application_id' =>
+                        $application->id,
+                        'action_type' =>
+                        'interview_requested',
+                        'title' =>
+                        'Interview requested',
+                        'message' =>
+                        'The recruiter invited you for an interview.',
+                        'action_status' =>
+                        'pending',
+                        'action_date' =>
+                        $request->interview_date,
+                        'action_note' =>
+                        $request->interview_note,
+                        'meta' => json_encode([
+                            'interview_mode' =>
+                            $request->interview_mode,
+                        ]),
+                    ],
+                    ['firm_id', 'student_id', 'application_id', 'action_type', 'action_status'],
+                );
             }
             /*
         |--------------------------------------------------------------------------
@@ -1869,11 +1866,16 @@ class JobsController extends Controller
         | Unread Count
         |--------------------------------------------------------------------------
         */
+            // Must mirror the list query's filters EXACTLY. Without the
+            // visible_to filter this also counted firm-visible tracking rows
+            // (interview_confirmed, application_withdrawn, …) that the student
+            // can never see or mark read — so the badge could never reach zero.
             $unreadCount = DB::table('recruiter_actions')
                 ->where(
                     'student_id',
                     $user->id
                 )
+                ->where('visible_to', 'student')
                 ->where(function ($q) {
                     $q->whereNull('is_read')
                         ->orWhere('is_read', false);
@@ -2092,7 +2094,7 @@ class JobsController extends Controller
         | Insert Recruiter Action
         |--------------------------------------------------------------------------
         */
-            DB::table('recruiter_actions')->insert([
+            RecruiterActionHelper::log([
                 'firm_id' =>
                 $application->firm_id,
                 'student_id' =>
@@ -2311,19 +2313,24 @@ class JobsController extends Controller
                 'updated_at'                  => now(),
             ]);
 
-            DB::table('recruiter_actions')->insert([
-                'firm_id'          => $firm->id,
-                'student_id'       => $application->student_id,
-                'visible_to'       => 'student',
-                'job_id'           => $application->job_id,
-                'application_id'   => $application->id,
-                'action_type'      => 'reschedule_accepted',
-                'title'            => 'Reschedule accepted',
-                'message'          => 'The firm accepted your proposed interview date.',
-                'action_status'    => 'accepted',
-                'action_date'      => $application->interview_date,
-                'created_at'       => now(),
-            ]);
+            // A reschedule can legitimately happen more than once over an
+            // application's life, but not twice for the same accepted date — so
+            // the date is part of the identity.
+            RecruiterActionHelper::logOnce(
+                [
+                    'firm_id'          => $firm->id,
+                    'student_id'       => $application->student_id,
+                    'visible_to'       => 'student',
+                    'job_id'           => $application->job_id,
+                    'application_id'   => $application->id,
+                    'action_type'      => 'reschedule_accepted',
+                    'title'            => 'Reschedule accepted',
+                    'message'          => 'The firm accepted your proposed interview date.',
+                    'action_status'    => 'accepted',
+                    'action_date'      => $application->interview_date,
+                ],
+                ['firm_id', 'student_id', 'application_id', 'action_type', 'action_date'],
+            );
 
             // Push notification (additive layer — queued, atomic with this transaction).
             SendUserPushJob::dispatch(

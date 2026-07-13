@@ -37,9 +37,13 @@ class NotificationController extends Controller
 
 
             if ($type === 'recruiter_action') {
+                // Scope to the rows the student actually sees in the feed — the
+                // same filter the list + unread-count queries use. Without it,
+                // "mark all read" also flipped firm-visible tracking rows.
                 $query =
                     DB::table('recruiter_actions')
-                    ->where('student_id', $authUser->id);
+                    ->where('student_id', $authUser->id)
+                    ->where('visible_to', 'student');
                 if ($mode === 'single') {
                     $query->where('id', $id);
                 }

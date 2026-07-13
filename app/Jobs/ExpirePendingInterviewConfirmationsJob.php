@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Helpers\NotificationHelper;
+use App\Helpers\RecruiterActionHelper;
 use App\Services\SystemSettingService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -72,10 +73,7 @@ class ExpirePendingInterviewConfirmationsJob implements ShouldQueue
                         'active_flag'      => null, // frees the pair for a future invite
                         'updated_at'       => now(),
                     ]);
-                    DB::table('recruiter_actions')
-                        ->where('interview_invite_id', $invite->id)
-                        ->where('action_type', 'interview_invite')
-                        ->update(['action_status' => 'expired']);
+                    RecruiterActionHelper::updateInviteStatus($invite->id, 'expired');
                 });
 
                 // Best-effort bell notifications (no credit was consumed).

@@ -25,7 +25,9 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    // Let the browser read the correlation/timing headers set by
+    // RequestIdMiddleware (used by the client error logger).
+    'exposed_headers' => ['X-Request-ID', 'X-Response-Time'],
 
     'max_age' => 0,
 

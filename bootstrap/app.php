@@ -27,6 +27,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(HandleCors::class);
+        // Request correlation: accepts/generates X-Request-ID, pushes it into the
+        // log context, echoes it back with X-Response-Time. Prepended to the api
+        // group so the timing covers the full middleware stack.
+        $middleware->prependToGroup('api', \App\Http\Middleware\RequestIdMiddleware::class);
         $middleware->appendToGroup('api', \App\Http\Middleware\XRobotsTagMiddleware::class);
         // Centralized admin auth (C1): enforces on /admin/* only, no-op elsewhere.
         $middleware->appendToGroup('api', \App\Http\Middleware\AdminAuthMiddleware::class);

@@ -5516,3 +5516,55 @@ Revert `AdminController.php` — no other backend file was touched.
 - Removed the now-unused `Carbon` import (last consumer was the old
   `addSubscriptions` free-typed date parsing).
 - No API contract change, no schema change, no migration.
+
+## 2026-07-14 — Revenue reporting fix + manual subscriptions record their real price
+
+### 1. Revenue was under-reporting ALREADY-PAID subscriptions (highest severity)
+- **`AdminAnalyticsController`** — premium revenue was filtered on
+  `status = 'active'` in three places (`revenue()` metric, `revenue()` premium
+  trend, `dashboard()` month KPI). But `status` is a LIFECYCLE flag: every
+  activation path (PhonePe verify/webhook, admin manual assignment,
+  approvePremiumRequest) supersedes a firm's prior rows to `status = 'expired'`
+  on renewal. So the moment a firm renewed, its earlier *genuinely paid* purchase
+  silently dropped out of the revenue of the period it was actually earned in —
+  reported historical revenue shrank over time.
+- All three now filter on **`payment_status = 'paid'`**, which is written at
+  capture and never rewritten afterwards.
+- **Expect previously-reported figures for past periods to INCREASE** — the
+  superseded renewals reappear. That is the fix working, not a regression.
+- `recentPremium` (dashboard activity feed) still filters on `status='active'`
+  — it is a "currently active" list, not a revenue figure. Left untouched.
+
+### 2. Manual admin subscriptions recorded amount = 0
+- **`AdminController::addSubscriptions`** — the insert hardcoded `'amount' => 0`.
+  Everything else was correct (`payment_status='paid'`, `status='active'`,
+  supersede, `is_premium`, referral hook, `payment_logs`), so the grant activated
+  fine but contributed ₹0 to revenue and rendered a ₹0 invoice (Firm Billing
+  reads `firm_subscriptions.amount` directly — invoices are virtual, there is no
+  invoices table).
+- The amount is now snapshotted **server-side** from the plan catalog via
+  `PlanHelper::priceFor($plan, $firm->is_branch)` — the identical rule the
+  PhonePe path uses, so branch offices correctly pay half (`floor(price/2)`).
+  The price is NOT accepted from the request: the frontend cannot set or
+  override it.
+- The `admin_manual_assignment` `payment_logs` payload now also records
+  `amount` + `is_branch` so a grant is traceable to its price source.
+
+### Not changed (verified untouched)
+PhonePe initiate/verify/webhook, `PlanHelper`, `FirmBillingController`,
+`approvePremiumRequest` (already carried a real `premium_requests.amount`),
+plan catalog CRUD, referral logic, expiry/renewal math, backend error logging.
+
+### DB
+No schema change, no migration. `amount`, `payment_method` and `remarks` all
+already exist on `firm_subscriptions`.
+
+### Known follow-up (needs a business decision — NOT done here)
+Manual grants issued BEFORE this change still sit in `firm_subscriptions` with
+`amount = 0` and will not self-heal. Back-filling them requires knowing which
+were comped freebies vs paid-offline deals recorded at zero — that cannot be
+inferred from the data. Needs a reviewed one-off script, not a migration.
+
+### Rollback
+Revert `AdminAnalyticsController.php` + `AdminController.php`. No other backend
+file was touched.

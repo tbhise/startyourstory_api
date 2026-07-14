@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
  * admin API). No business logic or payment calculations are mutated here.
  *
  * Revenue sources:
- *  - Premium revenue   → firm_subscriptions.amount (status = active)
+ *  - Premium revenue   → firm_subscriptions.amount (payment_status = paid)
  *  - Wallet revenue    → wallet_recharges.amount   (status = approved; manual + gateway)
  *  - Creator commission→ creator_payouts.commission_amount (platform's marketplace cut)
  *  - Referral payouts  → referral_payouts.reward_amount (money paid out — an expense)
@@ -48,8 +48,13 @@ class AdminAnalyticsController extends Controller
             );
 
             // ── Metric totals ────────────────────────────────────────────────
+            // Revenue is keyed on payment_status='paid', NOT status='active'
+            // (2026-07-14). `status` is a lifecycle flag: every activation path
+            // supersedes a firm's prior rows to 'expired' on renewal, so filtering
+            // on it made already-booked revenue vanish from the period it was
+            // earned in. `payment_status` is never rewritten after capture.
             $premiumRevenue = (float) DB::table('firm_subscriptions')
-                ->where('status', 'active')
+                ->where('payment_status', 'paid')
                 ->whereBetween('created_at', [$from, $to])
                 ->sum(DB::raw('COALESCE(amount, 0)'));
 
@@ -72,7 +77,7 @@ class AdminAnalyticsController extends Controller
 
             // ── Trend series ─────────────────────────────────────────────────
             $premiumTrend = $this->trend(
-                fn() => DB::table('firm_subscriptions')->where('status', 'active'),
+                fn() => DB::table('firm_subscriptions')->where('payment_status', 'paid'),
                 'created_at',
                 'COALESCE(amount, 0)',
                 $from,
@@ -160,8 +165,9 @@ class AdminAnalyticsController extends Controller
             $applicationsThisMonth = (int) DB::table('applications')
                 ->whereBetween('applied_at', [$monthStart, $now])->count();
 
+            // payment_status='paid' — see the note in revenue() above.
             $premiumRevMonth = (float) DB::table('firm_subscriptions')
-                ->where('status', 'active')
+                ->where('payment_status', 'paid')
                 ->whereBetween('created_at', [$monthStart, $now])
                 ->sum(DB::raw('COALESCE(amount, 0)'));
             $walletRevMonth = (float) DB::table('wallet_recharges')

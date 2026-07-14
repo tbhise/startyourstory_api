@@ -331,6 +331,15 @@ class AdminController extends Controller
             }
             $firmProfileId = (int) $firm->id;
 
+            // Price snapshot — resolved SERVER-SIDE from the plan catalog, never
+            // taken from the request (2026-07-14). Previously this insert
+            // hardcoded amount=0, so every manually-granted subscription was
+            // counted by revenue reporting as ₹0 and rendered a ₹0 invoice.
+            // Same rule as the PhonePe path: branch offices pay half, and the
+            // amount is snapshotted onto the row so later catalog price changes
+            // never rewrite history.
+            $amount = (int) round(PlanHelper::priceFor($request->plan, !empty($firm->is_branch)));
+
             // Renewal-aware expiry — identical to the PhonePe verify/webhook
             // paths: extend from the current active expiry when still in the
             // future, otherwise start a fresh term from now.
@@ -343,7 +352,7 @@ class AdminController extends Controller
                 ->insertGetId([
                     'firm_id' => $firmProfileId,
                     'plan' => $request->plan,
-                    'amount' => 0,
+                    'amount' => $amount,
                     'currency' => 'INR',
                     'payment_gateway' => 'manual',
                     'payment_method' => 'manual',
@@ -378,6 +387,8 @@ class AdminController extends Controller
                 'event_type'           => 'admin_manual_assignment',
                 'payload'              => json_encode([
                     'plan'       => $request->plan,
+                    'amount'     => $amount,
+                    'is_branch'  => (bool) ($firm->is_branch ?? false),
                     'expires_at' => $expiresAt->toDateTimeString(),
                 ]),
                 'created_at'           => now(),

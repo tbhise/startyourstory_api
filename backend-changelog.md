@@ -4,6 +4,122 @@
 
 ---
 
+## 2026-07-15 — Interview invitation flow: complete email coverage (scheduled + confirmed)
+
+The invite flow emailed only two of its four milestones. Invitation Sent
+(`InterviewInviteMail`) and Invitation Accepted/Declined
+(`InterviewInviteResponseMail`) already existed; the two gaps are now closed by
+REUSING the applications-flow mail classes + templates — no new templates.
+
+### Changed — Mail classes made flow-agnostic (backward compatible)
+- **`InterviewScheduledMail`** — `$jobTitle` nullable + new optional
+  `$interviewLocation, $respondUrl, $respondLabel, $respondPage, $respondHint`
+  (all default null → existing applications-flow callers render EXACTLY as
+  before). Template `emails/interview/scheduled.blade.php`: Position row and
+  "for the X position" phrase now conditional; new Meeting Link/Location row
+  (label follows the mode); CTA url/label/page-name/hint overridable with the
+  old My Jobs values as fallbacks.
+- **`InterviewAcceptedMail`** — `$jobTitle` nullable + optional `$ctaLabel`.
+  Template `accepted.blade.php`: Position row/phrase conditional, CTA label
+  overridable ("View Applications" fallback), added "The interview will
+  proceed as scheduled." line.
+- **Blade gotcha fixed during this work**: a directive glued to a word
+  (`you@if (...)`) compiles itself but silently breaks compilation of the NEXT
+  directive in the file (raw `@if` shipped in the HTML). Both intros use
+  whole-paragraph `@if/@else` blocks instead.
+
+### New — `EmailNotificationService`
+- `sendInterviewInviteScheduled(...)` → student; reuses InterviewScheduledMail
+  with no job, location/link row, and the respond CTA pointed at
+  `/recruiter-actions` ("View & Respond") with matching helper copy.
+- `sendInterviewInviteConfirmed(...)` → firm; reuses InterviewAcceptedMail with
+  no job and a "View Candidate" CTA deep-linking `/firm-students/{studentId}`.
+
+### Changed — `InterviewInviteController`
+- **`schedule()`** — queues the scheduled email to the student (date/time,
+  mode, meeting link/location, note) after the push; try/catch so mail can
+  never fail the scheduling. Fires again on a reschedule — intentionally, the
+  student gets the updated details.
+- **`confirm()`** — the firm lookup now joins `users` for the email address
+  (same shape `respond()` already used); on `Confirmed` ONLY, queues the
+  confirmation email to the firm. One email max per interview: `confirm()`
+  409s unless `interview_status === 'scheduled'`.
+
+### Not changed
+Push/in-app/bell notifications, activity feeds, ActivityTracker, reminder +
+expiry jobs, the applications-flow email triggers, credit/quota logic.
+
+### Verified
+- `php -l` clean on all 4 touched PHP files.
+- Render suite (tinker, 19/19): applications-flow output regression-checked
+  (position phrase/row, My Jobs CTA + copy, note, no location row) and both
+  new variants (no "position" anywhere, Meeting Link vs Location label by
+  mode, Recruiter Actions CTA/copy, View Candidate CTA, date/mode).
+- Wiring suite (tinker, Queue::fake, 4/4): each of the four events creates the
+  correct `email_logs` row (purpose/template/recipient_type/pending) and
+  pushes `DispatchMailJob`; test rows cleaned up.
+
+### Rollback
+- Revert the two controller hunks + delete the two service methods; the
+  mailable/template changes are backward compatible and can stay.
+
+---
+
+## 2026-07-15 — REVERT: direct interview scheduling removed; invitation-based flow restored
+
+Product decision reversed: the 2026-07-11 "simplified interview flow (direct
+schedule)" is retired. The original workflow is back:
+Candidate Profile → Invite to Interview → candidate accepts → Schedule
+Interview → student Confirms / Rejects / requests ONE reschedule.
+
+### Removed
+- **Route `POST /candidates/{id}/schedule-interview`** and
+  **`InterviewInviteController@scheduleDirect`** (the only backend surface the
+  direct flow added — everything else was already shared with the invite flow).
+  No other file referenced it.
+
+### Explicitly KEPT (improvements that rode along with the 07-11 change)
+- `interview_location` columns + the `Online`/`Offline` interview modes on
+  `schedule()` and the applications flow (additive; legacy modes still valid).
+- Contact sharing on confirmation (`student_contact` / `firm_contact` /
+  `interview_contact` response fields — non-null only while confirmed).
+- `active_flag = 1` as the "is this invite active?" check in `invite()` and
+  `cancel()` (bug fix — status-based checks would permanently block a pair
+  after a rejection; historical direct-scheduled rows rely on it too).
+- Phase 2 credit lifecycle (2026-07-08): credit consumed at STUDENT
+  confirmation, `canScheduleInterview` in-flight+confirmed gate, max ONE
+  reschedule, expiry job. Unchanged in both flows.
+- RecruiterActionHelper single-row-per-invite writes, notification deep-links,
+  Firm Activity Center rows, reminder/expiry jobs.
+
+### Business rules after this revert (verified)
+- Invitations: UNLIMITED, free, never consume quota (`invite()` has no gate).
+- `schedule()` requires `invite_status = 'accepted'` (409 otherwise) and is
+  gated by `FreeActionsHelper::canScheduleInterview` (403 free_limit_reached)
+  — free limit remains 2 distinct candidates; premium unlimited.
+- Credit consumption point is unchanged from Phase 2: set at student
+  confirmation (`confirm()` → Confirmed). At the free limit the scheduling
+  gate already blocks a 3rd NEW candidate (in-flight counts), so a free firm
+  can never schedule more than 2 candidates' interviews.
+
+### Database
+- **No schema change, no migration.** `interview_location` stays (nullable,
+  additive, still used by the restored schedule step). Historical
+  direct-scheduled `interview_invites` rows (invite_status='accepted' +
+  scheduled/terminal states) remain valid — every read path (feeds,
+  candidateInvite, confirm, expiry job) treats them exactly like
+  invite-then-scheduled rows.
+
+### Verified
+- `php -l` clean on the controller + routes; `route:list` shows the direct
+  route gone and the full invite pipeline intact
+  (invite / respond / schedule / confirm / complete / cancel).
+
+### Rollback (i.e. re-apply direct scheduling)
+- Restore the `scheduleDirect` method + route from the 2026-07-11 entry.
+
+---
+
 ## 2026-07-14 — Duplicate Recruiter Action entries: root-cause fix
 
 Duplicate cards in the student Application Activity timeline were duplicate DB

@@ -271,6 +271,49 @@ class EmailNotificationService
         );
     }
 
+    /**
+     * Interview scheduled — INVITE flow (candidate-profile invitations).
+     * REUSES InterviewScheduledMail / emails.interview.scheduled: no job is
+     * attached ($jobTitle null) and the student responds on the Recruiter
+     * Actions page instead of My Jobs.
+     */
+    public function sendInterviewInviteScheduled(
+        string  $studentEmail,
+        string  $studentName,
+        string  $firmName,
+        string  $interviewDate,
+        string  $interviewMode,
+        ?string $interviewLocation,
+        ?string $interviewNote
+    ): void {
+        $base       = config('app.frontend_url', config('app.url', 'https://startyourstory.in'));
+        $respondUrl = "{$base}/recruiter-actions";
+
+        $mailable = new InterviewScheduledMail(
+            $studentName,
+            $firmName,
+            null,               // no job — invitation from the candidate profile
+            $interviewDate,
+            $interviewMode,
+            $interviewNote,
+            $respondUrl,        // accept/reject URLs unused by the template
+            $respondUrl,
+            $interviewLocation,
+            $respondUrl,
+            'View & Respond',
+            'Recruiter Actions',
+            'Open your Recruiter Actions page, find this interview, and use the Accept, Reject, or Request Reschedule buttons to respond.'
+        );
+
+        $this->queue(
+            $studentEmail,
+            'student',
+            $mailable,
+            "Interview Request from {$firmName} — Start Your Story",
+            EmailPurpose::INTERVIEW_SCHEDULED
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Interview — Firm emails (sent when candidate responds)
     // -------------------------------------------------------------------------
@@ -318,6 +361,39 @@ class EmailNotificationService
             $mailable,
             "{$candidateName} Declined Your Interview Request — Start Your Story",
             EmailPurpose::INTERVIEW_REJECTED
+        );
+    }
+
+    /**
+     * Interview confirmed — INVITE flow (student confirmed the scheduled
+     * interview). REUSES InterviewAcceptedMail / emails.interview.accepted:
+     * no job is attached and the CTA deep-links to the candidate profile.
+     */
+    public function sendInterviewInviteConfirmed(
+        string $firmEmail,
+        string $candidateName,
+        string $interviewDate,
+        string $interviewMode,
+        int    $studentId
+    ): void {
+        $base    = config('app.frontend_url', config('app.url', 'https://startyourstory.in'));
+        $viewUrl = "{$base}/firm-students/{$studentId}";
+
+        $mailable = new InterviewAcceptedMail(
+            $candidateName,
+            null,               // no job — invitation from the candidate profile
+            $interviewDate,
+            $interviewMode,
+            $viewUrl,
+            'View Candidate'
+        );
+
+        $this->queue(
+            $firmEmail,
+            'firm',
+            $mailable,
+            "{$candidateName} Accepted Your Interview Request — Start Your Story",
+            EmailPurpose::INTERVIEW_ACCEPTED
         );
     }
 

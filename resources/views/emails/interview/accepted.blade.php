@@ -3,10 +3,18 @@
 @section('content')
 <div class="dm-p" style="font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.8;color:#4b5563;">
 
-    <p>
-        Good news! <strong>{{ $candidateName }}</strong> has <strong>accepted</strong> your
-        interview request for the <strong>{{ $jobTitle }}</strong> position.
-    </p>
+    @if (!empty($jobTitle))
+        <p>
+            Good news! <strong>{{ $candidateName }}</strong> has <strong>accepted</strong> your
+            interview request for the <strong>{{ $jobTitle }}</strong> position.
+            The interview will proceed as scheduled.
+        </p>
+    @else
+        <p>
+            Good news! <strong>{{ $candidateName }}</strong> has <strong>accepted</strong> your
+            interview request. The interview will proceed as scheduled.
+        </p>
+    @endif
 
     {{-- Interview Detail Card --}}
     <div class="dm-card" style="
@@ -25,14 +33,16 @@
                     {{ $candidateName }}
                 </td>
             </tr>
-            <tr>
-                <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
-                    Position
-                </td>
-                <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
-                    {{ $jobTitle }}
-                </td>
-            </tr>
+            @if (!empty($jobTitle))
+                <tr>
+                    <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
+                        Position
+                    </td>
+                    <td class="dm-h" style="padding: 6px 0; font-size: 15px; color: #111827; font-weight: 600;">
+                        {{ $jobTitle }}
+                    </td>
+                </tr>
+            @endif
             <tr>
                 <td class="dm-p" style="padding: 6px 0; font-size: 14px; color: #6b7280; vertical-align: top;">
                     Date & Time
@@ -55,7 +65,7 @@
     <p style="text-align: center; margin: 28px 0 8px;">
         @include('emails.partials.cta-button', [
             'url'   => $viewApplicationsUrl,
-            'label' => 'View Applications',
+            'label' => $ctaLabel ?? 'View Applications',
             'color' => 'primary',
         ])
     </p>

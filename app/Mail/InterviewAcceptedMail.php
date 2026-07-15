@@ -14,12 +14,19 @@ class InterviewAcceptedMail extends Mailable implements HasEmailPurpose
 {
     use Queueable, SerializesModels;
 
+    /**
+     * Serves BOTH interview flows: applications flow ($jobTitle set, default
+     * "View Applications" CTA) and invite flow ($jobTitle null, CTA relabelled
+     * via $ctaLabel and pointed at the candidate profile). Trailing param is
+     * optional so existing callers are untouched.
+     */
     public function __construct(
-        public readonly string $candidateName,
-        public readonly string $jobTitle,
-        public readonly string $interviewDate,
-        public readonly string $interviewMode,
-        public readonly string $viewApplicationsUrl
+        public readonly string  $candidateName,
+        public readonly ?string $jobTitle,
+        public readonly string  $interviewDate,
+        public readonly string  $interviewMode,
+        public readonly string  $viewApplicationsUrl,
+        public readonly ?string $ctaLabel = null
     ) {}
 
     public function emailPurpose(): EmailPurpose
@@ -44,6 +51,7 @@ class InterviewAcceptedMail extends Mailable implements HasEmailPurpose
                 'interviewDate'       => $this->interviewDate,
                 'interviewMode'       => $this->interviewMode,
                 'viewApplicationsUrl' => $this->viewApplicationsUrl,
+                'ctaLabel'            => $this->ctaLabel,
             ],
         );
     }

@@ -107,7 +107,7 @@ class RecruiterActionHelper
     /**
      * Upsert THE single row for an interview invite.
      *
-     * First call (invite sent / direct schedule) inserts; every later stage
+     * First call (invite sent) inserts; every later stage
      * (scheduled, rescheduled) updates the same row in place.
      *
      * created_at is refreshed so the interview surfaces at the top of the

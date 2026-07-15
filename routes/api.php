@@ -204,9 +204,9 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
         Route::post('/applications/{id}/schedule-interview',  [JobsController::class, 'scheduleInterview']);
 
         // Interview invites (from candidate profile) — firm side
-        // Simplified flow (2026-07-11): schedule directly, no separate invite step.
-        Route::post('/candidates/{id}/schedule-interview',    [InterviewInviteController::class, 'scheduleDirect']);
-        // Legacy — kept only for invites already in flight before the simplification.
+        // Invitation-based flow (restored 2026-07-15): invite -> student accepts
+        // -> firm schedules. Direct scheduling from the candidate profile was
+        // removed; the /candidates/{id}/schedule-interview route no longer exists.
         Route::post('/candidates/{id}/invite-interview',      [InterviewInviteController::class, 'invite']);
         Route::get('/candidates/{id}/interview-invite',       [InterviewInviteController::class, 'candidateInvite']);
         Route::post('/interview-invites/{id}/schedule',       [InterviewInviteController::class, 'schedule']);

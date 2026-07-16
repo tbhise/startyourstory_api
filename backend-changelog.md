@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-07-16 — Request-ID proof-of-arrival marker + admin correlate endpoint
+
+Correlation hardening for the Update Profile ERR_NETWORK investigation. No
+business logic changed; no per-controller instrumentation added.
+
+- **`app/Http/Middleware/RequestIdMiddleware.php`** — for every api request the
+  middleware now writes a proof-of-arrival cache marker
+  (`reqid:<request-id>` → ISO arrival timestamp, TTL
+  `ARRIVAL_TTL_HOURS = 72`, `CACHE_STORE=redis` in prod). Best-effort inside
+  try/catch — a cache failure can never break the request. This makes
+  "did request X reach Laravel?" answerable with certainty (within the TTL
+  window) instead of inferred.
+- **`ErrorLogController@correlate` (new) + route
+  `GET /admin/error-logs/correlate?request_id=...`** (admin-gated by the global
+  AdminAuthMiddleware like the sibling error-log routes). Returns evidence
+  only: `backend_request_found` (marker exists OR a backend error row carries
+  the ID), `backend_seen_at`, `backend_error_exists` + up to 10 matching
+  `source='api'` error rows, and `marker_retention_hours` so the UI can label
+  an expired-window NOT FOUND as inconclusive. Deliberately does NOT claim
+  which middleware/controller/validation stage executed.
+- **`ErrorLogController::CATEGORIES` / `categoryGroups()`** — accept the new
+  frontend category **"No Response (Backend Reachable)"** (replaces the
+  unconfirmable "CORS Failure" for NEW rows; the old name stays valid so
+  historic rows keep filtering).
+- Verified: `php -l` clean on all three files; `route:list` shows the new
+  route; frontend `tsc` clean on the paired UI changes.
+
+---
+
 ## 2026-07-15 — Interview invitation flow: complete email coverage (scheduled + confirmed)
 
 The invite flow emailed only two of its four milestones. Invitation Sent

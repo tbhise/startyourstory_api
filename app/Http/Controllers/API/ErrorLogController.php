@@ -20,7 +20,11 @@ class ErrorLogController extends Controller
         'Server Processing Timeout', 'Reverse Proxy Timeout', 'Gateway Timeout',
         'Payload Too Large', 'Offline', 'Slow Network',
         'DNS Failure', 'SSL Failure', 'Connection Refused', 'Connection Reset',
+        // 'CORS Failure' is kept for rows stored before 2026-07-16; new clients
+        // report the honest 'No Response (Backend Reachable)' instead (a CORS
+        // rejection cannot actually be confirmed from the browser).
         'API Unreachable', 'Reverse Proxy Failure', 'CORS Failure',
+        'No Response (Backend Reachable)',
         'Backend Exception', 'Backend Error', 'Validation Error',
         'Authentication Error', 'Session Expired',
         'Browser Cancelled Request', 'Navigation Cancelled Request',
@@ -332,7 +336,8 @@ class ErrorLogController extends Controller
             'network' => [
                 'Offline', 'Slow Network', 'DNS Failure', 'SSL Failure',
                 'Connection Refused', 'Connection Reset', 'API Unreachable',
-                'Reverse Proxy Failure', 'CORS Failure', 'Unknown Transport Failure',
+                'Reverse Proxy Failure', 'CORS Failure',
+                'No Response (Backend Reachable)', 'Unknown Transport Failure',
             ],
             'timeout' => [
                 'Request Timeout', 'Upload Timeout', 'Download Timeout',
@@ -406,6 +411,73 @@ class ErrorLogController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('ErrorLogController@analytics: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GET /admin/error-logs/correlate?request_id=...
+    |
+    | Request-ID correlation with NO inference: answers exactly two questions
+    | from hard evidence and nothing more.
+    |
+    |  - backend_request_found: did this request ID reach Laravel? YES when the
+    |    proof-of-arrival cache marker written by RequestIdMiddleware exists
+    |    (kept ARRIVAL_TTL_HOURS), or when a backend error row carries the ID
+    |    (an error row can only exist if the request arrived). NOT FOUND is
+    |    reported as-is — within the retention window it means the request
+    |    never reached Laravel; beyond it, it is inconclusive.
+    |  - backend_error_exists: is there an error_logs row with source='api'
+    |    for this request ID (written by ErrorLogRecorder / the MessageLogged
+    |    listener)?
+    |
+    | Deliberately does NOT claim which middleware/controller/validation stage
+    | executed — that is not knowable from the stored evidence.
+    |--------------------------------------------------------------------------
+    */
+    public function correlate(Request $request)
+    {
+        try {
+            $requestId = trim((string) $request->get('request_id', ''));
+            if (! preg_match('/^[A-Za-z0-9_-]{8,64}$/', $requestId)) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid request id',
+                ], 422);
+            }
+
+            // Proof-of-arrival marker (best-effort read — cache may be down).
+            $seenAt = null;
+            try {
+                $seenAt = \Illuminate\Support\Facades\Cache::get(
+                    \App\Http\Middleware\RequestIdMiddleware::arrivalKey($requestId)
+                );
+            } catch (\Throwable) {
+                // ignore — treated as no marker
+            }
+            $seenAt = is_string($seenAt) ? $seenAt : null;
+
+            $backendErrors = DB::table('error_logs')
+                ->where('request_id', $requestId)
+                ->where('source', 'api')
+                ->orderBy('created_at')
+                ->limit(10)
+                ->get(['id', 'status', 'category', 'message', 'endpoint', 'created_at']);
+
+            return response()->json([
+                'status' => true,
+                'data'   => [
+                    'request_id'             => $requestId,
+                    'backend_request_found'  => $seenAt !== null || $backendErrors->isNotEmpty(),
+                    'backend_seen_at'        => $seenAt,
+                    'backend_error_exists'   => $backendErrors->isNotEmpty(),
+                    'backend_errors'         => $backendErrors,
+                    'marker_retention_hours' => \App\Http\Middleware\RequestIdMiddleware::ARRIVAL_TTL_HOURS,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('ErrorLogController@correlate: ' . $e->getMessage());
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

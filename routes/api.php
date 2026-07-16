@@ -523,6 +523,7 @@ Route::get('/ping', fn() => response()->noContent())->middleware('throttle:30,1'
 Route::get('/admin/error-logs',           [ErrorLogController::class, 'index']);
 Route::get('/admin/error-logs/stats',     [ErrorLogController::class, 'stats']);
 Route::get('/admin/error-logs/analytics', [ErrorLogController::class, 'analytics']);
+Route::get('/admin/error-logs/correlate', [ErrorLogController::class, 'correlate']);
 Route::delete('/admin/error-logs',        [ErrorLogController::class, 'destroy']);
 
 // Admin — Email Logs (read-only analytics + click tracking)

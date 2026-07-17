@@ -27,6 +27,7 @@ enum EmailPurpose: string
     case REENGAGEMENT          = 'reengagement';
     case REFERRAL_PAYOUT_REQUEST = 'referral_payout_request';
     case SUPPORT_TICKET_CLOSED = 'support_ticket_closed';
+    case PREMIUM_ACTIVATED     = 'premium_activated';
     case INTERVIEW_RESPONSE_REMINDER = 'interview_response_reminder';
     case FIRM_APPLICANT_REMINDER     = 'firm_applicant_reminder';
 
@@ -56,6 +57,7 @@ enum EmailPurpose: string
             self::REENGAGEMENT           => 'marketing',
             self::REFERRAL_PAYOUT_REQUEST => 'support',
             self::SUPPORT_TICKET_CLOSED  => 'support',
+            self::PREMIUM_ACTIVATED      => 'billing',
             self::INTERVIEW_RESPONSE_REMINDER => 'interview',
             self::FIRM_APPLICANT_REMINDER     => 'support',
         };
@@ -71,7 +73,8 @@ enum EmailPurpose: string
             self::FIRM_APPROVED,
             self::FIRM_REJECTED,
             self::CREATOR_ACCEPTED,
-            self::FIRM_APPLICANT_REMINDER => 'firm',
+            self::FIRM_APPLICANT_REMINDER,
+            self::PREMIUM_ACTIVATED      => 'firm',
             self::BILLING,
             self::MARKETING              => 'user',
             default                      => 'student',

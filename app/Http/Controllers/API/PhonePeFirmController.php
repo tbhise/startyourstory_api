@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
+use App\Helpers\PremiumActivationEmailHelper;
 use App\Helpers\FirmActivityHelper;
 use App\Helpers\PlanHelper;
 use App\Services\ActivityTracker;
@@ -227,6 +228,8 @@ class PhonePeFirmController extends Controller
                 ]);
                 // Firm Activity Center feed (non-blocking).
                 FirmActivityHelper::log($firmProfile->id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
+                // Activation confirmation email (non-blocking, exactly-once vs webhook).
+                PremiumActivationEmailHelper::send((int) $subscription->id, PremiumActivationEmailHelper::TYPE_PHONEPE);
 
                 return response()->json(['status' => true, 'message' => 'Payment verified successfully']);
             }
@@ -343,6 +346,8 @@ class PhonePeFirmController extends Controller
                 ]);
                 // Firm Activity Center feed (non-blocking).
                 FirmActivityHelper::log($subscription->firm_id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
+                // Activation confirmation email (non-blocking, exactly-once vs verify()).
+                PremiumActivationEmailHelper::send((int) $subscription->id, PremiumActivationEmailHelper::TYPE_PHONEPE);
             } else {
                 DB::table('firm_subscriptions')
                     ->where('id', $subscription->id)

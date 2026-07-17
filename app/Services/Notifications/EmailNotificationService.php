@@ -20,6 +20,7 @@ use App\Mail\InterviewRescheduleAcceptedMail;
 use App\Mail\InterviewScheduledMail;
 use App\Mail\InterviewResponseReminderMail;
 use App\Mail\FirmApplicantReminderMail;
+use App\Mail\PremiumSubscriptionActivatedMail;
 use App\Mail\ReferralPayoutRequestMail;
 use App\Mail\StudentFeatureReleaseMail;
 use App\Mail\FirmFeatureReleaseMail;
@@ -575,6 +576,51 @@ class EmailNotificationService
             $mailable,
             'Action needed: add your payout details — Start Your Story',
             EmailPurpose::REFERRAL_PAYOUT_REQUEST
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Billing — Premium subscription activation confirmation (firm)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Confirm a firm's Premium subscription activation. One template for all
+     * three flows; $activationType ∈ phonepe | admin_assigned | request_approved.
+     * Callers go through PremiumActivationEmailHelper, which resolves the
+     * subscription data and guarantees exactly-once delivery per activation.
+     */
+    public function sendPremiumSubscriptionActivated(
+        string  $firmEmail,
+        string  $firmName,
+        string  $activationType,
+        string  $planName,
+        string  $subscriptionPeriod,
+        string  $activationDate,
+        ?string $expiryDate,
+        string  $amount,
+        string  $paymentMethod,
+        ?string $invoiceNumber,
+        string  $billingUrl
+    ): int {
+        $mailable = new PremiumSubscriptionActivatedMail(
+            $firmName,
+            $activationType,
+            $planName,
+            $subscriptionPeriod,
+            $activationDate,
+            $expiryDate,
+            $amount,
+            $paymentMethod,
+            $invoiceNumber,
+            $billingUrl
+        );
+
+        return $this->queue(
+            $firmEmail,
+            'firm',
+            $mailable,
+            'Premium Subscription Activated',
+            EmailPurpose::PREMIUM_ACTIVATED
         );
     }
 

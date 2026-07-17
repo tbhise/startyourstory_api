@@ -165,7 +165,7 @@ class FirmDashboardController extends Controller
             if ($request->filled('registration_type')) {
                 $query->where(
                     'student_profiles.registration_type',
-                    strtolower($request->registration_type)
+                    strtolower(trim($request->registration_type))
                 );
             }
             /*

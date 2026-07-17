@@ -22,6 +22,7 @@ use App\Mail\InterviewScheduledMail;
 use App\Mail\NewMessageReplyMail;
 use App\Mail\NewMessageRequestMail;
 use App\Mail\PasswordResetMail;
+use App\Mail\PremiumSubscriptionActivatedMail;
 use App\Mail\ReEngagementMail;
 use App\Mail\ReferralPayoutRequestMail;
 use App\Mail\StudentFeatureReleaseMail;
@@ -233,6 +234,23 @@ class MailPreviewController extends Controller
                 'group' => 'Creator marketplace',
                 'desc'  => 'Creator accepted the engagement (to firm)',
                 'make'  => fn () => new CreatorAcceptedMail($firm, $candidate, 'Instagram reel series — Tax tips for freshers', $front . '/creator-marketplace'),
+            ],
+
+            // ── Billing ──────────────────────────────────────────────────────
+            'premium-activated-phonepe' => [
+                'group' => 'Billing',
+                'desc'  => 'Premium activated — PhonePe payment verified',
+                'make'  => fn () => new PremiumSubscriptionActivatedMail($firm, 'phonepe', 'Premium Half-Yearly Plan', '6 Months', '17 Jul 2026', '17 Jan 2027', '₹5,999.00', 'PhonePe (Online)', 'INV-PRM-00042', $front . '/firm/billing-payments'),
+            ],
+            'premium-activated-admin' => [
+                'group' => 'Billing',
+                'desc'  => 'Premium activated — assigned manually by admin',
+                'make'  => fn () => new PremiumSubscriptionActivatedMail($firm, 'admin_assigned', 'Premium Yearly Plan', '12 Months', '17 Jul 2026', '17 Jul 2027', '₹9,999.00', 'Manual / Bank Transfer', 'INV-PRM-00043', $front . '/firm/billing-payments'),
+            ],
+            'premium-activated-request' => [
+                'group' => 'Billing',
+                'desc'  => 'Premium activated — premium request approved',
+                'make'  => fn () => new PremiumSubscriptionActivatedMail($firm, 'request_approved', 'Premium Quarterly Plan', '3 Months', '17 Jul 2026', '17 Oct 2026', '₹2,999.00', 'Manual / Bank Transfer', 'INV-PRM-00044', $front . '/firm/billing-payments'),
             ],
 
             // ── Misc ─────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ use App\Helpers\NotificationHelper;
 use App\Helpers\ReferralHelper;
 use App\Helpers\SysCoinHelper;
 use App\Helpers\ProfileCompletionHelper;
+use App\Helpers\RegistrationTypeHelper;
 
 class UserController extends Controller
 {
@@ -285,34 +286,12 @@ class UserController extends Controller
                     'public'
                 );
             }
-            $registrationType = 'provisional';
-            if (
-                in_array(
-                    strtolower(trim($request->looking_for ?? '')),
-                    ['semi-qualified', 'qualified']
-                )
-            ) {
-                $registrationType = 'confirm';
-            } elseif (
-                strtolower(trim($request->looking_for ?? '')) === 'articleship'
-            ) {
-                $caStatus =
-                    strtolower(trim($request->ca_status ?? ''));
-                if (
-                    in_array(
-                        $caStatus,
-                        [
-                            'inter-both',
-                            'inter both groups passed',
-                            'doing-articleship',
-                            'doing articleship'
-                        ]
-                    )
-                ) {
-                    $registrationType = 'confirm';
-                }
-            }
-
+            // Derived by the backend only — the shared helper is the single
+            // source of truth; any registration_type sent by the client is ignored.
+            $registrationType = RegistrationTypeHelper::derive(
+                $request->looking_for,
+                $request->ca_status
+            );
 
             $preferredLocations = [];
             if (!empty($request->preferred_locations_json)) {
@@ -481,7 +460,8 @@ class UserController extends Controller
     // ─────────────────────────────────────────────────────────────────────────
     // PATCH /student/career-status
     //
-    // Lightweight update of student_profiles.looking_for ONLY. Unlike
+    // Lightweight update of student_profiles.looking_for (plus the re-derived
+    // registration_type, which depends on it). Unlike
     // updateProfile it performs NO full-profile validation — a student changing
     // their career status must never be blocked for an unrelated field
     // (core_department, ca_status, exposure_type, …). profile_completed is
@@ -530,12 +510,21 @@ class UserController extends Controller
 
             $lookingFor = $request->looking_for;
 
-            // Update ONLY looking_for — every other column is left untouched.
+            // registration_type depends on looking_for (+ stored ca_status), so it
+            // must be re-derived here or it goes stale. This endpoint does not
+            // collect ca_status, so the stored value is used. Every other column
+            // is left untouched.
+            $registrationType = RegistrationTypeHelper::derive(
+                $lookingFor,
+                $profile->ca_status ?? null
+            );
+
             DB::table('student_profiles')
                 ->where('user_id', $user->id)
                 ->update([
-                    'looking_for' => $lookingFor,
-                    'updated_at'  => now(),
+                    'looking_for'       => $lookingFor,
+                    'registration_type' => $registrationType,
+                    'updated_at'        => now(),
                 ]);
 
             // Recalculate profile_completed against the stored profile values with

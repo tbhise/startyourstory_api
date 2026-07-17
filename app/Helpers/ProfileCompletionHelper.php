@@ -35,35 +35,21 @@ class ProfileCompletionHelper
 {
     public static function isComplete(array $f): bool
     {
-        // Raw looking_for is compared as-is for the articleship / semi-qualified /
-        // qualified / creator branches (mirrors the original === comparisons);
-        // a normalised copy is used only where the original normalised it.
-        $lookingForRaw = $f['looking_for'] ?? null;
-        $lookingFor    = strtolower(trim((string) ($f['looking_for'] ?? '')));
-        $caStatus      = $f['ca_status'] ?? null;
+        $lookingFor = strtolower(trim((string) ($f['looking_for'] ?? '')));
+        $caStatus      = strtolower(trim((string) ($f['ca_status'] ?? '')));
 
         $basicInfoComplete       = !empty($f['city']);
         $preferredLocationExists = !empty($f['has_preferred_location']);
 
-        // registration_type derivation (mirrors UserController@updateProfile).
-        $registrationType = 'provisional';
-        if (in_array($lookingFor, ['semi-qualified', 'qualified'])) {
-            $registrationType = 'confirm';
-        } elseif ($lookingFor === 'articleship') {
-            $cs = strtolower(trim((string) $caStatus));
-            if (in_array($cs, [
-                'inter-both',
-                'inter both groups passed',
-                'doing-articleship',
-                'doing articleship',
-            ])) {
-                $registrationType = 'confirm';
-            }
-        }
+        // Derivation is owned by RegistrationTypeHelper (single source of truth).
+        $registrationType = RegistrationTypeHelper::derive(
+            $f['looking_for'] ?? null,
+            $f['ca_status'] ?? null
+        );
 
         $isProfileComplete = false;
 
-        if ($lookingForRaw === 'articleship') {
+        if ($lookingFor === 'articleship') {
             // Preferred location + resume are only shown for Inter-Both (Case A).
             $skipLocationAndResume = in_array($caStatus, [
                 'inter-g2',
@@ -72,7 +58,7 @@ class ProfileCompletionHelper
                 'inter-g1',
                 'pursuing-inter',
                 'foundation',
-            ]);
+            ], true);
 
             $isProfileComplete = $basicInfoComplete && !empty($f['srn']);
 
@@ -81,7 +67,7 @@ class ProfileCompletionHelper
             }
 
             // Inter-Both (Case A) requires exposure, core domain and attempts.
-            if ($registrationType === 'confirm' && !$skipLocationAndResume) {
+            if ($registrationType === RegistrationTypeHelper::CONFIRM && !$skipLocationAndResume) {
                 $isProfileComplete = $isProfileComplete
                     && !empty($f['exposure_filled'])
                     && !empty($f['core_department'])
@@ -97,11 +83,11 @@ class ProfileCompletionHelper
             $isProfileComplete = $basicInfoComplete
                 && !empty($f['srn'])
                 && !empty($f['current_firm_name']);
-        } elseif (in_array($lookingForRaw, ['semi-qualified', 'qualified'])) {
+        } elseif (in_array($lookingFor, ['semi-qualified', 'qualified'], true)) {
             $isProfileComplete = $basicInfoComplete
                 && !empty($f['srn'])
                 && $preferredLocationExists;
-        } elseif ($lookingForRaw === 'creator') {
+        } elseif ($lookingFor === 'creator') {
             $isProfileComplete =
                 !empty($f['city']) &&
                 !empty($f['qualification']) &&
@@ -112,7 +98,7 @@ class ProfileCompletionHelper
         }
 
         // Students who opted into creator also need creator fields done.
-        if (!empty($f['is_creator_optin']) && $lookingForRaw !== 'creator') {
+        if (!empty($f['is_creator_optin']) && $lookingFor !== 'creator') {
             $isCreatorFieldsComplete =
                 !empty($f['qualification']) &&
                 !empty($f['availability_status']) &&

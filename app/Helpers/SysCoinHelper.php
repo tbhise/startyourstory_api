@@ -316,13 +316,16 @@ class SysCoinHelper
                 ->select('registration_type', 'looking_for')
                 ->first();
 
+            if (!$profile) return;
+
             // "Already Doing Articleship" students are not job-seeking and are
             // excluded from onboarding rewards — skip the welcome bonus entirely.
-            // (Targeted exception; all other registration types are unaffected.)
-            if ($profile && $profile->looking_for === 'already_doing_articleship') return;
+            // This guard is authoritative regardless of registration_type (they
+            // derive to "confirm", but must stay excluded even on stale rows).
+            if (strtolower(trim((string) ($profile->looking_for ?? ''))) === 'already_doing_articleship') return;
 
             // Only provisional-registration students qualify.
-            if (!$profile || $profile->registration_type !== 'provisional') return;
+            if (strtolower(trim((string) ($profile->registration_type ?? ''))) !== RegistrationTypeHelper::PROVISIONAL) return;
 
             // Already granted?
             $exists = DB::table('sys_coin_transactions')

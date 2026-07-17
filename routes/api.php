@@ -256,6 +256,14 @@ Route::get('/admin/activity-logs/filters',  [\App\Http\Controllers\API\AdminActi
 Route::get('/admin/activity-tracker/stats', [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'stats']);
 Route::get('/admin/activity-tracker',       [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'index']);
 
+// Admin — Interview Tracking (applications + interview_invites union). READ-ONLY.
+Route::get('/admin/interview-tracking/stats', [\App\Http\Controllers\API\AdminInterviewTrackingController::class, 'stats']);
+Route::get('/admin/interview-tracking',       [\App\Http\Controllers\API\AdminInterviewTrackingController::class, 'index']);
+
+// Admin — Joined Students (student_employment_history). READ-ONLY.
+Route::get('/admin/joined-students/stats',    [\App\Http\Controllers\API\AdminJoinedStudentsController::class, 'stats']);
+Route::get('/admin/joined-students',          [\App\Http\Controllers\API\AdminJoinedStudentsController::class, 'index']);
+
 // Admin — resume template management (CRUD; drives the Resume PDF rendering)
 Route::get('/admin/resume-templates',                    [\App\Http\Controllers\API\ResumeTemplateController::class, 'index']);
 Route::post('/admin/resume-templates',                   [\App\Http\Controllers\API\ResumeTemplateController::class, 'store']);

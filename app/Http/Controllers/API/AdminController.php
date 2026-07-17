@@ -16,6 +16,7 @@ use App\Helpers\ReferralHelper;
 use App\Helpers\NotificationHelper;
 use App\Helpers\AuthHelper;
 use App\Helpers\PlanHelper;
+use App\Helpers\PremiumActivationEmailHelper;
 use App\Services\AdminActivityLogger;
 
 class AdminController extends Controller
@@ -408,6 +409,9 @@ class AdminController extends Controller
                 'Assigned subscription plan \'' . $request->plan . '\' to ' . ($firm->firm_name ?? ('firm #' . $request->firm_id)) . ' (expires ' . $expiresAt->format('d M Y') . ').',
                 $request
             );
+
+            // Activation confirmation email to the firm (non-blocking).
+            PremiumActivationEmailHelper::send((int) $subscriptionId, PremiumActivationEmailHelper::TYPE_ADMIN_ASSIGNED);
 
             return response()->json([
                 'status' => true,
@@ -1105,6 +1109,9 @@ class AdminController extends Controller
                 'Approved premium subscription payment for ' . ($premiumRequest->firm_name ?? ('firm #' . $premiumRequest->firm_id)) . ' (' . $premiumRequest->plan . ').',
                 $request
             );
+
+            // Activation confirmation email to the firm (non-blocking).
+            PremiumActivationEmailHelper::send((int) $newSubscriptionId, PremiumActivationEmailHelper::TYPE_REQUEST_APPROVED);
 
             return response()->json([
                 'status' => true,

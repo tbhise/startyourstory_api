@@ -4,6 +4,147 @@
 
 ---
 
+## 2026-07-17 — registration_type: single source of truth + stale-value bug fix
+
+Production bug fix + one business-rule change. `registration_type` is now
+derived in exactly ONE place and re-saved whenever career info changes.
+
+- **`app/Helpers/RegistrationTypeHelper.php` (new)** —
+  `RegistrationTypeHelper::derive(?$lookingFor, ?$caStatus): string`, the
+  ONLY place the value is calculated. All inputs trimmed + lowercased.
+  Constants `CONFIRM`/`PROVISIONAL` + `CONFIRM_CA_STATUSES`. Rules:
+  semi-qualified | qualified → confirm; articleship + ca_status in
+  {inter-both, inter both groups passed, doing-articleship, doing
+  articleship} → confirm; **NEW RULE:** already_doing_articleship →
+  confirm; everything else → provisional.
+- **`UserController@updateProfile`** — inline 27-line derivation block
+  replaced with the helper call. Client-sent `registration_type` was
+  already ignored; still is (frontend no longer sends it at all).
+- **`UserController@updateCareerStatus`** — BUG FIX: previously updated
+  `looking_for` + `profile_completed` but never `registration_type`,
+  leaving stale values (e.g. foundation→qualified stayed provisional and
+  could wrongly receive the provisional-only welcome bonus). Now
+  re-derives from the new looking_for + stored ca_status and saves it in
+  the same UPDATE.
+- **`ProfileCompletionHelper`** — duplicated derivation removed, now calls
+  the shared helper; all looking_for/ca_status comparisons normalised
+  (trim+strtolower, strict in_array). Completion outcomes unchanged: the
+  derived type is only used inside the articleship branch (Case A gate),
+  so ADA→confirm cannot flip any profile_completed result.
+- **`SysCoinHelper@maybeGrantWelcomeBonus`** — comparisons normalised
+  (trim+strtolower, PROVISIONAL constant). Eligibility UNCHANGED: the
+  explicit `looking_for = already_doing_articleship` exclusion stays as
+  the authoritative guard (ADA now derives to confirm, which also
+  excludes them — double protection, incl. stale provisional rows).
+- **`FirmDashboardController@getCandidates`** — registration_type filter
+  now trims as well as lowercases the request value.
+
+### Not changed
+No schema change, no migration, no new columns. Read-only consumers
+(JobsController applicant list, AdminController students list, firm
+candidate select) untouched — stored values remain lowercase
+confirm/provisional. Referral bonus logic does not read registration_type.
+
+### Known follow-up (data, not schema)
+Existing production rows written before this fix can be stale: (a)
+already_doing_articleship rows say provisional under the new rule; (b) any
+student who used the career-status switch may carry a wrong value. Code
+self-heals on their next profile/career-status save. Optional one-off SQL
+to resync immediately (mirrors the helper exactly):
+
+    UPDATE student_profiles SET registration_type = CASE
+      WHEN LOWER(TRIM(looking_for)) IN ('semi-qualified','qualified','already_doing_articleship') THEN 'confirm'
+      WHEN LOWER(TRIM(looking_for)) = 'articleship' AND LOWER(TRIM(COALESCE(ca_status,''))) IN
+        ('inter-both','inter both groups passed','doing-articleship','doing articleship') THEN 'confirm'
+      ELSE 'provisional' END
+    WHERE looking_for IS NOT NULL;
+
+  (Welcome-bonus safe: grant is one-time-guarded by sys_coin_transactions
+  and ADA students are excluded by looking_for regardless of type.)
+
+---
+
+## 2026-07-17 — Admin Interview Tracking + Joined Students (read-only modules)
+
+Two new READ-ONLY admin list endpoints; no business logic touched, no new
+data tables — both are views over existing tables (audited before coding).
+
+- **`AdminInterviewTrackingController` (new)** — `GET
+  /admin/interview-tracking` (+ `/stats`). UNION ALL of the two existing
+  interview sources: `applications` (job-flow; position = jobs.title) and
+  `interview_invites` (candidate-search; rendered as "Direct Interview").
+  SQL CASE expressions normalize both flows into `approval_status`
+  (pending/accepted/declined/reschedule_requested — apps use 'Accepted',
+  invites 'Confirmed') and `interview_status`
+  (scheduled/completed/cancelled/rescheduled — apps flow has no completed
+  state; 'Rejected'/'Interview Expired'/'Withdrawn by Candidate' →
+  cancelled; reschedule_count > 0 → rescheduled). Server-side filters:
+  interview date range, both statuses, firm, student, position (a "direct"
+  search matches direct interviews), scheduled_date, free search; newest
+  first; 20/page. NOTE: `applications` has NO created_at — scheduled_on =
+  COALESCE(interview_requested_at, applied_at).
+- **`AdminJoinedStudentsController` (new)** — `GET /admin/joined-students`
+  (+ `/stats`) over the existing `student_employment_history` table
+  (Employment Status card). "Joined Via SYS" = the existing
+  `joined_via_platform` flag — derived, no manual flag added. Filters:
+  joined date range, student, firm (organization_name), via_sys yes/no,
+  search; newest joining first; 20/page.
+- **Migration `2026_07_17_000001_add_interview_tracking_indexes`** —
+  read-path indexes only: `applications.interview_date`,
+  `interview_invites.interview_date`, `student_employment_history.joined_date`.
+- Routes registered next to the Activity Tracker block in `routes/api.php`;
+  admin auth via the global AdminAuthMiddleware + the same in-controller
+  cookie check the sibling controllers use.
+- Verified: `php -l` clean; `route:list` shows all 4 routes; both union and
+  joined queries executed against the local DB via tinker (15 interviews /
+  7 joinings, statuses normalize correctly); migration ran and all three
+  indexes confirmed via SHOW INDEX.
+
+---
+
+## 2026-07-17 — Premium subscription activation confirmation email (all 3 flows)
+
+Email-only feature: no subscription logic, payment flow, invoice generation,
+API response, or schema was changed.
+
+- **`app/Mail/PremiumSubscriptionActivatedMail.php` (new)** + one shared
+  template **`resources/views/emails/firm/premium-activated.blade.php`**
+  (extends `emails.layouts.premium`). Subject: "Premium Subscription
+  Activated". `$activationType` (`phonepe` | `admin_assigned` |
+  `request_approved`) picks the confirmation line; everything else is
+  identical. Shows plan name, period, activation/expiry dates, amount,
+  payment method and invoice number (`INV-PRM-#####`, same scheme as
+  FirmBillingController). Invoice PDF is deliberately NOT attached — a
+  highlighted section + "View Billing & Download Invoice" CTA link to
+  `/firm/billing-payments` instead.
+- **`app/Helpers/PremiumActivationEmailHelper.php` (new)** — single entry
+  point called AFTER `DB::commit()` from every activation flow. Resolves the
+  subscription row, firm (id-first, user_id fallback for historical keying),
+  recipient email and plan meta, then queues via
+  `EmailNotificationService::sendPremiumSubscriptionActivated()` (standard
+  email_logs + DispatchMailJob pipeline). Fully try/catch'd — a mail failure
+  can never affect activation.
+- **Exactly-once guarantee:** before queueing, the helper inserts a
+  `premium_activation_email_queued` marker row into the existing
+  `payment_logs` table (keyed by `firm_subscription_id`) and skips when one
+  already exists — so PhonePe `verify()` and `webhook()` racing on the same
+  transaction can never double-send.
+- **Call sites (all post-commit, alongside the existing non-blocking
+  activity logs):** `PhonePeFirmController@verify`,
+  `PhonePeFirmController@webhook` (both type `phonepe`),
+  `AdminController@addSubscriptions` (`admin_assigned`),
+  `AdminController@approvePremiumRequest` (`request_approved`). Student
+  premium approval is out of scope (firm-only feature).
+- **`EmailPurpose::PREMIUM_ACTIVATED` (new)** — senderKey `billing` (falls
+  back to the default sender until `MAIL_BILLING_ADDRESS` is configured),
+  recipientType `firm`.
+- **Dev previews:** three variants registered in `MailPreviewController`
+  under a new "Billing" group (`/dev/emails/premium-activated-{phonepe,admin,request}`).
+- Verified: `php -l` clean on all changed files; template renders via
+  tinker (18 KB HTML).
+
+---
+
 ## 2026-07-16 — Request-ID proof-of-arrival marker + admin correlate endpoint
 
 Correlation hardening for the Update Profile ERR_NETWORK investigation. No

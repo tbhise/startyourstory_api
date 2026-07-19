@@ -1,0 +1,125 @@
+-- CA Library database (separate `ca_library` DB, NOT startyourstory).
+-- Tables originally created via Laravel migrations 2026_07_18_000001..3.
+
+ALTER TABLE `ca_library`.`ca_library_resource_types`
+ADD COLUMN `is_question_paper` TINYINT(1) NOT NULL DEFAULT 0 AFTER `name`;
+
+-----------------------------------------------------------------
+
+-- CA Library student access + download tracking (Laravel migrations
+-- 2026_07_19_000001..3). Independent of SYS users/student_profiles.
+
+CREATE TABLE `ca_library`.`ca_students` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `email` varchar(255) NOT NULL,
+  `password` varchar(255) DEFAULT NULL,
+  `email_verified_at` timestamp NULL DEFAULT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'active',
+  `verify_token_hash` varchar(64) DEFAULT NULL,
+  `verify_token_expires_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `ca_students_email_unique` (`email`)
+);
+
+CREATE TABLE `ca_library`.`ca_sessions` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `student_id` bigint unsigned NOT NULL,
+  `token` varchar(64) NOT NULL,
+  `expires_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `ca_sessions_token_unique` (`token`),
+  KEY `idx_cas_student` (`student_id`)
+);
+
+CREATE TABLE `ca_library`.`ca_download_requests` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `student_id` bigint unsigned NOT NULL,
+  `study_material_id` bigint unsigned NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'pending',
+  `verified_at` timestamp NULL DEFAULT NULL,
+  `downloaded_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cadr_student_material` (`student_id`,`study_material_id`),
+  KEY `idx_cadr_material` (`study_material_id`)
+);
+
+-----------------------------------------------------------------
+
+-- Answer-sheet evaluation flow (Laravel migrations 2026_07_19_000004..5).
+-- amount = evaluation fee SNAPSHOTTED from Platform Settings at creation time.
+-- NOTE: the ca_library_evaluation_fee Platform Setting row lives in the MAIN
+-- SYS database (system_settings) — recorded in db_changes.txt, not here.
+
+CREATE TABLE `ca_library`.`ca_test_submissions` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `student_id` bigint unsigned NOT NULL,
+  `study_material_id` bigint unsigned NOT NULL,
+  `answer_sheet_path` varchar(500) NOT NULL,
+  `answer_sheet_original_name` varchar(255) NOT NULL,
+  `answer_sheet_file_size` bigint unsigned DEFAULT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `currency` varchar(10) NOT NULL DEFAULT 'INR',
+  `payment_status` varchar(20) NOT NULL DEFAULT 'pending',
+  `evaluation_status` varchar(30) NOT NULL DEFAULT 'pending_payment',
+  `evaluated_file_path` varchar(500) DEFAULT NULL,
+  `evaluated_file_original_name` varchar(255) DEFAULT NULL,
+  `faculty_id` bigint unsigned DEFAULT NULL,
+  `submitted_at` timestamp NULL DEFAULT NULL,
+  `paid_at` timestamp NULL DEFAULT NULL,
+  `evaluation_started_at` timestamp NULL DEFAULT NULL,
+  `completed_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_cts_student_material` (`student_id`,`study_material_id`),
+  KEY `idx_cts_statuses` (`payment_status`,`evaluation_status`)
+);
+
+-- Manual payment option (Laravel migration 2026_07_19_000006):
+-- gateway='manual', status pending_verification -> paid | rejected;
+-- screenshot stored on the PRIVATE disk, reviewed_by = SYS admin_users.id.
+
+ALTER TABLE `ca_library`.`ca_payments`
+ADD COLUMN `screenshot_path` VARCHAR(500) NULL AFTER `status`,
+ADD COLUMN `screenshot_original_name` VARCHAR(255) NULL AFTER `screenshot_path`,
+ADD COLUMN `reviewed_by` BIGINT UNSIGNED NULL AFTER `screenshot_original_name`,
+ADD COLUMN `reviewed_at` TIMESTAMP NULL AFTER `reviewed_by`;
+
+-----------------------------------------------------------------
+
+CREATE TABLE `ca_library`.`ca_payments` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `student_id` bigint unsigned NOT NULL,
+  `test_submission_id` bigint unsigned NOT NULL,
+  `amount` decimal(10,2) NOT NULL,
+  `currency` varchar(10) NOT NULL DEFAULT 'INR',
+  `gateway` varchar(30) NOT NULL DEFAULT 'phonepe',
+  `gateway_order_id` varchar(100) DEFAULT NULL,
+  `gateway_transaction_id` varchar(100) DEFAULT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'pending',
+  `paid_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_cap_submission` (`test_submission_id`),
+  KEY `idx_cap_order` (`gateway_order_id`)
+);
+
+-----------------------------------------------------------------
+
+-- Terms & Conditions acceptance for answer-sheet submissions (Laravel
+-- migration 2026_07_19_000007). Enforced server-side in
+-- CaTestSubmissionController@store (required|accepted) — never just a UI
+-- checkbox. No separate consent table; nullable timestamp on the submission
+-- itself, matching the project's minimal-consent-tracking approach.
+
+ALTER TABLE `ca_library`.`ca_test_submissions`
+ADD COLUMN `terms_accepted_at` TIMESTAMP NULL AFTER `submitted_at`;
+
+-----------------------------------------------------------------

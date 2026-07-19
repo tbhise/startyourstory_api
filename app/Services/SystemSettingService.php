@@ -28,6 +28,7 @@ class SystemSettingService
         'student_referral_reward'      => 50,
         'firm_premium_purchase_reward' => 2000,
         'welcome_bonus_coins'          => 100,
+        'ca_library_evaluation_fee'    => 99,
         'free_applications_count'      => 3,
         'application_fee_amount'       => 49,
         'minimum_wallet_recharge'      => 150,

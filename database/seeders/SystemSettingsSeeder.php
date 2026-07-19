@@ -33,6 +33,10 @@ class SystemSettingsSeeder extends Seeder
             // QR image path (relative, on the public disk). Managed via the upload
             // endpoint, NOT the generic text editor — hence is_editable = false.
             ['payment_qr_code', '', 'string', 'Payment QR Code', 'QR code image for manual UPI payments (optional).', 'payment'],
+
+            // CA Library — snapshotted into ca_test_submissions at creation time;
+            // changing it only affects NEW submissions.
+            ['ca_library_evaluation_fee', '99', 'integer', 'Answer Sheet Evaluation Fee', 'Fee (₹) charged for one CA Library answer sheet evaluation. Applied to new submissions only.', 'ca_library'],
         ];
 
         // Settings managed by a dedicated uploader rather than the generic text editor.

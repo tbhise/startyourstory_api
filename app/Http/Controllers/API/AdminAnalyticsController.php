@@ -18,8 +18,10 @@ use Illuminate\Support\Facades\Log;
  *  - Premium revenue   → firm_subscriptions.amount (payment_status = paid)
  *  - Wallet revenue    → wallet_recharges.amount   (status = approved; manual + gateway)
  *  - Creator commission→ creator_payouts.commission_amount (platform's marketplace cut)
+ *  - CA Library revenue→ ca_test_submissions.amount (payment_status = paid; separate
+ *                        `ca_library` DB connection — never copied into SYS tables)
  *  - Referral payouts  → referral_payouts.reward_amount (money paid out — an expense)
- *  Net Revenue = (premium + wallet + commission) − referral payouts
+ *  Net Revenue = (premium + wallet + commission + ca_library) − referral payouts
  */
 class AdminAnalyticsController extends Controller
 {
@@ -72,7 +74,16 @@ class AdminAnalyticsController extends Controller
                 ->whereBetween('created_at', [$from, $to])
                 ->sum(DB::raw('COALESCE(reward_amount, 0)'));
 
-            $totalRevenue = $premiumRevenue + $walletRevenue + $creatorCommissions;
+            // CA Library revenue — separate `ca_library` DB connection, NOT copied
+            // into any SYS payment table. One row per submission (payment_status),
+            // so this can never double-count retried/failed ca_payments attempts.
+            // paid_at (not created_at) is the moment payment was actually verified.
+            $caLibraryRevenue = (float) DB::connection('ca_library')->table('ca_test_submissions')
+                ->where('payment_status', 'paid')
+                ->whereBetween('paid_at', [$from, $to])
+                ->sum(DB::raw('COALESCE(amount, 0)'));
+
+            $totalRevenue = $premiumRevenue + $walletRevenue + $creatorCommissions + $caLibraryRevenue;
             $netRevenue   = $totalRevenue - $referralPayouts;
 
             // ── Trend series ─────────────────────────────────────────────────
@@ -123,6 +134,7 @@ class AdminAnalyticsController extends Controller
                         'premium_revenue'     => round($premiumRevenue, 2),
                         'wallet_revenue'      => round($walletRevenue, 2),
                         'creator_commissions' => round($creatorCommissions, 2),
+                        'ca_library_revenue'  => round($caLibraryRevenue, 2),
                         'referral_payouts'    => round($referralPayouts, 2),
                         'net_revenue'         => round($netRevenue, 2),
                     ],

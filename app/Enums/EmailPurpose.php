@@ -30,6 +30,7 @@ enum EmailPurpose: string
     case PREMIUM_ACTIVATED     = 'premium_activated';
     case INTERVIEW_RESPONSE_REMINDER = 'interview_response_reminder';
     case FIRM_APPLICANT_REMINDER     = 'firm_applicant_reminder';
+    case CA_LIBRARY_EVALUATED        = 'ca_library_evaluated';
 
     public function senderKey(): string
     {
@@ -60,6 +61,7 @@ enum EmailPurpose: string
             self::PREMIUM_ACTIVATED      => 'billing',
             self::INTERVIEW_RESPONSE_REMINDER => 'interview',
             self::FIRM_APPLICANT_REMINDER     => 'support',
+            self::CA_LIBRARY_EVALUATED        => 'support',
         };
     }
 

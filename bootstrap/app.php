@@ -39,6 +39,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('api', \App\Http\Middleware\BlockImpersonationWrites::class);
         $middleware->alias([
             'firm.verified' => \App\Http\Middleware\FirmVerifiedMiddleware::class,
+            // CA Library student auth (isolated ca_auth_token cookie; SYS untouched).
+            'ca.student' => \App\Http\Middleware\CaStudentAuthMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

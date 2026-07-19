@@ -3446,3 +3446,10 @@ ALTER TABLE `error_logs`
 --   DROP COLUMN `method`, DROP COLUMN `endpoint`, DROP COLUMN `page`,
 --   DROP COLUMN `duration_ms`, DROP COLUMN `browser`, DROP COLUMN `os`,
 --   DROP COLUMN `device`, DROP COLUMN `diagnostics`;
+
+
+-- 2026-07-19: CA Library dynamic evaluation fee (Platform Setting; main SYS DB).
+-- Seeded via SystemSettingsSeeder (idempotent). Snapshotted into
+-- ca_library.ca_test_submissions.amount at submission time.
+INSERT INTO system_settings (setting_key, setting_value, setting_type, title, description, category, is_editable, created_at, updated_at)
+VALUES ('ca_library_evaluation_fee', '99', 'integer', 'Answer Sheet Evaluation Fee', 'Fee (Rs.) charged for one CA Library answer sheet evaluation. Applied to new submissions only.', 'ca_library', 1, NOW(), NOW());

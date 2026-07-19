@@ -47,6 +47,26 @@ use App\Http\Controllers\API\PhonePeWalletController;
 use App\Http\Controllers\API\SysCoinController;
 use App\Http\Controllers\API\AdminReferralController;
 use App\Http\Controllers\API\PayoutDetailsController;
+use App\Http\Controllers\API\CA_Library\CaStudentController;
+use App\Http\Controllers\API\CA_Library\CaLibraryController;
+use App\Http\Controllers\API\CA_Library\CaTestSubmissionController;
+use App\Http\Controllers\API\FirmActivityController;
+use App\Http\Controllers\API\UserPushController;
+use App\Http\Controllers\API\AdminInAppCampaignController;
+use App\Http\Controllers\API\EngagementController;
+use App\Http\Controllers\API\AdminSystemHealthController;
+use App\Http\Controllers\API\AdminSystemSettingController;
+use App\Http\Controllers\API\AdminActivityLogController;
+use App\Http\Controllers\API\AdminActivityTrackerController;
+use App\Http\Controllers\API\AdminInterviewTrackingController;
+use App\Http\Controllers\API\AdminJoinedStudentsController;
+use App\Http\Controllers\API\ResumeTemplateController;
+use App\Http\Controllers\API\AdminNotificationController;
+use App\Http\Controllers\API\AdminImpersonationController;
+use App\Http\Controllers\API\MessageAttachmentController;
+use App\Http\Controllers\API\AdminPayoutDetailsController;
+use App\Http\Controllers\API\AdminAnalyticsController;
+
 
 // Public (no auth)
 Route::post('/contact-submission',    [PublicController::class, 'submitContact'])->middleware('throttle:contact');
@@ -60,6 +80,33 @@ Route::get('/blogs/public',            [BlogController::class, 'getPublishedBlog
 Route::get('/blogs/public/categories', [BlogController::class, 'getPublicBlogCategories']);
 // NOTE: keep {slug} AFTER /categories so "categories" is not captured as a slug
 Route::get('/blogs/public/{slug}',     [BlogController::class, 'getPublishedBlogBySlug']);
+
+// Public CA Library (separate ca_library database; active records only)
+Route::get('/ca-library/filters',   [CaLibraryController::class, 'getFilters']);
+Route::get('/ca-library/materials', [CaLibraryController::class, 'getMaterials']);
+
+// CA Library student access (isolated ca_auth_token cookie auth; SYS untouched)
+Route::post('/ca-library/download-request', [CaStudentController::class, 'requestDownload'])->middleware('throttle:email-verify');
+Route::post('/ca-library/verify',           [CaStudentController::class, 'verify'])->middleware('throttle:auth-login');
+Route::post('/ca-library/login',            [CaStudentController::class, 'login'])->middleware('throttle:auth-login');
+Route::middleware('ca.student')->group(function () {
+    Route::get('/ca-library/me',                            [CaStudentController::class, 'me']);
+    Route::get('/ca-library/my-library',                    [CaStudentController::class, 'myLibrary']);
+    Route::get('/ca-library/my-library/download/{materialId}', [CaStudentController::class, 'download']);
+    Route::post('/ca-library/set-password',                 [CaStudentController::class, 'setPassword']);
+    Route::post('/ca-library/logout',                       [CaStudentController::class, 'logout']);
+
+    // Answer-sheet evaluation (submissions + payments; ca_library DB)
+    Route::get('/ca-library/submissions',                        [CaTestSubmissionController::class, 'index']);
+    Route::post('/ca-library/submissions',                       [CaTestSubmissionController::class, 'store']);
+    Route::post('/ca-library/submissions/{id}/pay',              [CaTestSubmissionController::class, 'pay']);
+    Route::post('/ca-library/payments/verify',                   [CaTestSubmissionController::class, 'verifyPayment']);
+    Route::post('/ca-library/submissions/{id}/manual-payment',   [CaTestSubmissionController::class, 'submitManualPayment']);
+    Route::get('/ca-library/submissions/{id}/evaluated-file',    [CaTestSubmissionController::class, 'downloadEvaluated']);
+});
+
+// PhonePe S2S webhook for CA Library payments (no auth — signature-verified, fail closed)
+Route::post('/ca-library/payments/phonepe/webhook', [CaTestSubmissionController::class, 'webhook']);
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent'])->middleware('throttle:auth-register');
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm'])->middleware('throttle:auth-register');
@@ -110,7 +157,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/updateProfileImage',   [UserController::class, 'updateProfileImage']);
     Route::get('/firm/free-actions/status',              [UserController::class, 'getFreeActionsStatus']);
     // Firm Activity Center (Phase 1, display only) — credits summary + firm_activities timeline
-    Route::get('/firm/activity-center',                  [\App\Http\Controllers\API\FirmActivityController::class, 'activityCenter']);
+    Route::get('/firm/activity-center',                  [FirmActivityController::class, 'activityCenter']);
     Route::post('/students/{id}/track-recruiter-action', [UserController::class, 'trackRecruiterAction']);
     Route::post('/student/report-profile', [UserController::class, 'reportStudentProfile']);
     Route::post('/student/directory-visibility',        [UserController::class, 'updateDirectoryVisibility']);
@@ -155,13 +202,13 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
 
     // ── Push notifications (students + firms) — device token lifecycle ──
     // Separate from /admin/fcm/token: user tokens live in user_fcm_tokens.
-    Route::post('/fcm/token',   [\App\Http\Controllers\API\UserPushController::class, 'registerToken']);
-    Route::delete('/fcm/token', [\App\Http\Controllers\API\UserPushController::class, 'deleteToken']);
+    Route::post('/fcm/token',   [UserPushController::class, 'registerToken']);
+    Route::delete('/fcm/token', [UserPushController::class, 'deleteToken']);
 
     // ── Engagement Hub — in-app campaign prompt engine (Phase 3) ──
     // Dashboard asks for the active campaign for a trigger; backend decides.
-    Route::get('/engagement/active',        [\App\Http\Controllers\API\EngagementController::class, 'active']);
-    Route::post('/engagement/{id}/event',   [\App\Http\Controllers\API\EngagementController::class, 'event']);
+    Route::get('/engagement/active',        [EngagementController::class, 'active']);
+    Route::post('/engagement/{id}/event',   [EngagementController::class, 'event']);
 
     Route::get('/referrals', [ReferralController::class, 'index']);
 
@@ -224,53 +271,53 @@ Route::post('/admin/logout',  [AdminController::class, 'logout']);
 
 // Admin — "Login as User" / impersonation (super_admin only; enforced in controller).
 // AdminAuthMiddleware already requires a valid admin_token on these /admin/* paths.
-Route::post('/admin/impersonate/stop',     [\App\Http\Controllers\API\AdminImpersonationController::class, 'stop']);
-Route::post('/admin/impersonate/{userId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'start']);
+Route::post('/admin/impersonate/stop',     [AdminImpersonationController::class, 'stop']);
+Route::post('/admin/impersonate/{userId}', [AdminImpersonationController::class, 'start']);
 
 // Admin — application-level system health widget
-Route::get('/admin/system-health', [\App\Http\Controllers\API\AdminSystemHealthController::class, 'health']);
+Route::get('/admin/system-health', [AdminSystemHealthController::class, 'health']);
 
 // Admin — notifications (Phase 1: storage + read state; auth via admin_token in controller)
-Route::get('/admin/notifications',               [\App\Http\Controllers\API\AdminNotificationController::class, 'index']);
-Route::get('/admin/notifications/unread-count',  [\App\Http\Controllers\API\AdminNotificationController::class, 'unreadCount']);
-Route::post('/admin/notifications/{id}/read',    [\App\Http\Controllers\API\AdminNotificationController::class, 'markRead']);
-Route::post('/admin/notifications/read-all',     [\App\Http\Controllers\API\AdminNotificationController::class, 'markAllRead']);
+Route::get('/admin/notifications',               [AdminNotificationController::class, 'index']);
+Route::get('/admin/notifications/unread-count',  [AdminNotificationController::class, 'unreadCount']);
+Route::post('/admin/notifications/{id}/read',    [AdminNotificationController::class, 'markRead']);
+Route::post('/admin/notifications/read-all',     [AdminNotificationController::class, 'markAllRead']);
 // Admin — FCM device token registration (admin-only push)
-Route::post('/admin/fcm/token',   [\App\Http\Controllers\API\AdminNotificationController::class, 'registerFcmToken']);
-Route::delete('/admin/fcm/token', [\App\Http\Controllers\API\AdminNotificationController::class, 'deleteFcmToken']);
+Route::post('/admin/fcm/token',   [AdminNotificationController::class, 'registerFcmToken']);
+Route::delete('/admin/fcm/token', [AdminNotificationController::class, 'deleteFcmToken']);
 
 // Admin — dynamic Platform Settings (system_settings; separate from key/value platform_settings)
-Route::get('/admin/system-settings',         [\App\Http\Controllers\API\AdminSystemSettingController::class, 'index']);
-Route::get('/admin/system-settings/audit',   [\App\Http\Controllers\API\AdminSystemSettingController::class, 'audit']);
-Route::post('/admin/system-settings/{key}',  [\App\Http\Controllers\API\AdminSystemSettingController::class, 'update']);
+Route::get('/admin/system-settings',         [AdminSystemSettingController::class, 'index']);
+Route::get('/admin/system-settings/audit',   [AdminSystemSettingController::class, 'audit']);
+Route::post('/admin/system-settings/{key}',  [AdminSystemSettingController::class, 'update']);
 
 // Admin — Payment Settings QR image (text fields use the system-settings update route above)
 Route::post('/admin/payment-settings/qr',    [PaymentSettingsController::class, 'uploadQr']);
 Route::delete('/admin/payment-settings/qr',  [PaymentSettingsController::class, 'deleteQr']);
 
 // Admin — Activity Logs (admin audit trail). READ-ONLY: no store/update/delete by design.
-Route::get('/admin/activity-logs',          [\App\Http\Controllers\API\AdminActivityLogController::class, 'index']);
-Route::get('/admin/activity-logs/filters',  [\App\Http\Controllers\API\AdminActivityLogController::class, 'filters']);
+Route::get('/admin/activity-logs',          [AdminActivityLogController::class, 'index']);
+Route::get('/admin/activity-logs/filters',  [AdminActivityLogController::class, 'filters']);
 
 // Admin — Activity Tracker (firm/student business actions). READ-ONLY by design.
-Route::get('/admin/activity-tracker/stats', [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'stats']);
-Route::get('/admin/activity-tracker',       [\App\Http\Controllers\API\AdminActivityTrackerController::class, 'index']);
+Route::get('/admin/activity-tracker/stats', [AdminActivityTrackerController::class, 'stats']);
+Route::get('/admin/activity-tracker',       [AdminActivityTrackerController::class, 'index']);
 
 // Admin — Interview Tracking (applications + interview_invites union). READ-ONLY.
-Route::get('/admin/interview-tracking/stats', [\App\Http\Controllers\API\AdminInterviewTrackingController::class, 'stats']);
-Route::get('/admin/interview-tracking',       [\App\Http\Controllers\API\AdminInterviewTrackingController::class, 'index']);
+Route::get('/admin/interview-tracking/stats', [AdminInterviewTrackingController::class, 'stats']);
+Route::get('/admin/interview-tracking',       [AdminInterviewTrackingController::class, 'index']);
 
 // Admin — Joined Students (student_employment_history). READ-ONLY.
-Route::get('/admin/joined-students/stats',    [\App\Http\Controllers\API\AdminJoinedStudentsController::class, 'stats']);
-Route::get('/admin/joined-students',          [\App\Http\Controllers\API\AdminJoinedStudentsController::class, 'index']);
+Route::get('/admin/joined-students/stats',    [AdminJoinedStudentsController::class, 'stats']);
+Route::get('/admin/joined-students',          [AdminJoinedStudentsController::class, 'index']);
 
 // Admin — resume template management (CRUD; drives the Resume PDF rendering)
-Route::get('/admin/resume-templates',                    [\App\Http\Controllers\API\ResumeTemplateController::class, 'index']);
-Route::post('/admin/resume-templates',                   [\App\Http\Controllers\API\ResumeTemplateController::class, 'store']);
-Route::post('/admin/resume-templates/{id}',              [\App\Http\Controllers\API\ResumeTemplateController::class, 'update']);
-Route::post('/admin/resume-templates/{id}/toggle-active',[\App\Http\Controllers\API\ResumeTemplateController::class, 'toggleActive']);
-Route::post('/admin/resume-templates/{id}/preview',      [\App\Http\Controllers\API\ResumeTemplateController::class, 'uploadPreview']);
-Route::delete('/admin/resume-templates/{id}',            [\App\Http\Controllers\API\ResumeTemplateController::class, 'destroy']);
+Route::get('/admin/resume-templates',                    [ResumeTemplateController::class, 'index']);
+Route::post('/admin/resume-templates',                   [ResumeTemplateController::class, 'store']);
+Route::post('/admin/resume-templates/{id}',              [ResumeTemplateController::class, 'update']);
+Route::post('/admin/resume-templates/{id}/toggle-active', [ResumeTemplateController::class, 'toggleActive']);
+Route::post('/admin/resume-templates/{id}/preview',      [ResumeTemplateController::class, 'uploadPreview']);
+Route::delete('/admin/resume-templates/{id}',            [ResumeTemplateController::class, 'destroy']);
 
 // Admin — admin user management (CRUD)
 Route::get('/admin/users',                        [AdminUserController::class, 'index']);
@@ -299,8 +346,8 @@ Route::post('/admin/reported-profiles/{id}/status', [AdminController::class, 'up
 Route::get('/admin/contact-submissions',           [AdminController::class, 'getContactSubmissions']);
 
 // Admin — analytics (revenue reporting + dashboard stats)
-Route::get('/admin/revenue-analytics', [\App\Http\Controllers\API\AdminAnalyticsController::class, 'revenue']);
-Route::get('/admin/dashboard-stats',   [\App\Http\Controllers\API\AdminAnalyticsController::class, 'dashboard']);
+Route::get('/admin/revenue-analytics', [AdminAnalyticsController::class, 'revenue']);
+Route::get('/admin/dashboard-stats',   [AdminAnalyticsController::class, 'dashboard']);
 
 // Admin — firm manual verification
 Route::get('/admin/firms',                 [AdminController::class, 'getPendingFirms']);
@@ -366,13 +413,13 @@ Route::prefix('admin/training-partners')->group(function () {
 
 
 
-  Route::put(
-        '/admin/training-partners/{id}',
-        [TrainingPartnerController::class, 'update']
-    );
+Route::put(
+    '/admin/training-partners/{id}',
+    [TrainingPartnerController::class, 'update']
+);
 
 
-    Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
+Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActiveTrainingPartners']);
 
 
 // Active firm subscription plans for the pricing + checkout page (dynamic; no
@@ -398,7 +445,7 @@ Route::middleware([ApiAuthMiddleware::class])->prefix('messaging')->group(functi
     Route::get('/firm/{firmId}/status',                       [MessagingController::class, 'getFirmMessagingStatus']);
     Route::get('/candidate/{candidateId}/status',             [MessagingController::class, 'getCandidateMessagingStatus']);
     // Chat attachments — authenticated streaming from the private disk.
-    Route::get('/attachments/{id}',                           [\App\Http\Controllers\API\MessageAttachmentController::class, 'show']);
+    Route::get('/attachments/{id}',                           [MessageAttachmentController::class, 'show']);
 });
 
 // ── Admin Messaging ───────────────────────────────────────────────────────────
@@ -422,7 +469,7 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     // Creator bid actions
     Route::get('/creator-marketplace/my-bids',               [CreatorMarketplaceController::class, 'getMyBids']);
     Route::post('/creator-marketplace/bids/{projectId}',     [CreatorMarketplaceController::class, 'submitBid']);
-    Route::post('/creator-marketplace/bids/{bidId}/withdraw',[CreatorMarketplaceController::class, 'withdrawBid']);
+    Route::post('/creator-marketplace/bids/{bidId}/withdraw', [CreatorMarketplaceController::class, 'withdrawBid']);
     // Creator acceptance workflow
     Route::get('/creator-marketplace/bids/{bidId}/contract', [CreatorMarketplaceController::class, 'getSelectedBidDetails']);
     Route::post('/creator-marketplace/bids/{bidId}/respond', [CreatorMarketplaceController::class, 'creatorRespondToBid']);
@@ -467,7 +514,7 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/projects/{id}/close',       [CreatorMarketplaceController::class, 'closeProject']);
     Route::get('/creator-marketplace/projects/{id}/bids',         [CreatorMarketplaceController::class, 'getProjectBids']);
     Route::post('/creator-marketplace/bids/{bidId}/status',       [CreatorMarketplaceController::class, 'updateBidStatus']);
-    Route::post('/creator-marketplace/bids/{bidId}/accept-creator',[CreatorMarketplaceController::class, 'acceptCreator']);
+    Route::post('/creator-marketplace/bids/{bidId}/accept-creator', [CreatorMarketplaceController::class, 'acceptCreator']);
     Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
     // Payment — firm-only actions (PhonePe)
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate'])->middleware('throttle:payment-initiate');
@@ -550,11 +597,11 @@ Route::get('/admin/campaigns',            [CampaignController::class, 'index']);
 // ── Admin — Engagement Hub / In-App Campaigns (Phase 3) ───────────────────────
 // Auto-guarded by AdminAuthMiddleware on all /admin/* paths.
 Route::prefix('admin/in-app-campaigns')->group(function () {
-    Route::get('/',        [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'index']);
-    Route::post('/',       [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'store']);
-    Route::get('/{id}',    [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'show']);
-    Route::post('/{id}',   [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'update']);
-    Route::delete('/{id}', [\App\Http\Controllers\API\AdminInAppCampaignController::class, 'destroy']);
+    Route::get('/',        [AdminInAppCampaignController::class, 'index']);
+    Route::post('/',       [AdminInAppCampaignController::class, 'store']);
+    Route::get('/{id}',    [AdminInAppCampaignController::class, 'show']);
+    Route::post('/{id}',   [AdminInAppCampaignController::class, 'update']);
+    Route::delete('/{id}', [AdminInAppCampaignController::class, 'destroy']);
 });
 
 // ── Admin — Blog Module (Phase 1) ─────────────────────────────────────────────
@@ -586,6 +633,31 @@ Route::prefix('admin/blog')->group(function () {
     Route::get('/topics/{id}',             [AdminBlogController::class, 'getTopic']);
     Route::post('/topics/{id}',            [AdminBlogController::class, 'updateTopic']);
     Route::delete('/topics/{id}',          [AdminBlogController::class, 'deleteTopic']);
+});
+
+// ── Admin — CA Library (auto-guarded by AdminAuthMiddleware on all /admin/* paths) ──
+Route::prefix('admin/ca-library')->group(function () {
+    Route::get('/stats',                [CaLibraryController::class, 'adminStats']);
+    Route::get('/subjects',             [CaLibraryController::class, 'adminGetSubjects']);
+    Route::post('/subjects',            [CaLibraryController::class, 'adminSaveSubject']);
+    Route::post('/subjects/{id}',       [CaLibraryController::class, 'adminSaveSubject']);
+    Route::get('/resource-types',       [CaLibraryController::class, 'adminGetResourceTypes']);
+    Route::post('/resource-types',      [CaLibraryController::class, 'adminSaveResourceType']);
+    Route::post('/resource-types/{id}', [CaLibraryController::class, 'adminSaveResourceType']);
+    Route::get('/materials',            [CaLibraryController::class, 'adminGetMaterials']);
+    Route::post('/materials',           [CaLibraryController::class, 'adminSaveMaterial']);
+    Route::post('/materials/{id}',      [CaLibraryController::class, 'adminSaveMaterial']);
+
+    // Test Evaluations (faculty = existing admin identity)
+    Route::get('/evaluations',                    [CaTestSubmissionController::class, 'adminIndex']);
+    Route::get('/evaluations/{id}/answer-sheet',  [CaTestSubmissionController::class, 'adminDownloadAnswerSheet']);
+    Route::post('/evaluations/{id}/start',        [CaTestSubmissionController::class, 'adminStart']);
+    Route::post('/evaluations/{id}/complete',     [CaTestSubmissionController::class, 'adminComplete']);
+
+    // Manual payment verification queue
+    Route::get('/manual-payments',                    [CaTestSubmissionController::class, 'adminManualPayments']);
+    Route::get('/manual-payments/{id}/screenshot',    [CaTestSubmissionController::class, 'adminManualPaymentScreenshot']);
+    Route::post('/manual-payments/{id}/review',       [CaTestSubmissionController::class, 'adminReviewManualPayment']);
 });
 
 // Admin — Support tickets (auto-guarded by AdminAuthMiddleware on all /admin/* paths).

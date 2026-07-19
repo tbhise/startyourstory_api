@@ -4,6 +4,264 @@
 
 ---
 
+## 2026-07-19 — CA Library: 10MB answer-sheet limit, T&C enforcement, admin stats, revenue integration
+
+- **Migration `2026_07_19_000007`** — `ca_test_submissions` gains nullable
+  `terms_accepted_at` (ca_library DB). No separate consent table — no
+  existing lightweight T&C-acceptance pattern was found elsewhere in the
+  project, so this stays minimal (one nullable timestamp).
+- **`CA_Library/CaTestSubmissionController@store`** — answer-sheet upload
+  limit changed from 50 MB to **10 MB** (`max:10240`) — ONLY this rule;
+  evaluated-paper upload (`adminComplete`, still `max:51200`) and the
+  screenshot upload (`max:5120`) are untouched, as are all non-CA-Library
+  upload limits. Also now requires `terms_accepted` via Laravel's
+  `required|accepted` rule (rejects `false`/`0`/`null`/missing — a
+  checkbox left unchecked cannot pass) before creating OR replacing a
+  submission; `terms_accepted_at` is stamped on both paths. The
+  resume-only "existing unpaid submission" branch is unaffected — it
+  never touches the file/terms fields.
+- **`CA_Library/CaLibraryController@adminStats`** (new) — all-time,
+  backend-computed totals for the Admin Study Resources overview:
+  registered students (`ca_students` count), PDF downloads
+  (`ca_download_requests.downloaded_at IS NOT NULL`), evaluations sent
+  (`ca_test_submissions.evaluation_status='completed'`), payments done +
+  revenue (`ca_test_submissions.payment_status='paid'` — counting
+  submissions, not `ca_payments` attempts, so retried/failed attempts
+  never inflate either figure). Route: `GET /admin/ca-library/stats`.
+- **`AdminAnalyticsController@revenue`** — added `ca_library_revenue`
+  (same paid-submission source, `paid_at` for date-range bucketing) into
+  the existing `total_revenue`/`net_revenue` calculation, alongside
+  premium/wallet/commission. Reads from the separate `ca_library`
+  connection; nothing is copied into any SYS payment table, and existing
+  Firm/Student sources are untouched. Verified live: `payments_done=1`,
+  `revenue=99` on the stats endpoint reconciled exactly with
+  `ca_library_revenue=99` and `total_revenue` increasing by the same ₹99
+  on the Revenue Analytics endpoint for the matching period.
+- **`routes/api.php`** — added `GET /admin/ca-library/stats` inside the
+  existing `admin/ca-library` group (AdminAuthMiddleware already guards
+  all `/admin/*`, so no per-method auth check needed).
+
+---
+
+## 2026-07-19 — CA Library payment: reuse existing bank details + online-payment toggle
+
+Minimal follow-up to the CA Library payment flow — no new settings, no new
+bank-detail storage, no changes to PhonePe logic or manual-approval logic.
+
+- **`API/CA_Library/CaTestSubmissionController@pay`** — before creating a
+  PhonePe order, now reads the EXISTING `platform_settings.online_payments_enabled`
+  row (main SYS DB — the same flag Firm subscriptions/Wallet recharge expose
+  via `getPublicPlatformSettings`/`AdminSettingsController::getPublicSettings`).
+  Same default-true semantics as `AdminSettingsController`. When disabled,
+  returns 422 "Online payment is currently disabled. Please use Manual
+  Payment." — enforced server-side, not just hidden in the UI. No new
+  CA-Library-specific toggle was created; `AdminSettingsController` and the
+  Firm/Wallet PhonePe flows are untouched.
+- Bank/payment details shown in the CA Library Manual Payment dialog are
+  NOT a backend change — the frontend calls the existing public
+  `GET /payments/instructions` endpoint (`PaymentSettingsController`,
+  backed by the existing `system_settings` `payment_*` keys) unchanged.
+  Verified live: the endpoint already returns the real configured bank
+  details independent of this change.
+
+---
+
+## 2026-07-19 — CA Library manual payment option (screenshot verification)
+
+Additional/fallback payment method beside the untouched PhonePe flow.
+Nothing is ever marked paid without explicit admin approval.
+
+- **Migration 2026_07_19_000006 (ca_library DB)** — ca_payments gains
+  screenshot_path/screenshot_original_name (private disk) +
+  reviewed_by (SYS admin id) / reviewed_at. Manual attempts: gateway
+  'manual', status pending_verification → paid | rejected.
+- **`CaTestSubmissionController@submitManualPayment`** (ca.student) —
+  POST /ca-library/submissions/{id}/manual-payment; JPG/PNG ≤5MB
+  screenshot to the PRIVATE disk; identity/email ONLY from the session;
+  amount = the submission's snapshotted fee; re-submitting replaces the
+  screenshot on the still-pending attempt (no duplicate queue entries);
+  blocked when already paid.
+- **Guard in `pay()`** — a pending_verification manual attempt blocks a
+  parallel online attempt (no double payment paths).
+- **Admin queue** — GET /admin/ca-library/manual-payments?status=,
+  GET .../{id}/screenshot (private inline stream),
+  POST .../{id}/review {action: approve|reject} — row-locked; approve
+  refuses already-paid submissions (e.g. PhonePe race), otherwise marks
+  payment + submission paid → awaiting_evaluation; reject records
+  reviewed_by/at and lets the student retry either method.
+- **`index()`** — student submissions now include manual_payment_status
+  (latest manual attempt) so My Library can show verification state.
+- PhonePe webhook signature verification untouched (still fail-closed).
+
+---
+
+## 2026-07-19 — CA Library answer-sheet evaluation (upload → pay → evaluate)
+
+Isolated to the CA Library domain; reuses only generic infra (PhonePeGateway,
+SystemSettingService, Mail/queue, private storage). SYS auth/payments untouched.
+
+- **Platform Setting `ca_library_evaluation_fee`** (main SYS DB, category
+  `ca_library`, default 99) — seeded via SystemSettingsSeeder + DEFAULTS
+  fallback in SystemSettingService. Editable in Admin → Platform Settings.
+  Recorded in db_changes.txt (NOT db_ca_library.txt).
+- **Migrations 2026_07_19_000004..5 (ca_library DB)** — `ca_test_submissions`
+  (answer sheet path/name/size, DECIMAL(10,2) `amount` = fee SNAPSHOT taken
+  server-side at creation, payment_status pending|paid|failed|refunded,
+  evaluation_status pending_payment|awaiting_evaluation|under_evaluation|
+  completed|cancelled, evaluated file fields, faculty_id = SYS admin id,
+  lifecycle timestamps) and `ca_payments` (one row PER ATTEMPT; failed
+  attempts preserved).
+- **`API/CA_Library/CaTestSubmissionController`** — student (ca.student):
+  store (backend re-validates active material + `is_question_paper`; PDF ≤50MB
+  to PRIVATE `local` disk; one unpaid submission per student+material —
+  repeat returns it, `replace=1` swaps the file on the same submission),
+  index, pay (new ca_payments attempt, PhonePe order `CAP{id}T{ts}`,
+  redirect back to /ca-library/my-library?phonepe_txn=), verifyPayment
+  (PhonePe status API + paise amount match vs snapshot, row-locked settle;
+  paid → awaiting_evaluation), downloadEvaluated (owner + completed only).
+  Public webhook /ca-library/payments/phonepe/webhook (signature fail-closed).
+  Admin: adminIndex (enforces payment_status=paid — unpaid can never enter
+  the queue), answer-sheet download, start (under_evaluation + faculty_id),
+  complete (evaluated PDF required; upload+complete is one atomic action;
+  queues CaLibraryEvaluatedMail — link to My Library, PDF never attached).
+- **`Mail/CaLibraryEvaluatedMail`** + `emails/ca-library-evaluated.blade.php`;
+  new `EmailPurpose::CA_LIBRARY_EVALUATED` ('support' sender bucket).
+- **`CaLibraryController@getFilters`** — now also returns `evaluation_fee`
+  (display only; backend snapshots independently at submission time).
+
+---
+
+## 2026-07-19 — CA Library student access + download tracking (Phase 1)
+
+Isolated CA Library student identity/auth — SYS users/auth completely
+untouched. All new tables in the separate ca_library DB (see
+db_ca_library.txt).
+
+- **Migrations 2026_07_19_000001..3** — `ca_students` (email unique,
+  password nullable, email_verified_at, status, verify_token_hash +
+  expiry), `ca_sessions` (token cookie sessions, 7-day expiry),
+  `ca_download_requests` (one row per student+material, unique index;
+  status pending→ready, verified_at, downloaded_at).
+- **`Middleware/CaStudentAuthMiddleware`** (alias `ca.student`) — mirrors
+  ApiAuthMiddleware but with its OWN `ca_auth_token` cookie + ca_sessions
+  table, so SYS/admin/CA sessions coexist and CA logout can't touch SYS.
+- **`API/CA_Library/CaStudentController`** — requestDownload (authed →
+  instant ready; guest → find-or-create student by normalized lowercase
+  email, pending request, single-use 64-char token [sha256 hash stored,
+  60-min expiry], queues CaLibraryVerifyMail with frontend link
+  /ca-library/verify?sid&token — link only, never the PDF); verify
+  (hash_equals + expiry + single-use consume, unlocks pending requests,
+  starts session); login (rejects password=NULL accounts); me; myLibrary
+  (ready requests joined with materials); download (auth + active material
+  + ready request required, sets downloaded_at, response()->download);
+  setPassword (optional, Hash::make, min 8); logout (ca session only).
+- **`Mail/CaLibraryVerifyMail`** + `emails/ca-library-verify.blade.php` —
+  ShouldQueue, EmailPurpose::VERIFICATION (existing sender resolver/queue).
+- **`CaLibraryController@getMaterials`** — public listing no longer
+  returns `file_url` (admin listing still does); downloads must go
+  through the authorized endpoint. KNOWN LIMITATION: files still live on
+  the public disk, so previously-shared direct URLs keep working — a
+  private-disk migration is a possible future hardening step.
+- **Routes** — public: POST /ca-library/download-request
+  (throttle:email-verify), /ca-library/verify + /ca-library/login
+  (throttle:auth-login); ca.student group: GET /ca-library/me,
+  /ca-library/my-library, /ca-library/my-library/download/{materialId},
+  POST /ca-library/set-password, /ca-library/logout.
+
+---
+
+## 2026-07-18 — CA Library public materials API: server-side pagination
+
+- **`API/CA_Library/CaLibraryController@getMaterials`** — now accepts
+  `page` + `per_page` (default 12, max 100) following the existing
+  FreeContent pagination pattern; response data is
+  `{items, total, page, per_page}` where `total` is the full filtered
+  count. The old flat `limit(200)` moved off the shared query into
+  `adminGetMaterials` only (admin listing behaviour unchanged). Powers
+  both the paginated /ca-library listing and its Latest Updates sidebar
+  (`per_page=10`, no filters). No schema change.
+
+---
+
+## 2026-07-18 — CA Library materials API exposes is_question_paper
+
+- **`API/CA_Library/CaLibraryController.php`** — `materialsQuery` also
+  selects `t.is_question_paper`; `serializeMaterial` now returns it inside
+  the existing `resource_type` object as a bool (`{id, name,
+  is_question_paper}`). Applies to both the public and admin material
+  listings. No new endpoint, no schema change.
+
+---
+
+## 2026-07-18 — CA Library controllers moved to API/CA_Library folder
+
+- **`API/CaLibraryController.php` → `API/CA_Library/CaLibraryController.php`**
+  (namespace `App\Http\Controllers\API\CA_Library`); routes/api.php FQCN
+  references updated. No behaviour change.
+- Convention: ALL future CA Library controllers go in
+  `app/Http/Controllers/API/CA_Library/`.
+
+---
+
+## 2026-07-18 — CA Library: is_question_paper flag on resource types
+
+- **Migration `2026_07_18_000004`** — `ALTER` on existing
+  `ca_library_resource_types` (ca_library connection): new
+  `is_question_paper BOOLEAN NOT NULL DEFAULT 0` after `name`. Existing
+  rows default to false; table NOT recreated.
+- **`API/CaLibraryController@adminSaveResourceType`** — validates
+  `is_question_paper` as `nullable|boolean` and saves it via
+  `$request->boolean()` on both create and update. Admin listing returns
+  it automatically (`select *`); public /ca-library/filters unchanged.
+- **`db_ca_library.txt` (new)** — CA Library DB change log (same raw-SQL
+  format as `db_changes.txt`; CA Library changes go here, NOT in the main
+  SYS db_changes.txt). Records this ALTER.
+- Rule: any future "is this a question paper?" logic must check this flag,
+  never hardcoded type names ("PYQ", "Question Papers", …).
+
+---
+
+## 2026-07-18 — CA Library backend (separate database)
+
+New module powering the now-dynamic /ca-library viewer + admin management.
+Lives in its OWN database via the new `ca_library` connection — no existing
+SYS tables touched.
+
+- **`config/database.php`** — new `ca_library` mysql connection. Env:
+  `CA_LIB_DB_DATABASE` (required; added to `.env`/`.env.example` as
+  `ca_library`), plus optional `CA_LIB_DB_HOST/PORT/USERNAME/PASSWORD`
+  which default to the main `DB_*` values.
+- **`config/ca_library.php` (new)** — static business constants (NOT
+  tables, by design): 3 courses, 3 groups, 11 exam attempts. Mirrored in
+  frontend `lib/ca-library.ts`.
+- **Migrations (3, all `Schema::connection('ca_library')`)** —
+  `ca_library_subjects` (course, nullable group — NULL for CA Foundation,
+  name, is_active), `ca_library_resource_types` (name, is_active — shared
+  across subjects), `ca_library_study_materials` (course, nullable group,
+  subject_id, resource_type_id, exam_attempt, title, file_path,
+  original_file_name, file_size, is_active; indexes on course+group,
+  subject, type, attempt). PDFs stored on the public disk under
+  `ca-library/materials/` — never as blobs.
+  NOTE: run with `php artisan migrate --path=...` per file if the local
+  `migrations` table is out of sync (it was on the dev machine).
+- **`API/CaLibraryController.php` (new)** — DB-facade style, standard
+  `{status,message,data}` responses. Public: `GET /ca-library/filters`
+  (statics + active subjects/types), `GET /ca-library/materials`
+  (filters: course, group, exam_attempt, subject_id, resource_type_id,
+  search; active-only; joined subject/type names; capped at 200, newest
+  first). Group semantics: a specific group also matches "Both Groups"
+  materials; filtering by "Both Groups" returns the whole course. Admin
+  (auto-guarded by AdminAuthMiddleware on /admin/*):
+  `GET|POST /admin/ca-library/subjects[/{id}]`, same for
+  `resource-types` and `materials`. Material save validates the subject
+  belongs to the selected course/group combo, forces group NULL for CA
+  Foundation, accepts PDF only (`mimes:pdf|max:51200`), deletes the old
+  file on replace. Activate/deactivate via `is_active` on save — no
+  delete endpoints (minimal by design).
+- Unchanged: all existing SYS tables/controllers, auth, payments.
+
+---
+
 ## 2026-07-17 — registration_type: single source of truth + stale-value bug fix
 
 Production bug fix + one business-rule change. `registration_type` is now

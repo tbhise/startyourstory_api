@@ -18,6 +18,14 @@ return [
         'key' => env('POSTMARK_API_KEY'),
     ],
 
+    // Google Sign-In for CA Library students only (SYS auth is untouched).
+    // The OAuth Client ID is public by design — it ships in the frontend JS —
+    // so there is no client secret here; ID tokens are verified server-side.
+    // Leave unset to disable Google sign-in; the UI hides the button.
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+    ],
+
     'resend' => [
         'key' => env('RESEND_API_KEY'),
     ],

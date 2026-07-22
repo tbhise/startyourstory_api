@@ -101,6 +101,36 @@ class CaLibraryController extends Controller
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC — Direct PDF download (no auth; email verification is now required
+    // only for answer-sheet uploads). The authorized student endpoint
+    // (CaStudentController@download) is untouched and still serves My Library.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function publicDownload(int $materialId)
+    {
+        try {
+            $material = $this->db('ca_library_study_materials')
+                ->where('id', $materialId)
+                ->where('is_active', 1)
+                ->first();
+            if (! $material) {
+                return response()->json(['status' => false, 'message' => 'Resource not found'], 404);
+            }
+
+            $rel = ltrim((string) $material->file_path, '/');
+            if (str_contains($rel, '..') || str_contains($rel, "\0") || ! Storage::disk('public')->exists($rel)) {
+                return response()->json(['status' => false, 'message' => 'File missing'], 404);
+            }
+
+            $safeName = preg_replace('/[^\w\s.\-()\[\]]+/u', '_', (string) $material->original_file_name) ?: 'download.pdf';
+            return response()->download(Storage::disk('public')->path($rel), $safeName);
+        } catch (\Exception $e) {
+            Log::error('CaLibrary publicDownload error', ['msg' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
     private function materialsQuery(Request $request, bool $activeOnly)
     {
         $q = $this->db('ca_library_study_materials as m')

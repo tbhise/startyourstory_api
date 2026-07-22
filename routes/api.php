@@ -84,11 +84,18 @@ Route::get('/blogs/public/{slug}',     [BlogController::class, 'getPublishedBlog
 // Public CA Library (separate ca_library database; active records only)
 Route::get('/ca-library/filters',   [CaLibraryController::class, 'getFilters']);
 Route::get('/ca-library/materials', [CaLibraryController::class, 'getMaterials']);
+// Study material PDFs download freely — no login / email verification.
+Route::get('/ca-library/materials/{materialId}/download', [CaLibraryController::class, 'publicDownload']);
 
 // CA Library student access (isolated ca_auth_token cookie auth; SYS untouched)
 Route::post('/ca-library/download-request', [CaStudentController::class, 'requestDownload'])->middleware('throttle:email-verify');
 Route::post('/ca-library/verify',           [CaStudentController::class, 'verify'])->middleware('throttle:auth-login');
 Route::post('/ca-library/login',            [CaStudentController::class, 'login'])->middleware('throttle:auth-login');
+// Google Sign-In doubles as email verification for new CA Library students.
+Route::post('/ca-library/google',           [CaStudentController::class, 'googleSignIn'])->middleware('throttle:auth-login');
+// Set/reset password (also covers accounts created before passwords existed).
+Route::post('/ca-library/forgot-password',  [CaStudentController::class, 'forgotPassword'])->middleware('throttle:auth-forgot');
+Route::post('/ca-library/reset-password',   [CaStudentController::class, 'resetPassword'])->middleware('throttle:auth-login');
 Route::middleware('ca.student')->group(function () {
     Route::get('/ca-library/me',                            [CaStudentController::class, 'me']);
     Route::get('/ca-library/my-library',                    [CaStudentController::class, 'myLibrary']);

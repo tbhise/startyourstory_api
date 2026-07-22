@@ -4,6 +4,100 @@
 
 ---
 
+## 2026-07-22 — CA Library auth: Google Sign-In + password reset (upload gate only)
+
+Fixes the "already-verified users are asked to verify again" problem. SYS auth,
+payments, evaluation and the download flow are untouched. **No schema changes.**
+
+### Added — `CaStudentController`
+- **`googleSignIn()`** → `POST /ca-library/google` (throttle:auth-login).
+  Verifies the Google ID token via `https://oauth2.googleapis.com/tokeninfo`
+  (no new composer dependency) and **fails closed** unless all hold:
+  `aud` === our client id (`hash_equals`), `iss` is a Google issuer, and
+  `email_verified` is true. A new student is inserted with
+  `email_verified_at = now()` — Google IS the verification, so no email is ever
+  sent. An existing row is matched on the unique `email`; if it was unverified
+  it becomes verified. Deliberately **no `google_id` column** — CA Library
+  schema untouched, and email matching is safe because Google asserts ownership.
+- **`forgotPassword()`** → `POST /ca-library/forgot-password`
+  (throttle:auth-forgot). Emails a single-use set-password link. **Reuses the
+  existing `verify_token_hash` / `verify_token_expires_at` columns** (60 min),
+  so no new columns. Returns an identical response whether or not the account
+  exists — no email enumeration.
+- **`resetPassword()`** → `POST /ca-library/reset-password`
+  (throttle:auth-login). Validates + consumes the token, stores the hash, sets
+  `email_verified_at` if still null (reaching the emailed link proves
+  ownership), then starts a session and sets `ca_auth_token` — the student
+  lands back already signed in.
+
+### Added — supporting files
+- **`app/Mail/CaLibraryPasswordMail.php`** + **`resources/views/emails/
+  ca-library-password.blade.php`** — mirrors `CaLibraryVerifyMail` / the
+  premium layout. Wording is "set a password" (not "reset") because it also
+  serves accounts that never had one.
+- **`config/services.php`** — `services.google.client_id` from
+  `GOOGLE_CLIENT_ID`. No client secret: ID tokens are verified server-side and
+  the Client ID is public by design. Unset ⇒ `googleSignIn` returns 503 and the
+  frontend hides the button.
+- **`.env.example`** — documented `GOOGLE_CLIENT_ID`.
+
+### Design note — why password reset was needed
+Under the old flow `password` was optional (`SetPasswordCard`), so **existing
+verified students can have `password IS NULL`**. The new "Welcome Back" form
+would have stranded them: they cannot log in, and re-verifying is exactly what
+this task forbids. Forgot Password doubles as *set* password and covers them.
+
+### Unchanged (verified)
+- `login()`, `verify()`, `requestDownload()`, `setPassword()`, `download()`,
+  `myLibrary()`, the whole `ca.student` middleware group, `CaLibraryController`
+  and every payment/evaluation/admin endpoint are untouched.
+- SYS `PasswordResetController` and SYS auth are not modified in any way.
+
+### Verified
+- `php -l` clean on all changed/added PHP files.
+- `php artisan route:list --path=ca-library` shows `google`, `forgot-password`
+  and `reset-password` registered outside the auth group, with the pre-existing
+  `set-password` (authenticated) still present.
+
+---
+
+## 2026-07-22 — CA Library: public study-material download endpoint
+
+Study material PDFs now download without login or email verification. This is
+the only backend change in the task; nothing existing was modified.
+
+### Added
+- **`routes/api.php`** — one public route, placed with the other public CA
+  Library routes and deliberately OUTSIDE the `ca.student` middleware group:
+  `GET /ca-library/materials/{materialId}/download` → `CaLibraryController@publicDownload`.
+- **`app/Http/Controllers/API/CA_Library/CaLibraryController.php`** —
+  `publicDownload()`. Resolves an `is_active = 1` material, applies the same
+  path-traversal / null-byte / existence guards as the authenticated download,
+  and streams via `response()->download()` with the sanitized original filename.
+
+### Unchanged (verified)
+- `CaStudentController@download` (the authorized My Library download),
+  `@requestDownload`, `@verify`, `@login`, and the whole `ca.student` group are
+  untouched. `requestDownload` still sends verification links — the frontend now
+  calls it from the answer-sheet upload gate instead of the download button.
+- No schema changes. No changes to payments, PhonePe, manual payments, faculty
+  evaluation, admin endpoints or revenue/analytics.
+
+### Known consequence (no code change; flagged deliberately)
+- `CaLibraryController@adminStats` reports "PDF Downloads" from
+  `ca_download_requests.downloaded_at`. Public downloads cannot write that table
+  (`student_id` is required and schema changes were out of scope), so that
+  counter now only reflects authenticated My Library downloads and will
+  effectively stop growing. Left as-is per the "do not modify analytics"
+  constraint — needs a product decision if the metric still matters.
+
+### Verified
+- `php -l` clean on both files.
+- `php artisan route:list --path=ca-library` shows the new route registered
+  outside the auth group, with the existing authenticated route still present.
+
+---
+
 ## 2026-07-19 — CA Library: 10MB answer-sheet limit, T&C enforcement, admin stats, revenue integration
 
 - **Migration `2026_07_19_000007`** — `ca_test_submissions` gains nullable

@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\API\CA_Library;
 
 use App\Http\Controllers\Controller;
+use App\Mail\CaLibraryPasswordMail;
 use App\Mail\CaLibraryVerifyMail;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
@@ -275,6 +277,195 @@ class CaStudentController extends Controller
             ]), $token);
         } catch (\Exception $e) {
             Log::error('CaStudent login error', ['msg' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC — Google Sign-In (Google IS the email verification)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Exchanges a Google ID token for a CA Library session. Google asserting
+     * email_verified is treated as proof of ownership, so a brand-new student
+     * is created already verified and NEVER receives a verification email.
+     * An existing account is matched on the (unique) email — no google_id
+     * column, so the CA Library schema is untouched.
+     */
+    public function googleSignIn(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'id_token' => 'required|string|max:4096',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+            }
+
+            $clientId = (string) config('services.google.client_id');
+            if (! $clientId) {
+                Log::warning('CaStudent googleSignIn attempted with no GOOGLE_CLIENT_ID configured');
+                return response()->json(['status' => false, 'message' => 'Google sign-in is not available right now.'], 503);
+            }
+
+            $res = Http::timeout(10)->get('https://oauth2.googleapis.com/tokeninfo', ['id_token' => $request->input('id_token')]);
+            if (! $res->ok()) {
+                return response()->json(['status' => false, 'message' => 'Google sign-in failed. Please try again.'], 401);
+            }
+            $payload = $res->json();
+
+            // Fail closed: the token must be issued for OUR client, by Google,
+            // and carry a Google-verified email address.
+            $audOk    = hash_equals($clientId, (string) ($payload['aud'] ?? ''));
+            $issOk    = in_array((string) ($payload['iss'] ?? ''), ['accounts.google.com', 'https://accounts.google.com'], true);
+            $verified = filter_var($payload['email_verified'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $email    = strtolower(trim((string) ($payload['email'] ?? '')));
+
+            if (! $audOk || ! $issOk || ! $verified || ! $email) {
+                return response()->json(['status' => false, 'message' => 'Google sign-in could not be verified.'], 401);
+            }
+
+            $student = $this->db('ca_students')->where('email', $email)->first();
+            if (! $student) {
+                try {
+                    $id = $this->db('ca_students')->insertGetId([
+                        'email'             => $email,
+                        'status'            => 'active',
+                        'email_verified_at' => now(), // Google verified it for us
+                        'created_at'        => now(),
+                        'updated_at'        => now(),
+                    ]);
+                } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+                    $id = $this->db('ca_students')->where('email', $email)->value('id');
+                }
+                $student = $this->db('ca_students')->where('id', $id)->first();
+            } elseif (! $student->email_verified_at) {
+                // Pre-existing unverified row (e.g. an abandoned email request)
+                // — Google's assertion verifies it now.
+                $this->db('ca_students')->where('id', $student->id)->update([
+                    'email_verified_at' => now(),
+                    'updated_at'        => now(),
+                ]);
+                $student = $this->db('ca_students')->where('id', $student->id)->first();
+            }
+
+            if ($student->status !== 'active') {
+                return response()->json(['status' => false, 'message' => 'This account is not active.'], 403);
+            }
+
+            $token = $this->startSession($student->id);
+
+            return $this->authCookie(response()->json([
+                'status'  => true,
+                'message' => 'Signed in with Google.',
+                'data'    => ['student' => $this->serializeStudent($student)],
+            ]), $token);
+        } catch (\Exception $e) {
+            Log::error('CaStudent googleSignIn error', ['msg' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC — Forgot / set password (also covers accounts with password NULL)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Emails a single-use set-password link. Reuses the existing
+     * verify_token_hash / verify_token_expires_at columns (no schema change).
+     * Always responds identically so the endpoint can't be used to discover
+     * which email addresses are registered.
+     */
+    public function forgotPassword(Request $request): JsonResponse
+    {
+        $generic = ['status' => true, 'message' => 'If that email has a CA Library account, we\'ve sent a link to set your password.'];
+
+        try {
+            $validator = Validator::make($request->all(), [
+                'email' => 'required|email|max:255',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => 'Please enter a valid email address.', 'errors' => $validator->errors()], 422);
+            }
+
+            $email   = strtolower(trim((string) $request->input('email')));
+            $student = $this->db('ca_students')->where('email', $email)->where('status', 'active')->first();
+
+            // No account (or inactive) → say nothing, send nothing.
+            if (! $student) {
+                return response()->json($generic);
+            }
+
+            $rawToken = bin2hex(random_bytes(32));
+            $this->db('ca_students')->where('id', $student->id)->update([
+                'verify_token_hash'       => hash('sha256', $rawToken),
+                'verify_token_expires_at' => now()->addMinutes(60),
+                'updated_at'              => now(),
+            ]);
+
+            $frontend = rtrim((string) config('app.frontend_url'), '/');
+            $url      = $frontend . '/ca-library/set-password?sid=' . $student->id . '&token=' . $rawToken;
+
+            Mail::to($email)->queue(new CaLibraryPasswordMail($url));
+
+            return response()->json($generic);
+        } catch (\Exception $e) {
+            Log::error('CaStudent forgotPassword error', ['msg' => $e->getMessage()]);
+            return response()->json(['status' => false, 'message' => 'Server error'], 500);
+        }
+    }
+
+    /**
+     * Consumes the set-password token, stores the password and signs the
+     * student in, so they land back in the upload flow already authenticated.
+     */
+    public function resetPassword(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'sid'      => 'required|integer',
+                'token'    => 'required|string|size:64',
+                'password' => 'required|string|min:8|max:100',
+            ]);
+            if ($validator->fails()) {
+                return response()->json(['status' => false, 'message' => 'Password must be at least 8 characters.', 'errors' => $validator->errors()], 422);
+            }
+
+            $student = $this->db('ca_students')->where('id', (int) $request->input('sid'))->first();
+            $hash    = hash('sha256', (string) $request->input('token'));
+
+            if (
+                ! $student
+                || $student->status !== 'active'
+                || ! $student->verify_token_hash
+                || ! hash_equals($student->verify_token_hash, $hash)
+            ) {
+                return response()->json(['status' => false, 'message' => 'This link is invalid or has already been used.'], 422);
+            }
+            if (! $student->verify_token_expires_at || now()->gt($student->verify_token_expires_at)) {
+                return response()->json(['status' => false, 'message' => 'This link has expired. Please request a new one.'], 422);
+            }
+
+            // Single-use: consume the token. Reaching the emailed link also
+            // proves ownership, so an unverified account becomes verified.
+            $this->db('ca_students')->where('id', $student->id)->update([
+                'password'                => Hash::make($request->input('password')),
+                'email_verified_at'       => $student->email_verified_at ?? now(),
+                'verify_token_hash'       => null,
+                'verify_token_expires_at' => null,
+                'updated_at'              => now(),
+            ]);
+
+            $token   = $this->startSession($student->id);
+            $student = $this->db('ca_students')->where('id', $student->id)->first();
+
+            return $this->authCookie(response()->json([
+                'status'  => true,
+                'message' => 'Password set. You are now signed in.',
+                'data'    => ['student' => $this->serializeStudent($student)],
+            ]), $token);
+        } catch (\Exception $e) {
+            Log::error('CaStudent resetPassword error', ['msg' => $e->getMessage()]);
             return response()->json(['status' => false, 'message' => 'Server error'], 500);
         }
     }

@@ -93,6 +93,11 @@ class CashfreeGateway implements PaymentGateway
             $orderMeta['notify_url'] = $notes['callback_url'];
         }
 
+        // Cashfree requires a non-empty phone; treat an empty/whitespace value the
+        // same as missing so the placeholder applies (wallet/CA flows without a
+        // phone still work — the `??` operator alone would let '' through).
+        $phone = trim((string) ($notes['customer_phone'] ?? ''));
+
         $payload = [
             'order_id'       => $receipt,
             'order_amount'   => round($amount, 2),
@@ -101,7 +106,7 @@ class CashfreeGateway implements PaymentGateway
                 // Cashfree requires a customer_id and a phone; fall back to safe
                 // placeholders so wallet/CA flows without a phone still work.
                 'customer_id'    => (string) ($notes['customer_id'] ?? ('cust_' . $receipt)),
-                'customer_phone' => (string) ($notes['customer_phone'] ?? '9999999999'),
+                'customer_phone' => $phone !== '' ? $phone : '9999999999',
                 'customer_email' => (string) ($notes['customer_email'] ?? ''),
                 'customer_name'  => (string) ($notes['customer_name'] ?? ''),
             ],

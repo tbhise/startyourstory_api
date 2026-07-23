@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-07-23 — Fix: Cashfree order fails with "customer_phone is missing"
+
+CA Library answer-sheet payment (and any Cashfree flow for a user without a
+phone) failed at order creation: `customer_details.customer_phone : is missing
+in the request`.
+
+### Fixed — `CashfreeGateway::createOrder()`
+- The placeholder fallback used `$notes['customer_phone'] ?? '9999999999'`, but
+  `??` only fires on null/unset — an **empty string passed straight through**.
+  `ca_students` has no `phone` column, so `CaTestSubmissionController::pay()`
+  always sends `customer_phone => ''`, which Cashfree rejects.
+- Now `trim()`s the incoming phone and applies the `9999999999` placeholder
+  whenever the result is empty. Single gateway-level fix; no caller changes.
+  A real phone (e.g. SYS Wallet/Firm users) is still sent unchanged.
+
+---
+
 ## 2026-07-22 — CA Library auth: Google Sign-In + password reset (upload gate only)
 
 Fixes the "already-verified users are asked to verify again" problem. SYS auth,

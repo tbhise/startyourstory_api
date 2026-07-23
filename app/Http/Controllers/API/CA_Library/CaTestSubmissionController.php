@@ -4,7 +4,7 @@ namespace App\Http\Controllers\API\CA_Library;
 
 use App\Http\Controllers\Controller;
 use App\Mail\CaLibraryEvaluatedMail;
-use App\Services\Payment\PhonePeGateway;
+use App\Services\Payment\PaymentManager;
 use App\Services\SystemSettingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,17 +15,20 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 /**
- * CA Library answer-sheet evaluation: upload → snapshot fee → PhonePe payment
+ * CA Library answer-sheet evaluation: upload → snapshot fee → online payment
  * → admin/faculty evaluation → evaluated paper → email → My Library download.
  *
  * Business data lives in the separate ca_library DB (ca_test_submissions +
  * ca_payments, owned by ca_students.id — never SYS user ids). Only the generic
- * PhonePeGateway / SystemSettingService / Mail infrastructure is reused.
+ * PaymentManager / SystemSettingService / Mail infrastructure is reused; the
+ * active gateway (PhonePe/Cashfree) is resolved dynamically.
  * Answer sheets + evaluated papers live on the PRIVATE `local` disk.
  */
 class CaTestSubmissionController extends Controller
 {
     private const DISK = 'local';
+
+    public function __construct(private PaymentManager $payments) {}
 
     private function db(string $table)
     {
@@ -259,13 +262,18 @@ class CaTestSubmissionController extends Controller
                 return response()->json(['status' => false, 'message' => 'Online payment is currently disabled. Please use Manual Payment.'], 422);
             }
 
+            // Resolve the admin-selected active gateway; its name is stamped onto
+            // the attempt so verify/webhook use the same gateway later.
+            $gateway     = $this->payments->active();
+            $gatewayName = $gateway->name();
+
             // New attempt row per try — failed attempts are history, never overwritten.
             $paymentId = $this->db('ca_payments')->insertGetId([
                 'student_id'         => $student->id,
                 'test_submission_id' => $submission->id,
                 'amount'             => $submission->amount, // snapshot, not current setting
                 'currency'           => $submission->currency,
-                'gateway'            => 'phonepe',
+                'gateway'            => $gatewayName,
                 'status'             => 'pending',
                 'created_at'         => now(),
                 'updated_at'         => now(),
@@ -275,10 +283,13 @@ class CaTestSubmissionController extends Controller
             $merchantTxnId = 'CAP' . $paymentId . 'T' . time();
 
             $frontendUrl = rtrim((string) config('app.frontend_url'), '/');
-            $gateway     = new PhonePeGateway();
             $order       = $gateway->createOrder((float) $submission->amount, $merchantTxnId, [
-                'redirect_url' => $frontendUrl . '/ca-library/my-library?phonepe_txn=' . $merchantTxnId,
-                'callback_url' => url('/api/ca-library/payments/phonepe/webhook'),
+                'redirect_url'   => $frontendUrl . '/ca-library/my-library?phonepe_txn=' . $merchantTxnId,
+                'callback_url'   => url('/api/ca-library/payments/' . $gatewayName . '/webhook'),
+                'customer_id'    => 'ca' . $student->id,
+                'customer_name'  => $student->name ?? '',
+                'customer_email' => $student->email ?? '',
+                'customer_phone' => $student->phone ?? '',
             ]);
 
             $this->db('ca_payments')->where('id', $paymentId)->update([
@@ -289,9 +300,12 @@ class CaTestSubmissionController extends Controller
             return response()->json([
                 'status' => true,
                 'data'   => [
-                    'redirect_url'   => $order['redirect_url'],
-                    'transaction_id' => $merchantTxnId,
-                    'amount'         => (float) $submission->amount,
+                    'gateway'            => $order['gateway'],
+                    'redirect_url'       => $order['redirect_url'],
+                    'payment_session_id' => $order['payment_session_id'],
+                    'mode'               => $order['mode'],
+                    'transaction_id'     => $merchantTxnId,
+                    'amount'             => (float) $submission->amount,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -306,15 +320,22 @@ class CaTestSubmissionController extends Controller
     // verify call can never double-process.
     // ─────────────────────────────────────────────────────────────────────────
 
-    private function settlePayment(object $payment, array $statusData): string
+    private function settlePayment(object $payment, array $result): string
     {
-        $isSuccess        = ($statusData['state'] ?? '') === 'COMPLETED';
-        $gatewayPaymentId = $statusData['paymentDetails'][0]['transactionId'] ?? null;
+        $status = $result['status'] ?? 'failed';
+
+        // Leave genuinely pending payments untouched — a later webhook finalizes.
+        if ($status === 'pending') {
+            return 'pending';
+        }
+
+        $isSuccess        = $status === 'paid';
+        $gatewayPaymentId = $result['gateway_payment_id'] ?? null;
 
         // Amount verification in integer paise — the gateway-confirmed amount
         // must equal the snapshotted attempt amount.
         $expectedPaise = (int) round(((float) $payment->amount) * 100);
-        $actualPaise   = isset($statusData['amount']) ? (int) $statusData['amount'] : null;
+        $actualPaise   = $result['amount'] ?? null;
         if ($isSuccess && $actualPaise !== null && $actualPaise !== $expectedPaise) {
             Log::warning('CaTestSubmission payment amount mismatch', [
                 'payment_id' => $payment->id, 'expected' => $expectedPaise, 'actual' => $actualPaise,
@@ -383,12 +404,16 @@ class CaTestSubmissionController extends Controller
                 return response()->json(['status' => true, 'message' => 'Payment already processed.']);
             }
 
-            // Server-side truth: query PhonePe's status API, never the client.
-            $statusData = (new PhonePeGateway())->fetchPayment($payment->gateway_order_id);
-            $outcome    = $this->settlePayment($payment, $statusData);
+            // Server-side truth via the gateway the attempt was created on; never
+            // the client. Returns a normalized result.
+            $result  = $this->payments->gateway($payment->gateway)->verifyPayment($payment->gateway_order_id);
+            $outcome = $this->settlePayment($payment, $result);
 
             if ($outcome === 'paid' || $outcome === 'already') {
                 return response()->json(['status' => true, 'message' => 'Payment successful. Your answer sheet is awaiting evaluation.']);
+            }
+            if ($outcome === 'pending') {
+                return response()->json(['status' => false, 'message' => 'Payment is still being processed. Please wait a moment and refresh.']);
             }
             return response()->json(['status' => false, 'message' => 'Payment was not successful. You can retry from My Library.']);
         } catch (\Exception $e) {
@@ -401,28 +426,33 @@ class CaTestSubmissionController extends Controller
     // PUBLIC — PhonePe S2S webhook (signature-verified, fail closed)
     // ─────────────────────────────────────────────────────────────────────────
 
-    public function webhook(Request $request): JsonResponse
+    public function webhook(Request $request, string $gateway = 'phonepe'): JsonResponse
     {
         try {
-            $gateway = new PhonePeGateway();
-            if (! $gateway->verifySignature(['authorization' => $request->header('Authorization')])) {
-                Log::warning('CaLibrary PhonePe webhook: signature verification failed');
+            // Verify signature + normalize via the gateway this endpoint serves.
+            try {
+                $result = $this->payments->gateway($gateway)
+                    ->parseWebhook($request->getContent(), $request->headers->all());
+            } catch (\RuntimeException $e) {
+                Log::warning("CaLibrary {$gateway} webhook: " . $e->getMessage());
                 return response()->json(['status' => false], 401);
             }
 
-            $payload       = $request->json()->all()['payload'] ?? [];
-            $merchantTxnId = $payload['merchantOrderId'] ?? null;
+            $merchantTxnId = $result['order_id'] ?? null;
             if (! $merchantTxnId) {
                 return response()->json(['status' => false], 422);
             }
 
-            $payment = $this->db('ca_payments')->where('gateway_order_id', $merchantTxnId)->first();
+            $payment = $this->db('ca_payments')
+                ->where('gateway_order_id', $merchantTxnId)
+                ->where('gateway', $gateway)
+                ->first();
             if (! $payment) {
-                // Not a CA Library order (e.g. wallet txn) — acknowledge and ignore.
+                // Not a CA Library order for this gateway — acknowledge and ignore.
                 return response()->json(['status' => true]);
             }
 
-            $this->settlePayment($payment, $payload);
+            $this->settlePayment($payment, $result);
             return response()->json(['status' => true]);
         } catch (\Exception $e) {
             Log::error('CaTestSubmission webhook error', ['msg' => $e->getMessage()]);

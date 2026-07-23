@@ -113,7 +113,8 @@ Route::middleware('ca.student')->group(function () {
 });
 
 // PhonePe S2S webhook for CA Library payments (no auth — signature-verified, fail closed)
-Route::post('/ca-library/payments/phonepe/webhook', [CaTestSubmissionController::class, 'webhook']);
+Route::post('/ca-library/payments/phonepe/webhook',  [CaTestSubmissionController::class, 'webhook'])->defaults('gateway', 'phonepe');
+Route::post('/ca-library/payments/cashfree/webhook', [CaTestSubmissionController::class, 'webhook'])->defaults('gateway', 'cashfree');
 
 Route::post('/registerStudent', [UserController::class, 'registerStudent'])->middleware('throttle:auth-register');
 Route::post('/registerFirm',    [FirmController::class, 'registerFirm'])->middleware('throttle:auth-register');
@@ -235,7 +236,12 @@ Route::middleware([ApiAuthMiddleware::class])->group(function () {
     Route::post('/wallet/recharge/manual',          [WalletController::class, 'submitManualRecharge'])->middleware('throttle:payment-proof');
     Route::post('/student/premium-request',         [WalletController::class, 'submitPremiumRequest'])->middleware('throttle:payment-proof');
 
-    // ── PhonePe wallet recharge (TEST MODE) ──
+    // ── Online wallet recharge (gateway resolved from Admin settings) ──
+    // Gateway-neutral endpoints (preferred). initiate uses the active gateway;
+    // verify resolves the gateway from the recharge row.
+    Route::post('/wallet/recharge/initiate', [PhonePeWalletController::class, 'initiate'])->middleware('throttle:payment-initiate');
+    Route::post('/wallet/recharge/verify',   [PhonePeWalletController::class, 'verify']);
+    // Backward-compatible aliases (existing frontend / pending payments).
     Route::post('/wallet/recharge/phonepe/initiate', [PhonePeWalletController::class, 'initiate'])->middleware('throttle:payment-initiate');
     Route::post('/wallet/recharge/phonepe/verify',   [PhonePeWalletController::class, 'verify']);
 
@@ -433,10 +439,19 @@ Route::get('activeTrainingPartners', [TrainingPartnerController::class, 'getActi
 // hardcoded pricing). Public read — the checkout itself is auth-gated below.
 Route::get('/firm/subscription-plans', [FirmSubscriptionPlanController::class, 'publicIndex']);
 
+// Firm premium subscription checkout. Gateway-neutral endpoints (preferred);
+// initiate uses the active gateway, verify resolves it from the subscription row.
+Route::post('/payments/initiate', [PhonePeFirmController::class, 'initiate'])->middleware('throttle:payment-initiate');
+Route::post('/payments/verify',   [PhonePeFirmController::class, 'verify']);
+// Backward-compatible PhonePe aliases.
 Route::post('/payments/phonepe/initiate', [PhonePeFirmController::class, 'initiate'])->middleware('throttle:payment-initiate');
 Route::post('/payments/phonepe/verify',   [PhonePeFirmController::class, 'verify']);
-Route::post('/payments/phonepe/webhook',  [PhonePeFirmController::class, 'webhook']);
+// Per-gateway webhooks (no auth — server-to-server). The gateway name is bound
+// as a route default and passed to the shared webhook handler.
+Route::post('/payments/phonepe/webhook',  [PhonePeFirmController::class, 'webhook'])->defaults('gateway', 'phonepe');
 Route::get('/payments/phonepe/webhook',   fn() => response()->json(['status' => 'ok']));
+Route::post('/payments/cashfree/webhook', [PhonePeFirmController::class, 'webhook'])->defaults('gateway', 'cashfree');
+Route::get('/payments/cashfree/webhook',  fn() => response()->json(['status' => 'ok']));
 
 // ── Messaging ─────────────────────────────────────────────────────────────────
 Route::middleware([ApiAuthMiddleware::class])->prefix('messaging')->group(function () {
@@ -523,7 +538,9 @@ Route::middleware([ApiAuthMiddleware::class, FirmVerifiedMiddleware::class])->gr
     Route::post('/creator-marketplace/bids/{bidId}/status',       [CreatorMarketplaceController::class, 'updateBidStatus']);
     Route::post('/creator-marketplace/bids/{bidId}/accept-creator', [CreatorMarketplaceController::class, 'acceptCreator']);
     Route::get('/creator-marketplace/firm-engagements',           [CreatorMarketplaceController::class, 'getFirmEngagements']);
-    // Payment — firm-only actions (PhonePe)
+    // Payment — firm-only actions. Gateway-neutral (preferred) + PhonePe aliases.
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/initiate', [PhonePeEngagementController::class, 'initiate'])->middleware('throttle:payment-initiate');
+    Route::post('/creator-marketplace/engagements/{engagementId}/payment/verify',   [PhonePeEngagementController::class, 'verify']);
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/initiate', [PhonePeEngagementController::class, 'initiate'])->middleware('throttle:payment-initiate');
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/phonepe/verify',   [PhonePeEngagementController::class, 'verify']);
     Route::post('/creator-marketplace/engagements/{engagementId}/payment/manual',           [CreatorMarketplaceController::class, 'submitManualPayment'])->middleware('throttle:payment-proof');
@@ -566,10 +583,14 @@ Route::get('/admin/platform-settings',                 [AdminSettingsController:
 Route::post('/admin/platform-settings/{key}',          [AdminSettingsController::class, 'updateSetting']);
 
 // ── PhonePe webhook (no auth — PhonePe S2S; signature verified inside controller) ──
-Route::post('/wallet/recharge/phonepe/webhook', [PhonePeWalletController::class, 'webhook']);
+Route::post('/wallet/recharge/phonepe/webhook', [PhonePeWalletController::class, 'webhook'])->defaults('gateway', 'phonepe');
 Route::get('/wallet/recharge/phonepe/webhook', fn() => response()->json(['status' => 'ok'], 200));
-Route::post('/creator-marketplace/payments/phonepe/webhook', [PhonePeEngagementController::class, 'webhook']);
+Route::post('/wallet/recharge/cashfree/webhook', [PhonePeWalletController::class, 'webhook'])->defaults('gateway', 'cashfree');
+Route::get('/wallet/recharge/cashfree/webhook', fn() => response()->json(['status' => 'ok'], 200));
+Route::post('/creator-marketplace/payments/phonepe/webhook', [PhonePeEngagementController::class, 'webhook'])->defaults('gateway', 'phonepe');
 Route::get('/creator-marketplace/payments/phonepe/webhook',  fn() => response()->json(['status' => 'ok'], 200));
+Route::post('/creator-marketplace/payments/cashfree/webhook', [PhonePeEngagementController::class, 'webhook'])->defaults('gateway', 'cashfree');
+Route::get('/creator-marketplace/payments/cashfree/webhook',  fn() => response()->json(['status' => 'ok'], 200));
 
 // ── Error Logging ─────────────────────────────────────────────────────────────
 // Public — no auth required so errors during login/registration are captured too

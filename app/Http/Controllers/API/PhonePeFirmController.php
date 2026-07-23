@@ -3,24 +3,25 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Services\Payment\PhonePeGateway;
+use App\Services\Payment\PaymentManager;
+use App\Services\Payment\Settlement\FirmPremiumSettlementService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use App\Helpers\ReferralHelper;
 use App\Helpers\AuthHelper;
-use App\Helpers\PremiumActivationEmailHelper;
-use App\Helpers\FirmActivityHelper;
 use App\Helpers\PlanHelper;
-use App\Services\ActivityTracker;
-use App\Enums\ActivityType;
 
 class PhonePeFirmController extends Controller
 {
     // Plan pricing/duration now come from the admin-managed
     // firm_subscription_plans catalog via PlanHelper (2026-07-11). No hardcoded
     // amounts — deactivated plans are no longer purchasable.
+
+    public function __construct(
+        private PaymentManager $payments,
+        private FirmPremiumSettlementService $settlement,
+    ) {}
 
     private function getFirmUser(Request $request): ?object
     {
@@ -63,10 +64,15 @@ class PhonePeFirmController extends Controller
             // Stored on the row so future catalog price changes never alter it.
             $amount = (int) round(PlanHelper::priceFor($planId, !empty($firmProfile->is_branch)));
 
-            // Remove stale pending PhonePe subscription records for this firm
+            // Resolve the admin-selected active gateway; stamped onto the row so
+            // verify/webhook use the same gateway even if the default changes.
+            $gateway     = $this->payments->active();
+            $gatewayName = $gateway->name();
+
+            // Remove stale pending subscription records for this firm on this gateway
             DB::table('firm_subscriptions')
                 ->where('firm_id', $firmProfile->id)
-                ->where('payment_gateway', 'phonepe')
+                ->where('payment_gateway', $gatewayName)
                 ->where('status', 'pending')
                 ->delete();
 
@@ -78,7 +84,7 @@ class PhonePeFirmController extends Controller
                 'plan'            => $planId,
                 'amount'          => $amount,
                 'currency'        => 'INR',
-                'payment_gateway' => 'phonepe',
+                'payment_gateway' => $gatewayName,
                 'payment_status'  => 'pending',
                 'status'          => 'pending',
                 'created_at'      => now(),
@@ -90,9 +96,12 @@ class PhonePeFirmController extends Controller
             $frontendUrl = rtrim(config('services.phonepe.frontend_url', config('app.url')), '/');
             $redirectUrl = $frontendUrl . '/firm/payments?phonepe_txn=' . $merchantTxnId;
 
-            $gateway = new PhonePeGateway();
-            $order   = $gateway->createOrder($amount, $merchantTxnId, [
-                'redirect_url' => $redirectUrl,
+            $order = $gateway->createOrder($amount, $merchantTxnId, [
+                'redirect_url'   => $redirectUrl,
+                'customer_id'    => 'f' . $firmProfile->id,
+                'customer_name'  => $user->name ?? '',
+                'customer_email' => $user->email ?? '',
+                'customer_phone' => $user->phone ?? '',
             ]);
 
             DB::table('firm_subscriptions')
@@ -104,7 +113,7 @@ class PhonePeFirmController extends Controller
 
             DB::table('payment_logs')->insert([
                 'firm_subscription_id' => $subscriptionId,
-                'event_type'           => 'phonepe_order_created',
+                'event_type'           => $gatewayName . '_order_created',
                 'payload'              => json_encode(['merchant_txn_id' => $merchantTxnId, 'amount' => $amount]),
                 'created_at'           => now(),
             ]);
@@ -113,12 +122,15 @@ class PhonePeFirmController extends Controller
 
             return response()->json([
                 'status'  => true,
-                'message' => 'PhonePe order created',
+                'message' => 'Payment order created',
                 'data'    => [
-                    'redirect_url'    => $order['redirect_url'],
-                    'transaction_id'  => $merchantTxnId,
-                    'subscription_id' => $subscriptionId,
-                    'amount'          => $amount,
+                    'gateway'            => $order['gateway'],
+                    'redirect_url'       => $order['redirect_url'],
+                    'payment_session_id' => $order['payment_session_id'],
+                    'mode'               => $order['mode'],
+                    'transaction_id'     => $merchantTxnId,
+                    'subscription_id'    => $subscriptionId,
+                    'amount'             => $amount,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -155,7 +167,7 @@ class PhonePeFirmController extends Controller
             $subscription = DB::table('firm_subscriptions')
                 ->where('gateway_order_id', $merchantTxnId)
                 ->where('firm_id', $firmProfile->id)
-                ->where('payment_gateway', 'phonepe')
+                ->whereNotIn('payment_gateway', ['manual'])
                 ->first();
 
             if (!$subscription) {
@@ -167,85 +179,21 @@ class PhonePeFirmController extends Controller
                 return response()->json(['status' => true, 'message' => 'Payment already verified']);
             }
 
-            $gateway    = new PhonePeGateway();
-            $statusData = $gateway->fetchPayment($merchantTxnId);
-            $isSuccess  = ($statusData['state'] ?? '') === 'COMPLETED';
+            // Resolve the gateway this order was created on (not the active one),
+            // get the server-side normalized status, then settle (row-locked,
+            // idempotent, amount-verified) via the shared service.
+            $result  = $this->payments->gateway($subscription->payment_gateway)->verifyPayment($merchantTxnId);
+            $outcome = $this->settlement->settle($subscription, $result);
 
-            $gatewayPaymentId = $statusData['paymentDetails'][0]['transactionId'] ?? null;
-
-            // Renewal-aware expiry: extend from the firm's current active expiry
-            // when it is still in the future, else from now. Excludes THIS pending
-            // row (not yet active) so it never counts as its own base.
-            $currentExpiry = PlanHelper::currentActiveExpiry((int) $firmProfile->id);
-            $expiresAt = PlanHelper::computeExpiry($subscription->plan, $currentExpiry);
-
-            DB::beginTransaction();
-
-            if ($isSuccess) {
-                DB::table('firm_subscriptions')
-                    ->where('id', $subscription->id)
-                    ->update([
-                        'gateway_payment_id' => $gatewayPaymentId,
-                        'razorpay_response'  => json_encode($statusData),
-                        'payment_status'     => 'paid',
-                        'status'             => 'active',
-                        'payment_date'       => now(),
-                        'starts_at'          => now(),
-                        'expires_at'         => $expiresAt,
-                        'updated_at'         => now(),
-                    ]);
-
-                // Supersede any OTHER active subscription rows for this firm so the
-                // renewal's extended expiry is the single source of truth (their
-                // remaining validity was already folded into $expiresAt above).
-                DB::table('firm_subscriptions')
-                    ->where('firm_id', $firmProfile->id)
-                    ->where('id', '!=', $subscription->id)
-                    ->where('status', 'active')
-                    ->update(['status' => 'expired', 'updated_at' => now()]);
-
-                DB::table('firm_profiles')
-                    ->where('id', $firmProfile->id)
-                    ->update(['is_premium' => 1, 'updated_at' => now()]);
-
-                // Firm referral: create a pending ₹2,000 payout if this firm was referred.
-                ReferralHelper::onFirmPremiumActivated((int) $firmProfile->id);
-
-                DB::table('payment_logs')->insert([
-                    'firm_subscription_id' => $subscription->id,
-                    'event_type'           => 'phonepe_payment_verified',
-                    'payload'              => json_encode(['merchant_txn_id' => $merchantTxnId, 'gateway_payment_id' => $gatewayPaymentId]),
-                    'created_at'           => now(),
-                ]);
-
-                DB::commit();
-
-                // Activity log (async, non-blocking — never affects subscription activation).
-                ActivityTracker::log(ActivityTracker::FIRM, $user->id, ActivityType::SUBSCRIPTION_PURCHASED, [
-                    'subscription_id' => (int) $subscription->id,
-                    'plan'            => $subscription->plan,
-                    'amount'          => (float) $subscription->amount,
-                ]);
-                // Firm Activity Center feed (non-blocking).
-                FirmActivityHelper::log($firmProfile->id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
-                // Activation confirmation email (non-blocking, exactly-once vs webhook).
-                PremiumActivationEmailHelper::send((int) $subscription->id, PremiumActivationEmailHelper::TYPE_PHONEPE);
-
+            if ($outcome === 'activated' || $outcome === 'already') {
                 return response()->json(['status' => true, 'message' => 'Payment verified successfully']);
             }
 
-            DB::table('firm_subscriptions')
-                ->where('id', $subscription->id)
-                ->update([
-                    'payment_status'    => 'failed',
-                    'razorpay_response' => json_encode($statusData),
-                    'updated_at'        => now(),
-                ]);
-
-            DB::commit();
             return response()->json([
                 'status'  => false,
-                'message' => 'Payment was not successful. State: ' . ($statusData['state'] ?? 'UNKNOWN'),
+                'message' => $outcome === 'pending'
+                    ? 'Payment is still being processed. Please wait a moment and refresh.'
+                    : 'Payment was not successful.',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -259,109 +207,38 @@ class PhonePeFirmController extends Controller
     | POST /payments/phonepe/webhook  [no auth — PhonePe S2S]
     |--------------------------------------------------------------------------
     */
-    public function webhook(Request $request)
+    public function webhook(Request $request, string $gateway = 'phonepe')
     {
         try {
-            $authorization = $request->header('Authorization') ?? '';
-            $gateway       = new PhonePeGateway();
-
-            if (!$gateway->verifySignature(['authorization' => $authorization])) {
-                Log::warning('PhonePeFirmController webhook: signature verification failed');
-                return response()->json(['message' => 'Invalid signature'], 403);
+            // Verify signature + normalize via the gateway this endpoint serves.
+            try {
+                $result = $this->payments->gateway($gateway)
+                    ->parseWebhook($request->getContent(), $request->headers->all());
+            } catch (\RuntimeException $e) {
+                Log::warning("PhonePeFirmController {$gateway} webhook: " . $e->getMessage());
+                return response()->json(['message' => 'Invalid signature'], 401);
             }
 
-            $body    = $request->all();
-            $payload = $body['payload'] ?? [];
-
-            if (empty($payload)) {
-                return response()->json(['message' => 'Bad request'], 400);
-            }
-
-            $merchantTxnId = $payload['merchantOrderId'] ?? null;
+            $merchantTxnId = $result['order_id'] ?? null;
             if (!$merchantTxnId) {
-                return response()->json(['message' => 'Missing merchantOrderId'], 400);
+                return response()->json(['message' => 'Missing order id'], 400);
             }
 
             $subscription = DB::table('firm_subscriptions')
                 ->where('gateway_order_id', $merchantTxnId)
-                ->where('payment_gateway', 'phonepe')
+                ->where('payment_gateway', $gateway)
                 ->first();
 
             if (!$subscription) {
-                Log::warning("PhonePeFirmController webhook: no subscription for txn {$merchantTxnId}");
-                return response()->json(['message' => 'Not found'], 404);
+                // Not a firm subscription order for this gateway — acknowledge.
+                return response()->json(['message' => 'OK'], 200);
             }
 
-            if ($subscription->payment_status === 'paid') {
-                return response()->json(['message' => 'Already processed'], 200);
-            }
-
-            $isSuccess        = ($payload['state'] ?? '') === 'COMPLETED';
-            $gatewayPaymentId = $payload['paymentDetails'][0]['transactionId'] ?? null;
-
-            // Renewal-aware expiry (same rule as verify()): extend from the firm's
-            // current active expiry when still in the future, else from now.
-            $currentExpiry = PlanHelper::currentActiveExpiry((int) $subscription->firm_id);
-            $expiresAt = PlanHelper::computeExpiry($subscription->plan, $currentExpiry);
-
-            DB::beginTransaction();
-
-            if ($isSuccess) {
-                DB::table('firm_subscriptions')
-                    ->where('id', $subscription->id)
-                    ->update([
-                        'gateway_payment_id' => $gatewayPaymentId,
-                        'razorpay_response'  => json_encode($body),
-                        'payment_status'     => 'paid',
-                        'status'             => 'active',
-                        'payment_date'       => now(),
-                        'starts_at'          => now(),
-                        'expires_at'         => $expiresAt,
-                        'updated_at'         => now(),
-                    ]);
-
-                // Supersede any OTHER active rows (their validity is folded in above).
-                DB::table('firm_subscriptions')
-                    ->where('firm_id', $subscription->firm_id)
-                    ->where('id', '!=', $subscription->id)
-                    ->where('status', 'active')
-                    ->update(['status' => 'expired', 'updated_at' => now()]);
-
-                DB::table('firm_profiles')
-                    ->where('id', $subscription->firm_id)
-                    ->update(['is_premium' => 1, 'updated_at' => now()]);
-
-                // Firm referral: create a pending ₹2,000 payout if this firm was referred.
-                ReferralHelper::onFirmPremiumActivated((int) $subscription->firm_id);
-
-                DB::commit();
-
-                // Activity log (async, non-blocking). No auth context in a S2S
-                // webhook, so resolve the firm's account id from firm_profiles.
-                $firmUserId = DB::table('firm_profiles')->where('id', $subscription->firm_id)->value('user_id');
-                ActivityTracker::log(ActivityTracker::FIRM, $firmUserId, ActivityType::SUBSCRIPTION_PURCHASED, [
-                    'subscription_id' => (int) $subscription->id,
-                    'plan'            => $subscription->plan,
-                    'amount'          => (float) $subscription->amount,
-                ]);
-                // Firm Activity Center feed (non-blocking).
-                FirmActivityHelper::log($subscription->firm_id, FirmActivityHelper::PREMIUM_PURCHASED, 'Purchased Premium (' . $subscription->plan . ')');
-                // Activation confirmation email (non-blocking, exactly-once vs verify()).
-                PremiumActivationEmailHelper::send((int) $subscription->id, PremiumActivationEmailHelper::TYPE_PHONEPE);
-            } else {
-                DB::table('firm_subscriptions')
-                    ->where('id', $subscription->id)
-                    ->update([
-                        'payment_status'    => 'failed',
-                        'razorpay_response' => json_encode($body),
-                        'updated_at'        => now(),
-                    ]);
-                DB::commit();
-            }
+            // Row-locked, idempotent, amount-verified settlement shared with verify().
+            $this->settlement->settle($subscription, $result);
 
             return response()->json(['message' => 'OK'], 200);
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('PhonePeFirmController@webhook: ' . $e->getMessage());
             return response()->json(['message' => 'Internal error'], 500);
         }

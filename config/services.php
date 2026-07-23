@@ -54,6 +54,16 @@ return [
         'webhook_password' => env('PHONEPE_WEBHOOK_PASSWORD'),
     ],
 
+    // Cashfree PG (Orders API). Sandbox by default; the webhook is verified with
+    // the same secret key. Leave unset to keep Cashfree unavailable.
+    'cashfree' => [
+        'app_id'      => env('CASHFREE_APP_ID'),
+        'secret_key'  => env('CASHFREE_SECRET_KEY'),
+        'api_version' => env('CASHFREE_API_VERSION', '2023-08-01'),
+        'base_url'    => env('CASHFREE_BASE_URL', 'https://sandbox.cashfree.com/pg'),
+        'mode'        => env('CASHFREE_MODE', 'sandbox'),
+    ],
+
     // Firebase Cloud Messaging (admin push). Values come from the Firebase
     // service-account JSON. When any are absent, FcmService is a safe no-op.
     'fcm' => [

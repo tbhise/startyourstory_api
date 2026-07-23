@@ -101,12 +101,108 @@ class PhonePeGateway implements PaymentGateway
         }
 
         return [
-            'order_id'     => $receipt,
-            'amount'       => (int) round($amount * 100),
-            'currency'     => 'INR',
-            'redirect_url' => $data['redirectUrl'],
-            'raw'          => $data,
+            'gateway'            => $this->name(),
+            'order_id'           => $receipt,
+            'amount'             => (int) round($amount * 100),
+            'currency'           => 'INR',
+            'redirect_url'       => $data['redirectUrl'],
+            'payment_session_id' => null,
+            'mode'               => null,
+            'raw'                => $data,
         ];
+    }
+
+    public function name(): string
+    {
+        return 'phonepe';
+    }
+
+    /**
+     * Server-side status fetch, NORMALIZED to the gateway-agnostic shape.
+     * Wraps the existing fetchPayment() status call.
+     */
+    public function verifyPayment(string $orderId): array
+    {
+        $data = $this->fetchPayment($orderId);
+
+        return $this->normalize($data, $orderId);
+    }
+
+    /**
+     * Verify the webhook Authorization header (fail closed) and return the
+     * NORMALIZED payload. $rawBody is PhonePe's JSON body; $headers are the
+     * request headers (case-insensitive lookup for 'authorization').
+     */
+    public function parseWebhook(string $rawBody, array $headers): array
+    {
+        $authorization = $this->header($headers, 'authorization');
+
+        if (! $this->verifySignature(['authorization' => $authorization])) {
+            throw new RuntimeException('PhonePe webhook signature verification failed');
+        }
+
+        $body    = json_decode($rawBody, true) ?: [];
+        $payload = $body['payload'] ?? [];
+        $orderId = $payload['merchantOrderId'] ?? '';
+
+        return $this->normalize($payload, $orderId);
+    }
+
+    /**
+     * Refund-ready: PhonePe v2 refund. Not wired to any business flow yet.
+     */
+    public function refund(string $orderId, string $refundId, float $amount): array
+    {
+        $token = $this->getAccessToken();
+
+        $response = Http::withHeaders([
+            'Content-Type'  => 'application/json',
+            'Authorization' => 'O-Bearer ' . $token,
+            'X-MERCHANT-ID' => $this->merchantId,
+        ])->post($this->baseUrl . '/payments/v2/refund', [
+            'merchantRefundId'        => $refundId,
+            'originalMerchantOrderId' => $orderId,
+            'amount'                  => (int) round($amount * 100),
+        ]);
+
+        return $response->json() ?? [];
+    }
+
+    /**
+     * Normalize a PhonePe status response OR webhook payload (both carry
+     * `state`, `amount` (paise) and `paymentDetails[0].transactionId`) into the
+     * gateway-agnostic result shape.
+     */
+    private function normalize(array $data, string $orderId): array
+    {
+        $state = strtoupper((string) ($data['state'] ?? ''));
+
+        $status = match ($state) {
+            'COMPLETED' => 'paid',
+            'PENDING'   => 'pending',
+            default     => 'failed',
+        };
+
+        return [
+            'status'             => $status,
+            'gateway_payment_id' => $data['paymentDetails'][0]['transactionId'] ?? null,
+            'amount'             => isset($data['amount']) ? (int) $data['amount'] : null,
+            'currency'           => 'INR',
+            'order_id'           => $orderId,
+            'raw'                => $data,
+        ];
+    }
+
+    /** Case-insensitive header lookup from a plain headers array. */
+    private function header(array $headers, string $name): string
+    {
+        foreach ($headers as $key => $value) {
+            if (strtolower((string) $key) === strtolower($name)) {
+                return is_array($value) ? (string) ($value[0] ?? '') : (string) $value;
+            }
+        }
+
+        return '';
     }
 
     /**

@@ -2,31 +2,72 @@
 
 namespace App\Contracts;
 
+/**
+ * Gateway-agnostic payment contract.
+ *
+ * Every provider (PhonePe, Cashfree, future Razorpay …) implements this. The
+ * settlement layer only ever sees the NORMALIZED shapes returned by
+ * verifyPayment()/parseWebhook(), so business logic is fully decoupled from any
+ * one gateway's request/response format.
+ *
+ * Normalized result shape (returned by verifyPayment() and parseWebhook()):
+ *   [
+ *     'status'             => 'paid' | 'failed' | 'pending',
+ *     'gateway_payment_id' => string|null,   // provider's own txn/payment id
+ *     'amount'             => int|null,       // amount in paise (for verification)
+ *     'currency'           => string,         // e.g. 'INR'
+ *     'order_id'           => string,         // our merchant order id (receipt)
+ *     'raw'                => array,          // full provider payload
+ *   ]
+ */
 interface PaymentGateway
 {
     /**
-     * Create a payment order.
+     * Create a payment order / hosted-checkout session.
      *
      * @param  float  $amount   Amount in INR (not paise)
-     * @param  string $receipt  Unique receipt string for idempotency
-     * @param  array  $notes    Optional key-value metadata
-     * @return array  ['order_id' => string, 'amount' => int, 'currency' => string, 'raw' => array]
+     * @param  string $receipt  Unique merchant order id (idempotency key)
+     * @param  array  $notes    Metadata: redirect_url, callback_url, customer_* …
+     * @return array {
+     *   'gateway'            => string,      // this gateway's name
+     *   'order_id'           => string,      // = $receipt
+     *   'amount'             => int,         // paise
+     *   'currency'           => string,
+     *   'redirect_url'       => string|null, // hosted page to redirect to (PhonePe)
+     *   'payment_session_id' => string|null, // JS-SDK session (Cashfree)
+     *   'mode'               => string|null, // 'sandbox'|'production' for the JS SDK
+     *   'raw'                => array,
+     * }
      */
     public function createOrder(float $amount, string $receipt, array $notes = []): array;
 
     /**
-     * Verify that a payment callback signature is authentic.
-     *
-     * @param  array $attributes  Gateway-specific fields (order_id, payment_id, signature …)
-     * @return bool
+     * Server-side source of truth: fetch the order's status from the gateway and
+     * return it NORMALIZED. Never trusts client/redirect params.
      */
-    public function verifySignature(array $attributes): bool;
+    public function verifyPayment(string $orderId): array;
 
     /**
-     * Fetch full payment details from the gateway after capture.
+     * Verify a webhook's signature (throws on failure) and return the payload
+     * NORMALIZED. $headers are the raw request headers; $rawBody is the exact,
+     * unparsed request body (required for HMAC verification).
      *
-     * @param  string $paymentId
-     * @return array
+     * @throws \RuntimeException on signature failure or unparseable payload
      */
-    public function fetchPayment(string $paymentId): array;
+    public function parseWebhook(string $rawBody, array $headers): array;
+
+    /**
+     * Refund-ready: issue a refund against a settled order. No business flow
+     * currently calls this — it exists so refunds can be wired without touching
+     * the gateway layer.
+     *
+     * @param  string $orderId   The merchant order id that was paid
+     * @param  string $refundId  Unique idempotent refund id
+     * @param  float  $amount    Amount in INR to refund
+     * @return array  Raw provider response
+     */
+    public function refund(string $orderId, string $refundId, float $amount): array;
+
+    /** Canonical gateway name (matches the value stored on payment rows). */
+    public function name(): string;
 }

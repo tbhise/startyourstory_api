@@ -93,6 +93,12 @@ class AdminSystemSettingController extends Controller
                 'value.numeric'  => 'Value must be a number.',
             ];
 
+            // Per-key value constraints beyond the generic type check.
+            if ($key === 'default_payment_gateway') {
+                $rules['value']       = 'required|in:phonepe,cashfree';
+                $messages['value.in'] = 'Gateway must be one of: phonepe, cashfree.';
+            }
+
             $validator = Validator::make($request->all(), $rules, $messages);
             if ($validator->fails()) {
                 return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);

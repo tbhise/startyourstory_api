@@ -12,15 +12,15 @@ class PaymentGatewayFactory
      * To add a new provider: implement PaymentGateway, place it in this namespace,
      * and add a case here. No other files need to change.
      *
-     * Supported:  phonepe
-     * Planned:    cashfree | payu
+     * Supported:  phonepe | cashfree
+     * Planned:    payu | razorpay
      */
     public static function make(string $gateway = 'phonepe'): PaymentGateway
     {
         return match ($gateway) {
             'phonepe'  => new PhonePeGateway(),
-            // 'cashfree' => new CashfreeGateway(),
-            // 'payu'     => new PayUGateway(),
+            'cashfree' => new CashfreeGateway(),
+            // 'razorpay' => new RazorpayGateway(),
             default    => throw new \InvalidArgumentException("Unknown payment gateway: {$gateway}"),
         };
     }

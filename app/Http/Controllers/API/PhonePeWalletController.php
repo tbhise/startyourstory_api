@@ -3,18 +3,22 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Services\Payment\PhonePeGateway;
+use App\Services\Payment\PaymentManager;
+use App\Services\Payment\Settlement\WalletSettlementService;
 use App\Helpers\WalletHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use App\Helpers\AuthHelper;
-use App\Services\ActivityTracker;
-use App\Enums\ActivityType;
 
 class PhonePeWalletController extends Controller
 {
+    public function __construct(
+        private PaymentManager $payments,
+        private WalletSettlementService $settlement,
+    ) {}
+
     private function getStudent(Request $request): ?object
     {
         $user = AuthHelper::resolveUser($request);
@@ -52,10 +56,16 @@ class PhonePeWalletController extends Controller
 
             $amount = (float) $request->amount;
 
-            // Remove stale pending PhonePe orders for this user
+            // Resolve the admin-selected active gateway. The gateway name is
+            // stamped onto the row so verify/webhook use the SAME gateway even if
+            // the admin switches the default afterwards.
+            $gateway     = $this->payments->active();
+            $gatewayName = $gateway->name();
+
+            // Remove stale pending orders for this user on the active gateway.
             DB::table('wallet_recharges')
                 ->where('user_id', $user->id)
-                ->where('payment_method', 'phonepe')
+                ->where('payment_method', $gatewayName)
                 ->where('status', 'pending')
                 ->delete();
 
@@ -63,7 +73,7 @@ class PhonePeWalletController extends Controller
             $rechargeId = DB::table('wallet_recharges')->insertGetId([
                 'user_id'        => $user->id,
                 'amount'         => $amount,
-                'payment_method' => 'phonepe',
+                'payment_method' => $gatewayName,
                 'payment_status' => 'pending',
                 'status'         => 'pending',
                 'created_at'     => now(),
@@ -75,13 +85,16 @@ class PhonePeWalletController extends Controller
 
             $frontendUrl  = rtrim(config('services.phonepe.frontend_url', config('app.url')), '/');
             $redirectUrl  = $frontendUrl . '/wallet/recharge?phonepe_txn=' . $merchantTxnId;
-            $callbackUrl  = url('/api/wallet/recharge/phonepe/webhook');
+            $callbackUrl  = url('/api/wallet/recharge/' . $gatewayName . '/webhook');
 
-            $gateway = new PhonePeGateway();
-            $order   = $gateway->createOrder($amount, $merchantTxnId, [
-                'user_id'      => $user->id,
-                'redirect_url' => $redirectUrl,
-                'callback_url' => $callbackUrl,
+            $order = $gateway->createOrder($amount, $merchantTxnId, [
+                'user_id'        => $user->id,
+                'redirect_url'   => $redirectUrl,
+                'callback_url'   => $callbackUrl,
+                'customer_id'    => 'u' . $user->id,
+                'customer_name'  => $user->name ?? '',
+                'customer_email' => $user->email ?? '',
+                'customer_phone' => $user->phone ?? '',
             ]);
 
             DB::table('wallet_recharges')
@@ -96,12 +109,15 @@ class PhonePeWalletController extends Controller
 
             return response()->json([
                 'status'  => true,
-                'message' => 'PhonePe order created',
+                'message' => 'Payment order created',
                 'data'    => [
-                    'redirect_url'   => $order['redirect_url'],
-                    'transaction_id' => $merchantTxnId,
-                    'recharge_id'    => $rechargeId,
-                    'amount'         => $amount,
+                    'gateway'            => $order['gateway'],
+                    'redirect_url'       => $order['redirect_url'],
+                    'payment_session_id' => $order['payment_session_id'],
+                    'mode'               => $order['mode'],
+                    'transaction_id'     => $merchantTxnId,
+                    'recharge_id'        => $rechargeId,
+                    'amount'             => $amount,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -137,7 +153,7 @@ class PhonePeWalletController extends Controller
             $recharge = DB::table('wallet_recharges')
                 ->where('gateway_order_id', $merchantTxnId)
                 ->where('user_id', $user->id)
-                ->where('payment_method', 'phonepe')
+                ->whereNotIn('payment_method', ['manual'])
                 ->first();
 
             if (!$recharge) {
@@ -154,61 +170,14 @@ class PhonePeWalletController extends Controller
                 ]);
             }
 
-            // Query PhonePe status API — never trust client-side params
-            $gateway     = new PhonePeGateway();
-            $statusData  = $gateway->fetchPayment($merchantTxnId);
-            $isSuccess   = ($statusData['state'] ?? '') === 'COMPLETED';
+            // Resolve the gateway the order was created with (NOT the active one)
+            // and get the server-side, normalized status. Never trust the client.
+            $gateway = $this->payments->gateway($recharge->payment_method);
+            $result  = $gateway->verifyPayment($merchantTxnId);
 
-            $gatewayPaymentId = $statusData['paymentDetails'][0]['transactionId'] ?? null;
-
-            // Mutate atomically under a row lock so verify() racing the S2S webhook
-            // (or a double-submitted verify) can never double-credit. Outcome:
-            // 'credited' | 'already' | 'failed'.
-            $outcome = DB::transaction(function () use ($recharge, $isSuccess, $gatewayPaymentId, $statusData) {
-                $fresh = DB::table('wallet_recharges')
-                    ->where('id', $recharge->id)
-                    ->lockForUpdate()
-                    ->first();
-
-                if ($fresh->payment_status === 'paid') {
-                    return 'already';
-                }
-
-                if ($isSuccess) {
-                    DB::table('wallet_recharges')
-                        ->where('id', $fresh->id)
-                        ->update([
-                            'gateway_payment_id' => $gatewayPaymentId,
-                            'payment_status'     => 'paid',
-                            'status'             => 'approved',
-                            'gateway_response'   => json_encode($statusData),
-                            'approved_at'        => now(),
-                            'updated_at'         => now(),
-                        ]);
-
-                    WalletHelper::credit($fresh->user_id, (float) $fresh->amount, $fresh->id);
-                    return 'credited';
-                }
-
-                DB::table('wallet_recharges')
-                    ->where('id', $fresh->id)
-                    ->update([
-                        'payment_status'   => 'failed',
-                        'status'           => 'rejected',
-                        'gateway_response' => json_encode($statusData),
-                        'rejected_at'      => now(),
-                        'updated_at'       => now(),
-                    ]);
-                return 'failed';
-            });
-
-            if ($outcome === 'credited') {
-                // Activity log (async, non-blocking) — only a fresh credit is tracked.
-                ActivityTracker::log(ActivityTracker::STUDENT, $user->id, ActivityType::WALLET_RECHARGED, [
-                    'recharge_id' => (int) $recharge->id,
-                    'amount'      => (float) $recharge->amount,
-                ]);
-            }
+            // Row-locked, idempotent, amount-verified settlement shared with the
+            // webhook. Outcome: 'credited' | 'already' | 'failed' | 'pending'.
+            $outcome = $this->settlement->settle($recharge, $result);
 
             if ($outcome === 'credited' || $outcome === 'already') {
                 $wallet = WalletHelper::getOrCreate($user->id);
@@ -223,7 +192,9 @@ class PhonePeWalletController extends Controller
 
             return response()->json([
                 'status'  => false,
-                'message' => 'Payment was not successful. State: ' . ($statusData['state'] ?? 'UNKNOWN'),
+                'message' => $outcome === 'pending'
+                    ? 'Payment is still being processed. Please wait a moment and refresh.'
+                    : 'Payment was not successful.',
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -239,99 +210,41 @@ class PhonePeWalletController extends Controller
     | Verifies X-VERIFY signature before processing.
     |--------------------------------------------------------------------------
     */
-    public function webhook(Request $request)
+    public function webhook(Request $request, string $gateway = 'phonepe')
     {
         try {
-            // PhonePe v2 sends plain JSON body + Authorization: SHA256(username:password) header
-            $authorization = $request->header('Authorization') ?? '';
+            // Verify signature + normalize the payload via the specific gateway
+            // this endpoint serves. parseWebhook() fails closed (throws) on a bad
+            // signature.
+            $gw = $this->payments->gateway($gateway);
 
-            $gateway = new PhonePeGateway();
-            if (!$gateway->verifySignature(['authorization' => $authorization])) {
-                Log::warning('PhonePe webhook: signature verification failed');
-                return response()->json(['message' => 'Invalid signature'], 403);
+            try {
+                $result = $gw->parseWebhook($request->getContent(), $request->headers->all());
+            } catch (\RuntimeException $e) {
+                Log::warning("Wallet {$gateway} webhook: " . $e->getMessage());
+                return response()->json(['message' => 'Invalid signature'], 401);
             }
 
-            $body    = $request->all();
-            $event   = $body['event'] ?? '';
-            $payload = $body['payload'] ?? [];
-
-            if (empty($payload)) {
-                Log::warning('PhonePe webhook: empty payload');
-                return response()->json(['message' => 'Bad request'], 400);
-            }
-
-            $merchantTxnId = $payload['merchantOrderId'] ?? null;
-
+            $merchantTxnId = $result['order_id'] ?? null;
             if (!$merchantTxnId) {
-                return response()->json(['message' => 'Missing merchantOrderId'], 400);
+                return response()->json(['message' => 'Missing order id'], 400);
             }
 
             $recharge = DB::table('wallet_recharges')
                 ->where('gateway_order_id', $merchantTxnId)
-                ->where('payment_method', 'phonepe')
+                ->where('payment_method', $gateway)
                 ->first();
 
             if (!$recharge) {
-                Log::warning("PhonePe webhook: no recharge found for txn {$merchantTxnId}");
-                return response()->json(['message' => 'Not found'], 404);
+                // Not a wallet order for this gateway (e.g. another domain) — ack.
+                return response()->json(['message' => 'OK'], 200);
             }
 
-            $isSuccess        = ($payload['state'] ?? '') === 'COMPLETED';
-            $gatewayPaymentId = $payload['paymentDetails'][0]['transactionId'] ?? null;
-
-            // Credit atomically under a row lock so concurrent / duplicate / replayed
-            // webhooks can never double-credit: the lock serializes them and the
-            // re-checked payment_status='paid' guard makes repeats a no-op.
-            $credited = DB::transaction(function () use ($recharge, $isSuccess, $gatewayPaymentId, $body) {
-                $fresh = DB::table('wallet_recharges')
-                    ->where('id', $recharge->id)
-                    ->lockForUpdate()
-                    ->first();
-
-                // Idempotency — already credited by an earlier webhook or by verify().
-                if ($fresh->payment_status === 'paid') {
-                    return false;
-                }
-
-                if ($isSuccess) {
-                    DB::table('wallet_recharges')
-                        ->where('id', $fresh->id)
-                        ->update([
-                            'gateway_payment_id' => $gatewayPaymentId,
-                            'payment_status'     => 'paid',
-                            'status'             => 'approved',
-                            'gateway_response'   => json_encode($body),
-                            'approved_at'        => now(),
-                            'updated_at'         => now(),
-                        ]);
-
-                    WalletHelper::credit($fresh->user_id, (float) $fresh->amount, $fresh->id);
-                    return true;
-                }
-
-                DB::table('wallet_recharges')
-                    ->where('id', $fresh->id)
-                    ->update([
-                        'payment_status'   => 'failed',
-                        'status'           => 'rejected',
-                        'gateway_response' => json_encode($body),
-                        'rejected_at'      => now(),
-                        'updated_at'       => now(),
-                    ]);
-                return false;
-            });
-
-            // Activity log (async, non-blocking) — only a fresh credit is tracked.
-            if ($credited) {
-                ActivityTracker::log(ActivityTracker::STUDENT, $recharge->user_id, ActivityType::WALLET_RECHARGED, [
-                    'recharge_id' => (int) $recharge->id,
-                    'amount'      => (float) $recharge->amount,
-                ]);
-            }
+            // Row-locked, idempotent, amount-verified settlement shared with verify().
+            $this->settlement->settle($recharge, $result);
 
             return response()->json(['message' => 'OK'], 200);
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('PhonePeWalletController@webhook: ' . $e->getMessage());
             return response()->json(['message' => 'Internal error'], 500);
         }

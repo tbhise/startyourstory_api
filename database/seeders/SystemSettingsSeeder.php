@@ -34,6 +34,11 @@ class SystemSettingsSeeder extends Seeder
             // endpoint, NOT the generic text editor — hence is_editable = false.
             ['payment_qr_code', '', 'string', 'Payment QR Code', 'QR code image for manual UPI payments (optional).', 'payment'],
 
+            // Active online payment gateway. Resolved by PaymentManager at
+            // payment-initiation time; verify/webhook use the gateway stored on
+            // the row. Allowed values: phonepe | cashfree.
+            ['default_payment_gateway', 'phonepe', 'string', 'Default Payment Gateway', 'Online payment gateway used for new payments (Wallet, Premium, Creator, CA Library). Existing pending payments still verify on the gateway they were created with.', 'payment'],
+
             // CA Library — snapshotted into ca_test_submissions at creation time;
             // changing it only affects NEW submissions.
             ['ca_library_evaluation_fee', '99', 'integer', 'Answer Sheet Evaluation Fee', 'Fee (₹) charged for one CA Library answer sheet evaluation. Applied to new submissions only.', 'ca_library'],

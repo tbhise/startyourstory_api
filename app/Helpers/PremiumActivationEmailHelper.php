@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Log;
 class PremiumActivationEmailHelper
 {
     public const TYPE_PHONEPE          = 'phonepe';
+    public const TYPE_CASHFREE         = 'cashfree';
     public const TYPE_ADMIN_ASSIGNED   = 'admin_assigned';
     public const TYPE_REQUEST_APPROVED = 'request_approved';
 

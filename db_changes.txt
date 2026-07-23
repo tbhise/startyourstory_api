@@ -3453,3 +3453,37 @@ ALTER TABLE `error_logs`
 -- ca_library.ca_test_submissions.amount at submission time.
 INSERT INTO system_settings (setting_key, setting_value, setting_type, title, description, category, is_editable, created_at, updated_at)
 VALUES ('ca_library_evaluation_fee', '99', 'integer', 'Answer Sheet Evaluation Fee', 'Fee (Rs.) charged for one CA Library answer sheet evaluation. Applied to new submissions only.', 'ca_library', 1, NOW(), NOW());
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## MULTI-GATEWAY PAYMENTS — Cashfree + dynamic gateway selection — added 2026-07-23
+## ═══════════════════════════════════════════════════════════════════════════════
+## Adds Cashfree alongside PhonePe with an admin-selectable active gateway.
+## Gateway-name columns are widened from ENUM to VARCHAR so future gateways
+## (razorpay, payu, …) need NO further schema change. Pure superset — every
+## existing value ('manual','razorpay','phonepe') stays valid, so all existing
+## rows, pending payments and payment history remain untouched. No data migration.
+
+-- Widen the three gateway-name ENUM columns to VARCHAR(20).
+ALTER TABLE `wallet_recharges`
+  MODIFY COLUMN `payment_method` VARCHAR(20) NOT NULL DEFAULT 'razorpay';
+
+ALTER TABLE `firm_subscriptions`
+  MODIFY COLUMN `payment_gateway` VARCHAR(20) NOT NULL DEFAULT 'manual';
+
+ALTER TABLE `creator_engagement_payments`
+  MODIFY COLUMN `payment_method` VARCHAR(20) NOT NULL;
+
+-- ca_library.ca_payments.gateway is already VARCHAR(30) — no change needed.
+
+-- Active gateway setting (main SYS DB). Also seeded via SystemSettingsSeeder.
+-- Idempotent: does nothing if the key already exists.
+INSERT INTO system_settings (setting_key, setting_value, setting_type, title, description, category, is_editable, created_at, updated_at)
+VALUES ('default_payment_gateway', 'phonepe', 'string', 'Default Payment Gateway', 'Online payment gateway used for new payments (Wallet, Premium, Creator, CA Library). Existing pending payments still verify on the gateway they were created with. Allowed: phonepe | cashfree.', 'payment', 1, NOW(), NOW())
+ON DUPLICATE KEY UPDATE setting_key = setting_key;
+
+-- ROLLBACK:
+-- ALTER TABLE `wallet_recharges`            MODIFY COLUMN `payment_method`  ENUM('razorpay','phonepe','manual') NOT NULL DEFAULT 'razorpay';
+-- ALTER TABLE `firm_subscriptions`          MODIFY COLUMN `payment_gateway` ENUM('manual','razorpay','phonepe') NOT NULL DEFAULT 'manual';
+-- ALTER TABLE `creator_engagement_payments` MODIFY COLUMN `payment_method`  ENUM('razorpay','phonepe','manual') NOT NULL;
+-- DELETE FROM system_settings WHERE setting_key = 'default_payment_gateway';

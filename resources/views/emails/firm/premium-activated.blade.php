@@ -3,6 +3,7 @@
 @php
     $confirmations = [
         'phonepe'          => 'Your payment has been received successfully and your Premium subscription is now active.',
+        'cashfree'         => 'Your payment has been received successfully and your Premium subscription is now active.',
         'admin_assigned'   => 'A Premium subscription has been activated on your account by the StartYourStory team.',
         'request_approved' => 'Your Premium subscription request has been approved and your subscription is now active.',
     ];

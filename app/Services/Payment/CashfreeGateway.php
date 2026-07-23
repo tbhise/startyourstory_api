@@ -25,16 +25,41 @@ class CashfreeGateway implements PaymentGateway
 
     public function __construct()
     {
+        // All configuration comes from the environment via config/services.php —
+        // no hardcoded credentials, URLs, API version or mode. Values may be
+        // empty when Cashfree is not configured; ensureConfigured() guards use.
         $this->appId      = (string) config('services.cashfree.app_id');
         $this->secretKey  = (string) config('services.cashfree.secret_key');
-        $this->apiVersion = (string) config('services.cashfree.api_version', '2023-08-01');
-        $this->baseUrl    = rtrim((string) config('services.cashfree.base_url', 'https://sandbox.cashfree.com/pg'), '/');
-        $this->mode       = (string) config('services.cashfree.mode', 'sandbox');
+        $this->apiVersion = (string) config('services.cashfree.api_version');
+        $this->baseUrl    = rtrim((string) config('services.cashfree.base_url'), '/');
+        $this->mode       = (string) config('services.cashfree.mode');
     }
 
     public function name(): string
     {
         return 'cashfree';
+    }
+
+    /**
+     * Fail loudly (never silently) if Cashfree is selected without the required
+     * environment configuration. The message names the missing variables and
+     * contains no secrets. Called before any Cashfree API request.
+     */
+    private function ensureConfigured(): void
+    {
+        $missing = [];
+        if ($this->appId === '')      $missing[] = 'CASHFREE_APP_ID';
+        if ($this->secretKey === '')  $missing[] = 'CASHFREE_SECRET_KEY';
+        if ($this->baseUrl === '')    $missing[] = 'CASHFREE_BASE_URL';
+        if ($this->apiVersion === '') $missing[] = 'CASHFREE_API_VERSION';
+
+        if ($missing) {
+            throw new RuntimeException(
+                'Cashfree payment gateway is not configured. Missing environment variable(s): '
+                . implode(', ', $missing)
+                . '. Set them in your environment, or switch the default gateway back to PhonePe.'
+            );
+        }
     }
 
     private function headers(): array
@@ -55,6 +80,19 @@ class CashfreeGateway implements PaymentGateway
      */
     public function createOrder(float $amount, string $receipt, array $notes = []): array
     {
+        $this->ensureConfigured();
+
+        $orderMeta = [
+            // Cashfree substitutes {order_id} back into the return_url.
+            'return_url' => $notes['redirect_url'] ?? '',
+        ];
+        // Per-order S2S webhook: route this order's callback straight to its own
+        // domain webhook, so no dashboard webhook registration is required.
+        // (Ignored by Cashfree if empty; must be a public HTTPS URL to fire.)
+        if (! empty($notes['callback_url'])) {
+            $orderMeta['notify_url'] = $notes['callback_url'];
+        }
+
         $payload = [
             'order_id'       => $receipt,
             'order_amount'   => round($amount, 2),
@@ -67,10 +105,7 @@ class CashfreeGateway implements PaymentGateway
                 'customer_email' => (string) ($notes['customer_email'] ?? ''),
                 'customer_name'  => (string) ($notes['customer_name'] ?? ''),
             ],
-            'order_meta' => [
-                // Cashfree substitutes {order_id} back into the return_url.
-                'return_url' => $notes['redirect_url'] ?? '',
-            ],
+            'order_meta' => $orderMeta,
         ];
 
         $response = Http::withHeaders($this->headers())
@@ -99,6 +134,8 @@ class CashfreeGateway implements PaymentGateway
      */
     public function verifyPayment(string $orderId): array
     {
+        $this->ensureConfigured();
+
         $orderResp = Http::withHeaders($this->headers())
             ->get($this->baseUrl . '/orders/' . $orderId);
         $order = $orderResp->json() ?? [];
@@ -169,6 +206,8 @@ class CashfreeGateway implements PaymentGateway
      */
     public function refund(string $orderId, string $refundId, float $amount): array
     {
+        $this->ensureConfigured();
+
         $response = Http::withHeaders($this->headers())
             ->post($this->baseUrl . '/orders/' . $orderId . '/refunds', [
                 'refund_amount' => round($amount, 2),

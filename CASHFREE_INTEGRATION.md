@@ -62,17 +62,36 @@ ca-library_.my-library, UploadAnswerSheetModal) now call `launchCheckout()`.
 - New Cashfree webhooks: `/wallet/recharge/cashfree/webhook`,
   `/payments/cashfree/webhook`, `/creator-marketplace/payments/cashfree/webhook`,
   `/ca-library/payments/cashfree/webhook`. Existing PhonePe webhooks unchanged.
+- **Cashfree uses per-order `notify_url`** (`order_meta.notify_url`, set by each
+  domain's initiate to its own webhook above) so each payment's S2S callback goes
+  straight to the correct domain endpoint — **no dashboard webhook registration
+  needed for Cashfree**. PhonePe has no per-order webhook field, so it stays
+  dashboard-configured. Both still verify signature + settle idempotently, and the
+  frontend verify remains the primary settlement path.
 
 ## Config / env vars (add to `.env` for Cashfree)
 
+All Cashfree config is **environment-only** — `config/services.php` maps the vars
+below with **no hardcoded defaults**, and `CashfreeGateway` reads only from config.
+Empty placeholders live in `.env.example`. If Cashfree is selected while any of
+`CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_BASE_URL`, `CASHFREE_API_VERSION`
+is blank, the gateway throws a clear "not configured" error (fails loud, never
+silently falls back). If Cashfree is unconfigured and the admin hasn't switched,
+the app runs entirely on PhonePe.
+
 ```
-CASHFREE_APP_ID=<sandbox app id>
-CASHFREE_SECRET_KEY=<sandbox secret key>
-CASHFREE_API_VERSION=2023-08-01
-CASHFREE_BASE_URL=https://sandbox.cashfree.com/pg   # prod: https://api.cashfree.com/pg
-CASHFREE_MODE=sandbox                               # prod: production
+CASHFREE_APP_ID=          # sandbox App ID (then production)
+CASHFREE_SECRET_KEY=      # sandbox Secret Key — also signs webhooks (HMAC)
+CASHFREE_API_VERSION=     # Cashfree x-api-version date, e.g. 2023-08-01
+CASHFREE_BASE_URL=        # sandbox https://sandbox.cashfree.com/pg | prod https://api.cashfree.com/pg
+CASHFREE_MODE=            # sandbox | production (also drives the frontend JS SDK)
 ```
-Cashfree dashboard → set the webhook URLs above; the signing secret is the secret key.
+Cashfree signs webhooks with the secret key (no separate secret to set). Webhook
+URLs are supplied per-order via `notify_url`, so no dashboard webhook registration
+is required — you may still add one dashboard webhook as a belt-and-braces backup.
+Note: `notify_url` must be a **public HTTPS** URL for Cashfree to reach it, so on a
+local `http://127.0.0.1` backend the webhook won't fire — the frontend verify flow
+still settles the payment (use a tunnel like ngrok to exercise the webhook locally).
 
 ## Admin panel
 

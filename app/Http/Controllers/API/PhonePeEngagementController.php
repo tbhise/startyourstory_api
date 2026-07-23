@@ -96,6 +96,7 @@ class PhonePeEngagementController extends Controller
 
             $order = $gateway->createOrder($amount, $merchantTxnId, [
                 'redirect_url'   => $redirectUrl,
+                'callback_url'   => url('/api/creator-marketplace/payments/' . $gatewayName . '/webhook'),
                 'customer_id'    => 'f' . $firmProfile->id,
                 'customer_name'  => $user->name ?? '',
                 'customer_email' => $user->email ?? '',

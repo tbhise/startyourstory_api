@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Marketplace Declaration – NEXTSTEP SOLUTIONS (Start Your Story)</title>
+<style>
+  /* ==================== PAGE SETUP ==================== */
+  @page {
+    size: A4 portrait;
+    margin: 0 0 14mm 0; /* bottom margin reserved for the page-number footer */
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 9px;
+      color: #8a8a8a;
+    }
+  }
+
+  :root {
+    --navy: #122f6b;
+    --navy-deep: #0c2456;
+    --blue: #1d5fd6;
+    --blue-bright: #2e6fe4;
+    --sky: #a9c6ef;
+    --pale: #d9e6f7;
+    --pale-2: #ecf3fc;
+    --ink: #222222;
+    --grey: #4a4f57;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    font-family: "Segoe UI", "Segoe UI Variable", Arial, sans-serif;
+    font-size: 11.5px;
+    line-height: 1.65;
+    color: var(--ink);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ==================== REPEATING FRAME ==================== */
+  table.doc-frame { width: 100%; border-collapse: collapse; }
+  table.doc-frame > thead { display: table-header-group; }
+  table.doc-frame > thead td { padding: 0; }
+  .letterhead-gap { height: 20px; }
+
+  /* ==================== LETTERHEAD (pure HTML + CSS) ==================== */
+  header.letterhead {
+    position: relative;
+    height: 190px;
+    background: #ffffff;
+    overflow: hidden;
+    width: 100%;
+  }
+
+  /* ---- left diagonal strips ---- */
+  .edge { position: absolute; top: -25px; bottom: -25px; transform-origin: top left; }
+  .edge-pale2 {
+    left: -30px; width: 158px;
+    background: var(--pale-2);
+    background-image: linear-gradient(180deg, #eef4fc 0%, #dfeafa 100%);
+    transform: skewX(-21deg);
+    z-index: 1;
+  }
+  .edge-sky {
+    left: -30px; width: 128px;
+    background: var(--sky);
+    background-image: linear-gradient(180deg, #b9d2f4 0%, #8fb4ea 100%);
+    transform: skewX(-19deg);
+    z-index: 2;
+  }
+  .edge-navy {
+    left: -40px; width: 104px;
+    background: var(--navy);
+    background-image: linear-gradient(180deg, #16377c 0%, #0d2559 100%);
+    transform: skewX(-13deg);
+    z-index: 3;
+  }
+
+  /* ---- right curved swooshes ---- */
+  .swoosh { position: absolute; border-radius: 50%; }
+  .swoosh-pale {
+    width: 560px; height: 280px;
+    right: -140px; bottom: -235px;
+    transform: rotate(-26deg);
+    background: var(--pale);
+    background-image: linear-gradient(200deg, #e4eefb 0%, #cdddf5 100%);
+    z-index: 1;
+  }
+  .swoosh-sky {
+    width: 560px; height: 280px;
+    right: -175px; bottom: -258px;
+    transform: rotate(-26deg);
+    background: var(--sky);
+    background-image: linear-gradient(200deg, #9dbfee 0%, #6f9fe4 100%);
+    z-index: 2;
+  }
+  .swoosh-navy {
+    width: 600px; height: 300px;
+    right: -200px; bottom: -288px;
+    transform: rotate(-24deg);
+    background: var(--navy);
+    background-image: linear-gradient(210deg, #1a3f8f 0%, #0c2456 85%);
+    z-index: 3;
+  }
+
+  /* ---- bottom bar ---- */
+  .bottom-bar {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 5px;
+    background: var(--navy);
+    background-image: linear-gradient(90deg, #0d2559 0%, #16377c 55%, #1d5fd6 130%);
+    z-index: 6;
+  }
+
+  /* ---- brand block ---- */
+  .brand {
+    position: absolute;
+    left: 92px; top: 13px;
+    z-index: 5;
+  }
+  .brand-name {
+    font-size: 48px;
+    font-weight: 800;
+    letter-spacing: 0;
+    line-height: 1;
+    color: var(--navy);
+  }
+  .brand-sub {
+    font-size: 22px;
+    font-weight: 500;
+    letter-spacing: 12px;
+    line-height: 1.15;
+    color: var(--blue);
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .brand-rule {
+    width: 58px; height: 3px;
+    background: var(--blue);
+    margin: 7px 0 8px 2px;
+  }
+  .tagline {
+    font-size: 20px;
+    font-weight: 400;
+    line-height: 1.18;
+    color: var(--grey);
+    letter-spacing: 0.5px;
+  }
+
+  /* ---- vertical divider ---- */
+  .v-divider {
+    position: absolute;
+    left: 480px; top: 22px;
+    width: 2px; height: 146px;
+    background: var(--blue);
+    opacity: 0.85;
+    z-index: 5;
+  }
+
+  /* ---- contact block ---- */
+  .contact {
+    position: absolute;
+    left: 505px; top: 17px;
+    right: 26px;
+    z-index: 5;
+  }
+  .c-row {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 7px;
+  }
+  .c-row:last-child { margin-bottom: 0; }
+  .ico {
+    flex: 0 0 auto;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--blue);
+    background-image: linear-gradient(160deg, #2e6fe4 0%, #1245ad 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 10px;
+    margin-top: 1px;
+  }
+  .ico svg { width: 12px; height: 12px; display: block; }
+  .c-text { font-size: 9.8px; line-height: 1.4; color: #1b1f27; }
+  .c-text b { color: #10182b; font-weight: 700; }
+
+  /* ==================== BODY CONTENT ==================== */
+  td.doc-body {
+    padding: 0 35px 35px 35px;
+    vertical-align: top;
+  }
+
+  h1.doc-title {
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--navy);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    letter-spacing: 1px;
+    margin: 4px 0 18px 0;
+    page-break-after: avoid;
+  }
+
+  h2 {
+    font-size: 16px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--navy);
+    margin-top: 22px;
+    margin-bottom: 10px;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  h3 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--navy);
+    margin-top: 14px;
+    margin-bottom: 6px;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  p {
+    text-align: justify;
+    margin-bottom: 10px;
+    orphans: 3;
+    widows: 3;
+    page-break-inside: avoid;
+  }
+  .u { color: var(--navy); font-weight: 600; text-decoration: none; }
+
+  ul { list-style-type: disc; margin: 0 0 10px 0; padding-left: 28px; }
+  ul li {
+    text-align: justify;
+    margin-bottom: 6px;
+    page-break-inside: avoid;
+  }
+  ul li::marker { color: var(--navy); }
+
+  table.info {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 14px 0;
+    page-break-inside: avoid;
+  }
+  table.info th, table.info td {
+    border: 1px solid #d6d6d6;
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+    font-size: 11.5px;
+  }
+  table.info th { background: #f4f8ff; color: var(--navy); font-weight: 700; }
+  table.info td.label { background: #f4f8ff; font-weight: 600; width: 32%; color: var(--navy); }
+  table.info td.num { width: 6%; text-align: center; }
+
+  .note { font-size: 11px; color: #444444; font-style: italic; }
+
+  .sig-wrap {
+    margin-top: 30px;
+    page-break-inside: avoid;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 30px;
+  }
+  .sig-left { min-width: 260px; }
+  .sig-left .faith { margin-bottom: 6px; }
+  .sig-left .for-co { font-weight: 700; color: var(--navy); margin-bottom: 62px; }
+  .sig-line { border-top: 1.4px solid #222222; width: 240px; margin-bottom: 6px; }
+  .sig-name { font-weight: 700; }
+  .sig-desg { margin-bottom: 12px; }
+
+  .stamp-box {
+    width: 5cm; height: 3cm;
+    border: 1.5px dashed #9aa7c4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 9.5px;
+    color: #8a94ab;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 6px;
+    flex-shrink: 0;
+  }
+
+  h2 + p, h2 + ul, h3 + p, h3 + ul { page-break-before: avoid; }
+
+  /* ==================== SCREEN PREVIEW ==================== */
+  @media screen {
+    body { background: #e9edf3; }
+    .sheet {
+      width: 794px;
+      margin: 24px auto;
+      background: #ffffff;
+      box-shadow: 0 3px 16px rgba(0,0,0,0.18);
+    }
+  }
+  @media print {
+    body { background: #ffffff; }
+    .sheet { width: 100%; margin: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+<table class="doc-frame">
+  <thead>
+    <tr>
+      <td>
+        <header class="letterhead">
+          <div class="edge edge-pale2"></div>
+          <div class="edge edge-sky"></div>
+          <div class="edge edge-navy"></div>
+
+          <div class="swoosh swoosh-pale"></div>
+          <div class="swoosh swoosh-sky"></div>
+          <div class="swoosh swoosh-navy"></div>
+
+          <div class="brand">
+            <h1 class="brand-name">NEXTSTEP</h1>
+            <div class="brand-sub">SOLUTIONS</div>
+            <div class="brand-rule"></div>
+            <p class="tagline">EMPOWERING CAREERS.<br>TRANSFORMING LIVES.</p>
+          </div>
+
+          <div class="v-divider"></div>
+
+          <div class="contact">
+            <div class="c-row">
+              <span class="ico">
+                <svg viewBox="0 0 24 24" fill="#ffffff" xmlns="http://www.w3.org/2000/svg"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>
+              </span>
+              <div class="c-text">
+                <b>Registered Address:</b><br>
+                M.NO 3/0388, Near Ram Mandir, Wagholi,<br>
+                Pune – 412207, Maharashtra, India
+              </div>
+            </div>
+            <div class="c-row">
+              <span class="ico">
+                <svg viewBox="0 0 24 24" fill="#ffffff" xmlns="http://www.w3.org/2000/svg"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6l8 5 8-5v2z"/></svg>
+              </span>
+              <div class="c-text"><b>Email:</b> info@startyourstory.in</div>
+            </div>
+            <div class="c-row">
+              <span class="ico">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.9 5.7 3.9 9S14.5 18.4 12 21M12 3C9.5 5.6 8.1 8.7 8.1 12s1.4 6.4 3.9 9"/></svg>
+              </span>
+              <div class="c-text"><b>Website:</b> https://startyourstory.in</div>
+            </div>
+            <div class="c-row">
+              <span class="ico">
+                <svg viewBox="0 0 24 24" fill="#ffffff" xmlns="http://www.w3.org/2000/svg"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.85 21 3 13.15 3 3.5a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.24.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/></svg>
+              </span>
+              <div class="c-text"><b>Phone:</b> +91 9156235503</div>
+            </div>
+          </div>
+
+          <div class="bottom-bar"></div>
+        </header>
+        <div class="letterhead-gap"></div>
+      </td>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="doc-body">
+
+        <h1 class="doc-title">Marketplace Declaration</h1>
+
+        <h2>Company Information</h2>
+        <table class="info">
+          <tr><td class="label">Legal Entity Name</td><td>NEXTSTEP SOLUTIONS</td></tr>
+          <tr><td class="label">Brand / Trade Name</td><td>Start Your Story</td></tr>
+          <tr><td class="label">Website</td><td><span class="u">https://startyourstory.in</span></td></tr>
+          <tr><td class="label">Email</td><td>info@startyourstory.in</td></tr>
+          <tr><td class="label">Phone</td><td>+91 9156235503</td></tr>
+          <tr><td class="label">Registered Address</td><td>M.NO 3/0388, Near Ram Mandir, Wagholi, Pune – 412207, Maharashtra, India</td></tr>
+          <tr><td class="label">Nature of Business</td><td>Online recruitment platform for CA Firms and Students offering exclusively digital services and subscriptions. No physical products are sold on the platform.</td></tr>
+        </table>
+
+        <h2>1. Introduction</h2>
+        <p>Welcome to <span class="u">https://startyourstory.in</span> ("Start Your Story"), a recruitment platform owned and operated by <strong>NEXTSTEP SOLUTIONS</strong>. We strive to provide a secure, fair, and efficient platform for CA Firms and Students to connect and avail digital services. This declaration outlines the rules and guidelines that all users must adhere to while using our services.</p>
+        <p>The platform deals exclusively in digital services and subscriptions, including Premium Membership Plans for CA Firms, Platform Wallet Recharge Services, the CA Library (digital learning resources), and Resume Builder &amp; Career Services. We do not sell physical products, and payments are received only for digital services and subscriptions.</p>
+
+        <h2>2. Definitions</h2>
+        <ul>
+          <li><strong>Recruitment Platform ("Platform"):</strong> The online platform provided by NEXTSTEP SOLUTIONS through <span class="u">https://startyourstory.in</span> under the brand name "Start Your Story" for offering and delivering digital services, including recruitment, digital learning, and career services.</li>
+          <li><strong>User:</strong> Any individual or entity registered on the Platform, including both CA Firms and Students.</li>
+          <li><strong>CA Firm:</strong> A user (Chartered Accountancy firm) that subscribes to Premium Membership Plans, uses Platform Wallet Recharge Services, and avails recruitment-related digital services through the Platform.</li>
+          <li><strong>Student:</strong> A user who accesses the CA Library (digital learning resources), uses the Resume Builder &amp; Career Services, and applies to opportunities published by CA Firms through the Platform.</li>
+          <li><strong>Digital Services:</strong> The services offered on the Platform, namely Premium Membership Plans for CA Firms, Platform Wallet Recharge Services, the CA Library (digital learning resources), and Resume Builder &amp; Career Services.</li>
+          <li><strong>Transaction:</strong> Any agreement or exchange of digital services, subscriptions, or funds between users and the Platform, processed through the Platform. Payments are received only for digital services and subscriptions; no physical goods are bought, sold, or shipped.</li>
+        </ul>
+
+        <h2>3. User Responsibilities</h2>
+        <h3>3.1. Registration</h3>
+        <ul>
+          <li>All users must provide accurate and up-to-date information during registration.</li>
+          <li>Users must be at least 18 years old or have legal capacity to enter into contracts under applicable laws.</li>
+        </ul>
+        <h3>3.2. Conduct</h3>
+        <ul>
+          <li>Users must not engage in fraudulent, deceptive, or illegal activities.</li>
+          <li>Users must respect the rights and privacy of others.</li>
+          <li>Users must comply with all applicable laws and regulations.</li>
+        </ul>
+
+        <h2>4. Guidelines for CA Firms and Students (Service Subscribers)</h2>
+        <h3>4.1. Subscriptions and Purchases</h3>
+        <ul>
+          <li>Users must review the descriptions, features, and applicable plan details of the Digital Services — including Premium Membership Plans, Platform Wallet Recharge Services, the CA Library, and Resume Builder &amp; Career Services — before making a purchase or subscription.</li>
+          <li>Users must pay for Digital Services promptly and in accordance with the agreed terms.</li>
+        </ul>
+        <h3>4.2. Disputes</h3>
+        <ul>
+          <li>Users should first attempt to resolve disputes directly with the Platform's support team.</li>
+          <li>If a resolution cannot be reached, users may escalate the issue to <span class="u">https://startyourstory.in</span> for mediation.</li>
+        </ul>
+
+        <h2>5. Platform Service Guidelines</h2>
+        <h3>5.1. Service Listings</h3>
+        <ul>
+          <li>The Platform must provide accurate and complete information about the Digital Services listed, including Premium Membership Plans, Platform Wallet Recharge Services, the CA Library, and Resume Builder &amp; Career Services.</li>
+          <li>All service listings must comply with all applicable laws and Platform policies.</li>
+        </ul>
+        <h3>5.2. Transactions</h3>
+        <ul>
+          <li>The Platform must activate and deliver Digital Services promptly and in accordance with the agreed terms.</li>
+          <li>The Platform must handle cancellations, refunds, and disputes in a professional manner as per the Platform policies.</li>
+        </ul>
+
+        <h2>6. Platform Policies</h2>
+        <h3>6.1. Prohibited Items and Content</h3>
+        <ul>
+          <li>The sale or listing of illegal, counterfeit, or prohibited items or content is strictly forbidden. The Platform does not list or sell physical products of any kind.</li>
+          <li><span class="u">https://startyourstory.in</span> reserves the right to remove any listings or content that violate this policy.</li>
+        </ul>
+        <h3>6.2. Fees and Payments</h3>
+        <ul>
+          <li><span class="u">https://startyourstory.in</span> may charge fees for subscriptions, wallet recharges, Digital Services, or other services.</li>
+          <li>All fees will be clearly disclosed and agreed upon before any transactions.</li>
+        </ul>
+        <h3>6.3. Privacy and Data Protection</h3>
+        <ul>
+          <li><span class="u">https://startyourstory.in</span> is committed to protecting user privacy and personal information.</li>
+          <li>Users' data will be handled in accordance with our Privacy Policy.</li>
+        </ul>
+
+        <h2>7. Dispute Resolution</h2>
+        <ul>
+          <li><span class="u">https://startyourstory.in</span> provides a mediation service for resolving disputes between users (CA Firms and Students) and the Platform.</li>
+          <li>Users agree to cooperate with the mediation process and abide by the final decision.</li>
+        </ul>
+
+        <h2>8. Changes to the Declaration</h2>
+        <ul>
+          <li><span class="u">https://startyourstory.in</span> reserves the right to modify this declaration at any time.</li>
+          <li>Users will be notified of any significant changes and are expected to comply with the updated terms.</li>
+        </ul>
+
+        <h2>9. Contact Information</h2>
+        <p>For any questions or concerns, users can contact our support team at:</p>
+        <table class="info">
+          <tr><td class="label">Support Email</td><td>info@startyourstory.in</td></tr>
+          <tr><td class="label">Support Phone</td><td>+91 9156235503</td></tr>
+          <tr><td class="label">Website</td><td><span class="u">https://startyourstory.in</span></td></tr>
+        </table>
+        <p>By using <span class="u">https://startyourstory.in</span>, you agree to comply with this declaration and all associated policies. Thank you for being a part of our community!</p>
+
+        <h2>Products / Services Listed on https://startyourstory.in</h2>
+        <table class="info">
+          <tr>
+            <th style="width:6%; text-align:center;">Sr. No.</th>
+            <th style="width:34%;">Product / Service</th>
+            <th style="width:20%;">Category</th>
+            <th>Description</th>
+          </tr>
+          <tr>
+            <td class="num">1</td>
+            <td>Premium Membership Plans for CA Firms</td>
+            <td>Digital Subscription</td>
+            <td>Paid membership plans that give CA Firms enhanced access to recruitment and platform features on Start Your Story.</td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td>Platform Wallet Recharge Services</td>
+            <td>Digital Service</td>
+            <td>Prepaid wallet recharges used by registered users to avail paid digital services on the Platform.</td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td>CA Library (Digital Learning Resources)</td>
+            <td>Digital Learning Resource</td>
+            <td>Access to a digital library of learning resources and study material for Students on the Platform.</td>
+          </tr>
+          <tr>
+            <td class="num">4</td>
+            <td>Resume Builder &amp; Career Services</td>
+            <td>Digital Service</td>
+            <td>Online resume building tools and career support services for Students on the Platform.</td>
+          </tr>
+        </table>
+        <p class="note">All of the above are digital services and subscriptions delivered online. No physical products are sold, stocked, or shipped by the Platform.</p>
+
+        <h2>Settlement Bank Account Details</h2>
+        <table class="info">
+          <tr><td class="label">Bank Name</td><td>HDFC Bank</td></tr>
+          <tr><td class="label">Branch</td><td>Baner</td></tr>
+          <tr><td class="label">Account Name</td><td>NEXTSTEP SOLUTIONS</td></tr>
+          <tr><td class="label">Account Number</td><td>50200122743199</td></tr>
+          <tr><td class="label">IFSC Code</td><td>HDFC0001794</td></tr>
+        </table>
+
+        <div class="sig-wrap">
+          <div class="sig-left">
+            <p class="faith">Yours faithfully,</p>
+            <p class="for-co">For NEXTSTEP SOLUTIONS</p>
+            <div class="sig-line"></div>
+            <p class="sig-name">Tushar Shivnarayan Bhise</p>
+            <p class="sig-desg">Partner (Authorized Signatory)</p>
+            <p>Date: ____________________</p>
+          </div>
+          <div class="stamp-box">Affix Rectangular Company Stamp Here</div>
+        </div>
+
+      </td>
+    </tr>
+  </tbody>
+</table>
+</div>
+</body>
+</html>

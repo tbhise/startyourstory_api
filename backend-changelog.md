@@ -4,6 +4,53 @@
 
 ---
 
+## 2026-07-25 — Fix: Cashfree received placeholder phone instead of the real mobile
+
+Cashfree always got the `9999999999` fallback because the SYS payment-initiate
+controllers read `$user->phone`, which does not exist — the `users` table stores
+the number in `users.mobile`. The full `users` row is already on `$user`
+(AuthHelper / ApiAuthMiddleware), so `$user->mobile` is available with no extra
+query. One-line source fix per controller; no architecture, gateway, settlement,
+schema, API or frontend changes.
+
+### Changed — payment initiation source property only
+- **`PhonePeFirmController::initiate()`** — `customer_phone` now `$user->mobile ?? ''`.
+- **`PhonePeWalletController::initiate()`** — `customer_phone` now `$user->mobile ?? ''`.
+- **`PhonePeEngagementController::initiate()`** — `customer_phone` now `$user->mobile ?? ''`.
+- CashfreeGateway fallback unchanged: still substitutes `9999999999` only when the
+  passed phone is empty/whitespace, so it is now a genuine last resort.
+
+### Unchanged (intentional)
+- **CA Library** (`CaTestSubmissionController::pay`) left as-is — `ca_students` has
+  no mobile column, so its `9999999999` fallback stays by design.
+- PhonePeGateway, PaymentManager, settlement services, verification untouched.
+
+---
+
+## 2026-07-25 — Security hardening (F-1): reject "paid" settlements with a null gateway amount
+
+Payment audit finding F-1. The amount-verification in every settlement path only
+compared gateway vs expected when the gateway amount was non-null
+(`$actualPaise !== null && ...`), so a `paid`/`COMPLETED` result carrying a
+**null amount** would skip verification and settle. Not exploitable today
+(PhonePe/Cashfree always return an amount on success, and both responses are
+server-side/signature verified), but hardened to fail closed. Verification for
+all real payments is unchanged; only the null-amount case is now rejected.
+
+### Changed — settlement amount validation only (no APIs, schema, or business logic)
+- **`WalletSettlementService::settle()`** — a `paid` result with `amount === null`
+  now logs a warning and marks the recharge failed (no wallet credit).
+- **`FirmPremiumSettlementService::settle()`** — same guard; no premium activation.
+- **`CreatorEscrowSettlementService::settle()`** — same guard; escrow not held
+  (attempt left retryable, matching existing failure behaviour).
+- **`CaTestSubmissionController::settlePayment()`** — same guard; submission not
+  marked paid / awaiting evaluation.
+- Each warning logs `service`, `gateway`, `order_id`, payment/row id, `expected`
+  and `actual` (null) for debugging. The existing non-null mismatch check is
+  preserved verbatim as an `elseif`.
+
+---
+
 ## 2026-07-23 — Fix: Cashfree order fails with "customer_phone is missing"
 
 CA Library answer-sheet payment (and any Cashfree flow for a user without a

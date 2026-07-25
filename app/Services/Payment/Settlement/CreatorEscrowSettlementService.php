@@ -36,7 +36,20 @@ class CreatorEscrowSettlementService
         if ($isSuccess) {
             $expectedPaise = (int) round(((float) $payment->amount) * 100);
             $actualPaise   = $result['amount'] ?? null;
-            if ($actualPaise !== null && $actualPaise !== $expectedPaise) {
+            // Fail closed: a 'paid' result MUST carry a gateway amount to verify
+            // against. A null amount (never returned by PhonePe/Cashfree on a
+            // successful payment) can no longer silently bypass the equality check.
+            if ($actualPaise === null) {
+                Log::warning('Creator escrow rejected: gateway reported success without an amount', [
+                    'service'    => 'CreatorEscrowSettlementService',
+                    'gateway'    => $payment->payment_method ?? null,
+                    'order_id'   => $result['order_id'] ?? $payment->gateway_order_id ?? null,
+                    'payment_id' => $payment->id,
+                    'expected'   => $expectedPaise,
+                    'actual'     => null,
+                ]);
+                $isSuccess = false;
+            } elseif ($actualPaise !== $expectedPaise) {
                 Log::warning('Creator escrow amount mismatch', [
                     'payment_id' => $payment->id, 'expected' => $expectedPaise, 'actual' => $actualPaise,
                 ]);

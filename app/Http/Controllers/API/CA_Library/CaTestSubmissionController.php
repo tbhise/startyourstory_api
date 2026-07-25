@@ -336,7 +336,20 @@ class CaTestSubmissionController extends Controller
         // must equal the snapshotted attempt amount.
         $expectedPaise = (int) round(((float) $payment->amount) * 100);
         $actualPaise   = $result['amount'] ?? null;
-        if ($isSuccess && $actualPaise !== null && $actualPaise !== $expectedPaise) {
+        // Fail closed: a 'paid' result MUST carry a gateway amount to verify
+        // against. A null amount (never returned by PhonePe/Cashfree on a
+        // successful payment) can no longer silently bypass the equality check.
+        if ($isSuccess && $actualPaise === null) {
+            Log::warning('CaTestSubmission payment rejected: gateway reported success without an amount', [
+                'service'    => 'CaTestSubmissionController::settlePayment',
+                'gateway'    => $payment->gateway ?? null,
+                'order_id'   => $result['order_id'] ?? $payment->gateway_order_id ?? null,
+                'payment_id' => $payment->id,
+                'expected'   => $expectedPaise,
+                'actual'     => null,
+            ]);
+            $isSuccess = false;
+        } elseif ($isSuccess && $actualPaise !== $expectedPaise) {
             Log::warning('CaTestSubmission payment amount mismatch', [
                 'payment_id' => $payment->id, 'expected' => $expectedPaise, 'actual' => $actualPaise,
             ]);

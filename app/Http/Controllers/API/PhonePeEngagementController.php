@@ -100,7 +100,7 @@ class PhonePeEngagementController extends Controller
                 'customer_id'    => 'f' . $firmProfile->id,
                 'customer_name'  => $user->name ?? '',
                 'customer_email' => $user->email ?? '',
-                'customer_phone' => $user->phone ?? '',
+                'customer_phone' => $user->mobile ?? '',
             ]);
 
             DB::table('creator_engagement_payments')

@@ -38,7 +38,20 @@ class WalletSettlementService
         if ($isSuccess) {
             $expectedPaise = (int) round(((float) $recharge->amount) * 100);
             $actualPaise   = $result['amount'] ?? null;
-            if ($actualPaise !== null && $actualPaise !== $expectedPaise) {
+            // Fail closed: a 'paid' result MUST carry a gateway amount to verify
+            // against. A null amount (never returned by PhonePe/Cashfree on a
+            // successful payment) can no longer silently bypass the equality check.
+            if ($actualPaise === null) {
+                Log::warning('Wallet recharge rejected: gateway reported success without an amount', [
+                    'service'     => 'WalletSettlementService',
+                    'gateway'     => $recharge->payment_method ?? null,
+                    'order_id'    => $result['order_id'] ?? $recharge->gateway_order_id ?? null,
+                    'recharge_id' => $recharge->id,
+                    'expected'    => $expectedPaise,
+                    'actual'      => null,
+                ]);
+                $isSuccess = false;
+            } elseif ($actualPaise !== $expectedPaise) {
                 Log::warning('Wallet recharge amount mismatch', [
                     'recharge_id' => $recharge->id, 'expected' => $expectedPaise, 'actual' => $actualPaise,
                 ]);

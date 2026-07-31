@@ -208,6 +208,14 @@
         </tr>
     </table>
 
+    {{-- Open-tracking pixel. Rendered ONLY when the sender passes $openPixelUrl
+         (campaign sends); every transactional email leaves it unset. --}}
+    @isset($openPixelUrl)
+        @if ($openPixelUrl)
+            <img src="{{ $openPixelUrl }}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">
+        @endif
+    @endisset
+
 </body>
 
 </html>

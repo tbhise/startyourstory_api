@@ -3487,3 +3487,37 @@ ON DUPLICATE KEY UPDATE setting_key = setting_key;
 -- ALTER TABLE `firm_subscriptions`          MODIFY COLUMN `payment_gateway` ENUM('manual','razorpay','phonepe') NOT NULL DEFAULT 'manual';
 -- ALTER TABLE `creator_engagement_payments` MODIFY COLUMN `payment_method`  ENUM('razorpay','phonepe','manual') NOT NULL;
 -- DELETE FROM system_settings WHERE setting_key = 'default_payment_gateway';
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## 2026-07-31 — Campaign email templates + open tracking
+## ═══════════════════════════════════════════════════════════════════════════════
+## Makes the admin Campaign module template-driven instead of hardcoded to the
+## re-engagement mail, and finally populates campaigns.opened_count.
+##
+## The selected template key reuses the existing `campaigns.campaign_type` column
+## (values: 'reengagement' | 'technology-solutions-launch'), so NO new column is
+## needed for it — only the editable subject override is new. The premium/free
+## audience filter lives in the existing `campaigns.filters` JSON (`plan` key), so
+## it needs no column either. Pure additive change: existing rows keep working
+## (campaign_type='reengagement', subject NULL, filters without a `plan` key are
+## all treated exactly as before).
+##
+## Migration: database/migrations/2026_07_31_100001_add_template_support_and_open_tracking.php
+
+-- Admin's editable subject for a campaign send. NULL = use the template's own
+-- default subject (or, for re-engagement, the per-segment subject line).
+ALTER TABLE `campaigns`
+  ADD COLUMN `subject` VARCHAR(255) NULL AFTER `campaign_name`;
+
+-- Open tracking, mirroring the existing click_count / clicked_at pair. Written by
+-- the signed route GET /e/open/{emailLog}, which returns a 1x1 transparent GIF:
+-- open_count increments on every hit, opened_at is stamped on the first open only,
+-- and the first open increments campaigns.opened_count.
+ALTER TABLE `email_logs`
+  ADD COLUMN `open_count` INT       NOT NULL DEFAULT 0 AFTER `clicked_at`,
+  ADD COLUMN `opened_at`  TIMESTAMP NULL              AFTER `open_count`;
+
+-- ROLLBACK:
+-- ALTER TABLE `campaigns`  DROP COLUMN `subject`;
+-- ALTER TABLE `email_logs` DROP COLUMN `opened_at`, DROP COLUMN `open_count`;

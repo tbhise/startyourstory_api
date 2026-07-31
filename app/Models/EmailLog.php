@@ -21,6 +21,8 @@ class EmailLog extends Model
         'sent_at',
         'click_count',
         'clicked_at',
+        'open_count',
+        'opened_at',
     ];
 
     protected function casts(): array
@@ -28,6 +30,7 @@ class EmailLog extends Model
         return [
             'sent_at'    => 'datetime',
             'clicked_at' => 'datetime',
+            'opened_at'  => 'datetime',
         ];
     }
 
@@ -51,6 +54,19 @@ class EmailLog extends Model
         $this->click_count = (int) $this->click_count + 1;
         if (is_null($this->clicked_at)) {
             $this->clicked_at = now();
+        }
+        $this->save();
+    }
+
+    /**
+     * Record an open (tracking pixel hit): always bump open_count; stamp opened_at
+     * on the first open only. Same single-write shape as registerClick().
+     */
+    public function registerOpen(): void
+    {
+        $this->open_count = (int) $this->open_count + 1;
+        if (is_null($this->opened_at)) {
+            $this->opened_at = now();
         }
         $this->save();
     }

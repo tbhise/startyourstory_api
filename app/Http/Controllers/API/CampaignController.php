@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ProcessCampaignJob;
 use App\Models\Campaign;
 use App\Services\AdminActivityLogger;
+use App\Services\Campaign\CampaignTemplateRegistry;
 use App\Services\Campaign\ReEngagementCampaignService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,8 +20,10 @@ use InvalidArgumentException;
  *
  *   POST /admin/campaigns/dry-run  — count eligible users (sends nothing)
  *   POST /admin/campaigns/test     — single preview email (no campaign, no bulk)
+ *   POST /admin/campaigns/preview  — render the email as HTML (sends nothing)
  *   POST /admin/campaigns/send     — create campaign + queue it
  *   GET  /admin/campaigns          — execution history
+ *   GET  /admin/campaigns/templates — selectable built-in email templates
  */
 class CampaignController extends Controller
 {
@@ -38,14 +41,15 @@ class CampaignController extends Controller
     public function dryRun(Request $request)
     {
         try {
-            $filters = $this->service->normalizeFilters($request->all());
+            $filters  = $this->service->normalizeFilters($request->all());
+            $template = $this->service->normalizeTemplate($request->all(), $filters['target_type']);
         } catch (InvalidArgumentException $e) {
             return response()->json(['status' => false, 'message' => $e->getMessage()], 422);
         }
 
         try {
             $result = $this->service->dryRun($filters);
-            $dup    = $this->service->recentDuplicate($filters);
+            $dup    = $this->service->recentDuplicate($filters, $template);
 
             return response()->json([
                 'status'  => true,
@@ -78,13 +82,14 @@ class CampaignController extends Controller
         }
 
         try {
-            $filters = $this->service->normalizeFilters($request->all());
+            $filters  = $this->service->normalizeFilters($request->all());
+            $template = $this->service->normalizeTemplate($request->all(), $filters['target_type']);
         } catch (InvalidArgumentException $e) {
             return response()->json(['status' => false, 'message' => $e->getMessage()], 422);
         }
 
         try {
-            $this->service->sendTest($email, $filters);
+            $this->service->sendTest($email, $filters, $template, $request->input('subject'));
             return response()->json(['status' => true, 'message' => "Test campaign email sent to {$email}."]);
         } catch (\Throwable $e) {
             Log::error('CampaignController@test: ' . $e->getMessage());
@@ -94,15 +99,59 @@ class CampaignController extends Controller
 
     /*
     |--------------------------------------------------------------------------
+    | POST /admin/campaigns/preview  — render the email as HTML, send nothing
+    |--------------------------------------------------------------------------
+    */
+    public function preview(Request $request)
+    {
+        try {
+            $filters  = $this->service->normalizeFilters($request->all());
+            $template = $this->service->normalizeTemplate($request->all(), $filters['target_type']);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['status' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        try {
+            $rendered = $this->service->renderPreview($filters, $template, $request->input('subject'));
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Preview rendered',
+                'data'    => $rendered,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('CampaignController@preview: ' . $e->getMessage());
+            return response()->json(['status' => false, 'message' => 'Failed to render preview.'], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GET /admin/campaigns/templates  — selectable built-in email templates
+    |--------------------------------------------------------------------------
+    */
+    public function templates()
+    {
+        return response()->json([
+            'status'  => true,
+            'message' => 'Campaign templates',
+            'data'    => ['templates' => CampaignTemplateRegistry::options()],
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | POST /admin/campaigns/send  — create + queue
-    | Body: target_type, verification_status, profile_completion_status,
-    |       campaign_name?, force? (override 24h duplicate), confirm? (>500)
+    | Body: target_type, verification_status, profile_completion_status, plan?,
+    |       template_key?, subject?, campaign_name?,
+    |       force? (override 24h duplicate), confirm? (>500)
     |--------------------------------------------------------------------------
     */
     public function send(Request $request)
     {
         try {
-            $filters = $this->service->normalizeFilters($request->all());
+            $filters  = $this->service->normalizeFilters($request->all());
+            $template = $this->service->normalizeTemplate($request->all(), $filters['target_type']);
         } catch (InvalidArgumentException $e) {
             return response()->json(['status' => false, 'message' => $e->getMessage()], 422);
         }
@@ -112,11 +161,11 @@ class CampaignController extends Controller
 
         try {
             // 1. Duplicate guard — block a same-filter run within 24h unless forced.
-            $dup = $this->service->recentDuplicate($filters);
+            $dup = $this->service->recentDuplicate($filters, $template);
             if ($dup && !$force) {
                 return response()->json([
                     'status'  => false,
-                    'message' => 'A campaign with these exact filters ran in the last 24 hours. Re-send with force=true to override.',
+                    'message' => 'A campaign with this template and these exact filters ran in the last 24 hours. Re-send with force=true to override.',
                     'data'    => ['duplicate' => true, 'last_campaign_id' => $dup->id, 'last_run_at' => $dup->created_at],
                 ], 409);
             }
@@ -137,10 +186,18 @@ class CampaignController extends Controller
             }
 
             // 4. Create + queue.
-            $admin = $request->attributes->get('admin_user');
-            $name  = trim((string) $request->input('campaign_name')) ?: null;
+            $admin   = $request->attributes->get('admin_user');
+            $name    = trim((string) $request->input('campaign_name')) ?: null;
+            $subject = trim((string) $request->input('subject')) ?: null;
 
-            $campaign = $this->service->createCampaign($filters, Campaign::FROM_ADMIN, $admin->id ?? null, $name);
+            $campaign = $this->service->createCampaign(
+                $filters,
+                Campaign::FROM_ADMIN,
+                $admin->id ?? null,
+                $name,
+                $template,
+                $subject
+            );
             ProcessCampaignJob::dispatch($campaign->id);
 
             // 5. Audit trail (also powers the dashboard "Campaign executed" activity).
@@ -149,7 +206,7 @@ class CampaignController extends Controller
                 AdminActivityLogger::CAMPAIGN_EXECUTED,
                 'campaign',
                 $campaign->id,
-                "Executed re-engagement campaign '{$campaign->campaign_name}' → {$eligible} recipients queued.",
+                "Executed campaign '{$campaign->campaign_name}' → {$eligible} recipients queued.",
                 $request
             );
 
@@ -182,6 +239,7 @@ class CampaignController extends Controller
                     'campaigns.id',
                     'campaigns.campaign_type',
                     'campaigns.campaign_name',
+                    'campaigns.subject',
                     'campaigns.target_type',
                     'campaigns.verification_status',
                     'campaigns.profile_completion_status',

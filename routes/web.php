@@ -42,13 +42,48 @@ Route::get('/e/click/{emailLog}', function (\App\Models\EmailLog $emailLog) {
     $firstClick = is_null($emailLog->clicked_at);
     $emailLog->registerClick();
 
-    if ($firstClick && $emailLog->campaign_id) {
-        \App\Models\Campaign::where('id', $emailLog->campaign_id)->increment('clicked_count');
+    $campaign = $emailLog->campaign_id
+        ? \App\Models\Campaign::find($emailLog->campaign_id)
+        : null;
+
+    if ($firstClick && $campaign) {
+        \App\Models\Campaign::where('id', $campaign->id)->increment('clicked_count');
     }
 
+    // Each campaign template declares where its CTA lands; anything else (and any
+    // unknown/legacy template key) falls back to the original /login destination.
     $base = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
-    return redirect()->away($base . '/login');
+    try {
+        $target = $campaign
+            ? \App\Services\Campaign\CampaignTemplateRegistry::ctaUrlFor($campaign->campaign_type)
+            : $base . '/login';
+    } catch (\InvalidArgumentException) {
+        $target = $base . '/login';
+    }
+
+    return redirect()->away($target);
 })->middleware('signed')->name('email.click');
+
+// Open-tracking pixel. Returns a 1×1 transparent GIF regardless of outcome so a
+// mail client never renders a broken image.
+Route::get('/e/open/{emailLog}', function (\App\Models\EmailLog $emailLog) {
+    $firstOpen = is_null($emailLog->opened_at);
+    $emailLog->registerOpen();
+
+    if ($firstOpen && $emailLog->campaign_id) {
+        \App\Models\Campaign::where('id', $emailLog->campaign_id)->increment('opened_count');
+    }
+
+    return response(
+        base64_decode('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+        200,
+        [
+            'Content-Type'  => 'image/gif',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma'        => 'no-cache',
+        ]
+    );
+})->middleware('signed')->name('email.open');
 
 
 if (app()->environment(['local', 'development'])) {

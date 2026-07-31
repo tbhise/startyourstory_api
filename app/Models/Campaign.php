@@ -24,8 +24,9 @@ class Campaign extends Model
     public const FROM_SCHEDULER = 'scheduler';
 
     protected $fillable = [
-        'campaign_type',
+        'campaign_type',   // = the CampaignTemplateRegistry key for this send
         'campaign_name',
+        'subject',         // admin's editable subject override (null = template default)
         'target_type',
         'verification_status',
         'profile_completion_status',

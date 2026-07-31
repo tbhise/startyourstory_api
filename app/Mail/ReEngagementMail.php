@@ -25,6 +25,7 @@ class ReEngagementMail extends Mailable implements HasEmailPurpose
      * @param bool   $profileCompleted Whether the recipient's profile is complete.
      * @param string $subjectLine      Pre-built subject line.
      * @param string $trackingUrl      Single CTA target (signed click-tracking route).
+     * @param ?string $openPixelUrl    Signed open-tracking pixel (campaign sends only).
      */
     public function __construct(
         public string $name,
@@ -32,7 +33,8 @@ class ReEngagementMail extends Mailable implements HasEmailPurpose
         public bool   $verified,
         public bool   $profileCompleted,
         public string $subjectLine,
-        public string $trackingUrl
+        public string $trackingUrl,
+        public ?string $openPixelUrl = null
     ) {}
 
     public function emailPurpose(): EmailPurpose
@@ -50,6 +52,8 @@ class ReEngagementMail extends Mailable implements HasEmailPurpose
                 'verified'         => $this->verified,
                 'profileCompleted' => $this->profileCompleted,
                 'trackingUrl'      => $this->trackingUrl,
+                // Only campaign sends pass this; the layout skips the pixel when null.
+                'openPixelUrl'     => $this->openPixelUrl,
             ]);
     }
 }

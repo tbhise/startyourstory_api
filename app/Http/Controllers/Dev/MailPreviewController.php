@@ -27,6 +27,7 @@ use App\Mail\ReEngagementMail;
 use App\Mail\ReferralPayoutRequestMail;
 use App\Mail\StudentFeatureReleaseMail;
 use App\Mail\SupportTicketClosedMail;
+use App\Mail\TechnologySolutionsLaunchMail;
 use App\Contracts\Mail\HasEmailPurpose;
 use App\Enums\EmailPurpose;
 use App\Jobs\DispatchMailJob;
@@ -78,6 +79,11 @@ class MailPreviewController extends Controller
                 'group' => 'Campaigns',
                 'desc'  => 'Firm re-engagement + feature release (firm counterpart)',
                 'make'  => fn () => new FirmFeatureReleaseMail(),
+            ],
+            'technology-solutions-launch' => [
+                'group' => 'Campaigns',
+                'desc'  => 'Technology Solutions vertical launch announcement (firms)',
+                'make'  => fn () => new TechnologySolutionsLaunchMail($firm),
             ],
 
             // ── Account ──────────────────────────────────────────────────────

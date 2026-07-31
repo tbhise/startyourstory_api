@@ -614,10 +614,12 @@ Route::get('/admin/email-logs',           [EmailLogController::class, 'index']);
 Route::get('/admin/email-logs/stats',     [EmailLogController::class, 'stats']);
 Route::delete('/admin/email-logs',        [EmailLogController::class, 'destroy']);
 
-// Admin — Campaigns (re-engagement; replaces the old public web.php trigger).
-// AdminAuthMiddleware guards all /admin/* paths; no public trigger exists.
+// Admin — Campaigns (template-driven bulk email; replaces the old public web.php
+// trigger). AdminAuthMiddleware guards all /admin/* paths; no public trigger exists.
+Route::get('/admin/campaigns/templates',  [CampaignController::class, 'templates']);
 Route::post('/admin/campaigns/dry-run',   [CampaignController::class, 'dryRun']);
 Route::post('/admin/campaigns/test',      [CampaignController::class, 'test']);
+Route::post('/admin/campaigns/preview',   [CampaignController::class, 'preview']);
 Route::post('/admin/campaigns/send',      [CampaignController::class, 'send']);
 Route::get('/admin/campaigns/stats',      [CampaignController::class, 'stats']);
 Route::get('/admin/campaigns',            [CampaignController::class, 'index']);

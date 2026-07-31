@@ -6270,3 +6270,94 @@ inferred from the data. Needs a reviewed one-off script, not a migration.
 ### Rollback
 Revert `AdminAnalyticsController.php` + `AdminController.php`. No other backend
 file was touched.
+
+---
+
+## 2026-07-31 — Campaigns: selectable email templates, Technology Solutions launch, premium filter, open tracking
+
+The admin Campaign module was hardcoded to `ReEngagementMail` in both `run()` and
+`sendTest()` — there was no template concept, no subject field and no way to
+preview. This makes it template-driven and adds the Technology Solutions launch
+announcement as a built-in, selectable template. No parallel campaign system was
+created; the existing eligibility query, campaign row, queue job, `email_logs`
+pipeline, `EmailSenderResolver` and click tracking are all reused.
+
+### Added — `app/Services/Campaign/CampaignTemplateRegistry.php`
+Single source of truth for the selectable built-in campaign emails. Per template:
+label, description, allowed `targets`, sender `purpose`, `template_name` for
+`email_logs`, editable `default_subject`, and the `cta_path` its tracked click
+lands on. Two entries: `reengagement` (unchanged behaviour, `default_subject` null
+= per-segment subject) and `technology-solutions-launch` (firms only).
+
+Adding a future campaign email = one Mailable + one Blade view + one entry here.
+
+### Changed — `app/Services/Campaign/ReEngagementCampaignService.php`
+- `normalizeFilters()` gained a `plan` dimension (`all|premium|free`), defaulting
+  to `all` so every pre-existing caller is byte-identical.
+- `buildEligibilityQuery()` applies `plan` via `whereExists`/`whereNotExists` on
+  `firm_subscriptions` (firms) or `student_subscriptions` (students/creators).
+  Premium is **derived** from an active, non-expired subscription — never from the
+  stale `firm_profiles.is_premium` flag — matching `SubscriptionHelper::isPremiumFirm`
+  and `Engagement\AudienceMatcher`.
+- New `normalizeTemplate()` validates the template key AND that it supports the
+  chosen target type (a firms-only template cannot be sent to students).
+- `recentDuplicate()` is now scoped per template (+ `plan` via a JSON path), so a
+  new announcement to the same segment is not mistaken for a duplicate. Rows
+  predating the `plan` key are matched as `all`.
+- `createCampaign()` takes `$templateKey` + `$subject`; `run()`/`sendToRecipient()`
+  resolve the Mailable, sender purpose and `template_name` from the registry.
+- New `renderPreview()` returns `{subject, html}` using the same Mailable/Blade as
+  a real send. `sendTest()` takes a template + subject; test sends carry no open
+  pixel and an untracked CTA, so they never pollute campaign metrics.
+
+### Changed — `CampaignController`
+`template_key` + `subject` accepted on dry-run/test/send. New
+`GET /admin/campaigns/templates` (dropdown payload) and
+`POST /admin/campaigns/preview` (render-only). `subject` added to the history
+select.
+
+### Added — open tracking (previously a dead `campaigns.opened_count` column)
+Signed `GET /e/open/{emailLog}` (`email.open`) returns a 1×1 transparent GIF,
+bumps `email_logs.open_count`, stamps `opened_at` on the first open and increments
+`campaigns.opened_count` once. `EmailLog::registerOpen()` mirrors `registerClick()`.
+The pixel is emitted by `emails/layouts/premium.blade.php` **only** when the sender
+passes `$openPixelUrl` — every transactional email leaves it unset, so no other
+email in SYS changed.
+
+### Changed — `GET /e/click/{emailLog}`
+Was hardcoded to redirect to `/login`. Now redirects to the campaign template's own
+`cta_path`, falling back to `/login` for no-campaign and unknown/legacy template keys.
+
+### Changed — mailables
+`TechnologySolutionsLaunchMail` and `ReEngagementMail` accept an optional
+`$openPixelUrl`. `TechnologySolutionsLaunchMail` + its Blade view already existed
+(dev-preview only) and its content was NOT rewritten — only wired into Campaigns.
+
+### DB
+`campaigns.subject` (editable subject override) and `email_logs.open_count` /
+`opened_at`. The chosen template key reuses the existing `campaigns.campaign_type`
+column and `plan` lives in the existing `filters` JSON, so neither needed a column.
+Purely additive — existing rows behave exactly as before.
+See `db_changes.txt` (2026-07-31) and
+`database/migrations/2026_07_31_100001_add_template_support_and_open_tracking.php`.
+
+### Not implemented (deliberately — would be new subsystems, not campaign features)
+- **Delivered** metric: needs an ESP delivery webhook; `sent` still means "handed
+  to SMTP".
+- **Unsubscribe**: no unsubscribe handling exists anywhere in the codebase. Worth
+  a decision before more marketing sends.
+- **Pause/cancel**: not added (explicitly out of scope this round).
+
+### Verified
+`php -l` clean on all touched files. Against the real dev DB: firm/all = 40,
+firm/premium = 2, firm/free = 38 (partition sums correctly). Template renders with
+all four services, the CTA URL, the reply line and `info@startyourstory.in`;
+subject override applied; firms-only guard rejects a student target; invalid `plan`
+rejected; campaign create → `campaign_type='technology-solutions-launch'`,
+`eligible_count=40`; duplicate guard fires for the same template and not for another.
+Legacy 3-key re-engagement preview still renders unchanged.
+
+### Rollback
+Revert the files above, delete `CampaignTemplateRegistry.php`, and run the ROLLBACK
+SQL in `db_changes.txt`. The pixel and the click-redirect change are both
+backward-compatible, so a partial revert cannot break existing emails.

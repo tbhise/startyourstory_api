@@ -17,7 +17,11 @@ return [
         'Both Groups',
     ],
 
+    // Newest first — this order IS the listing sort rank (see
+    // CaLibraryController@materialsQuery).
     'exam_attempts' => [
+        'November 2026',
+        'September 2026',
         'May 2026',
         'January 2026',
         'September 2025',
@@ -29,5 +33,10 @@ return [
         'June 2023',
         'December 2022',
         'June 2022',
+    ],
+
+    'mediums' => [
+        'English',
+        'Hindi',
     ],
 ];

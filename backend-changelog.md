@@ -4,6 +4,53 @@
 
 ---
 
+## 2026-08-02 — CA Library: exam-attempt sort order, Medium field, new attempts
+
+CA Library module only. No other module touched.
+
+### Changed — `config/ca_library.php`
+- `exam_attempts` gained **November 2026** and **September 2026** at the top
+  (Final = Nov 2026; Foundation / Intermediate = Sep 2026). The list stays a
+  single flat newest-first array — it is now load-bearing: its ORDER IS the
+  listing sort rank, so new attempts must always be prepended.
+- New `mediums` key: `English`, `Hindi`.
+
+### Changed — `app/Http/Controllers/API/CA_Library/CaLibraryController.php`
+- `materialsQuery()` no longer orders by `created_at` alone. Default order is
+  now **newest exam attempt first**, via
+  `FIELD(m.exam_attempt, ...config attempts) = 0` (unknown/retired attempts
+  last) then `FIELD(...)` then `created_at DESC` as the unchanged secondary
+  ordering. Bindings are passed to `orderByRaw` — no string interpolation of
+  values. `->count()` in `getMaterials()` is unaffected: Laravel's aggregate
+  clears orders on its clone.
+- `?sort=recent` opts back into pure `created_at DESC`. Used only by the
+  frontend "Latest Updates" sidebar, which means newest *upload*, not newest
+  attempt — without this it would have silently changed meaning.
+- New `medium` filter on the listing (`?medium=English|Hindi`), applied to
+  both the public and admin listings (shared query builder).
+- `serializeMaterial()` now returns `medium`.
+- `getFilters()` now returns `mediums`.
+- `adminSaveMaterial()` validates `medium` as `nullable|in:<config mediums>`
+  and persists it, defaulting to `English` when omitted — so an older admin
+  client that does not send the field still writes valid rows.
+
+### DB
+`ca_library.ca_library_study_materials.medium` VARCHAR(20) NOT NULL
+DEFAULT 'English' + `idx_clm_medium`. The column default backfills every
+pre-existing row to English, which is what they all are. Purely additive.
+See `db_ca_library.txt` (2026-08-02) and
+`database/migrations/2026_08_02_000001_add_medium_to_ca_library_study_materials.php`.
+
+### Verified
+`php -l` clean on every touched file. Attempt ranking reasoned through against
+the config order; retired attempts (a value dropped from config) sort last
+rather than first, which is why the `= 0` term comes first.
+
+### Rollback
+Revert the three files above and run the ROLLBACK SQL in `db_ca_library.txt`.
+The `medium` column is additive and the sort change is read-only, so a partial
+revert cannot corrupt data.
+
 ## 2026-07-25 — Fix: Cashfree received placeholder phone instead of the real mobile
 
 Cashfree always got the `9999999999` fallback because the SYS payment-initiate

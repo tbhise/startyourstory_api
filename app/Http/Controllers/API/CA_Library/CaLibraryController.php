@@ -59,6 +59,7 @@ class CaLibraryController extends Controller
                     'courses'        => config('ca_library.courses'),
                     'groups'         => config('ca_library.groups'),
                     'exam_attempts'  => config('ca_library.exam_attempts'),
+                    'mediums'        => config('ca_library.mediums'),
                     'subjects'       => $subjects,
                     'resource_types' => $types,
                     // Current answer-sheet evaluation fee (display only — the
@@ -136,8 +137,21 @@ class CaLibraryController extends Controller
         $q = $this->db('ca_library_study_materials as m')
             ->join('ca_library_subjects as s', 'm.subject_id', '=', 's.id')
             ->join('ca_library_resource_types as t', 'm.resource_type_id', '=', 't.id')
-            ->select('m.*', 's.name as subject_name', 't.name as resource_type_name', 't.is_question_paper as resource_type_is_question_paper')
-            ->orderByDesc('m.created_at');
+            ->select('m.*', 's.name as subject_name', 't.name as resource_type_name', 't.is_question_paper as resource_type_is_question_paper');
+
+        if ($request->query('sort') === 'recent') {
+            // "Latest Updates" wants the newest uploads, not the newest attempt.
+            $q->orderByDesc('m.created_at');
+        } else {
+            // Default: newest exam attempt first. config lists attempts
+            // newest-first, so a value's position in that list IS its rank;
+            // FIELD() returns 0 for an attempt no longer listed, pushed to the end.
+            $attempts = array_values(config('ca_library.exam_attempts'));
+            $slots    = implode(',', array_fill(0, count($attempts), '?'));
+            $q->orderByRaw("FIELD(m.exam_attempt, $slots) = 0", $attempts)
+                ->orderByRaw("FIELD(m.exam_attempt, $slots)", $attempts)
+                ->orderByDesc('m.created_at');
+        }
 
         if ($activeOnly) {
             $q->where('m.is_active', 1);
@@ -153,6 +167,9 @@ class CaLibraryController extends Controller
         }
         if ($attempt = $request->query('exam_attempt')) {
             $q->where('m.exam_attempt', $attempt);
+        }
+        if ($medium = $request->query('medium')) {
+            $q->where('m.medium', $medium);
         }
         if ($subjectId = $request->query('subject_id')) {
             $q->where('m.subject_id', (int) $subjectId);
@@ -180,6 +197,7 @@ class CaLibraryController extends Controller
                 'is_question_paper' => (bool) $m->resource_type_is_question_paper,
             ],
             'exam_attempt'       => $m->exam_attempt,
+            'medium'             => $m->medium,
             'original_file_name' => $m->original_file_name,
             'file_size'          => (int) $m->file_size,
             // Public listing hides the direct URL — downloads go through the
@@ -319,18 +337,21 @@ class CaLibraryController extends Controller
     public function adminSaveMaterial(Request $request, ?int $id = null): JsonResponse
     {
         try {
+
             $validator = Validator::make($request->all(), [
                 'course'           => 'required|in:' . implode(',', config('ca_library.courses')),
                 'group'            => 'required_unless:course,CA Foundation|nullable|in:' . implode(',', config('ca_library.groups')),
                 'subject_id'       => 'required|integer',
                 'resource_type_id' => 'required|integer',
                 'exam_attempt'     => 'required|in:' . implode(',', config('ca_library.exam_attempts')),
+                'medium'           => 'nullable|in:' . implode(',', config('ca_library.mediums')),
                 'title'            => 'required|string|max:255',
                 // File required on create, optional replace on edit.
                 'file'             => ($id ? 'nullable' : 'required') . '|file|mimes:pdf|max:51200',
                 'is_active'        => 'nullable|boolean',
             ]);
             if ($validator->fails()) {
+                Log::error('CaLibrary adminSaveMaterial validation failed', ['errors' => $validator->errors()]);
                 return response()->json(['status' => false, 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
             }
 
@@ -339,11 +360,13 @@ class CaLibraryController extends Controller
 
             $subject = $this->db('ca_library_subjects')->where('id', (int) $request->input('subject_id'))->first();
             if (! $subject || ! $this->subjectMatchesCombo($subject, $course, $group)) {
+                Log::error('CaLibrary adminSaveMaterial subject validation failed', ['subject_id' => $request->input('subject_id'), 'course' => $course, 'group' => $group]);
                 return response()->json(['status' => false, 'message' => 'Selected subject does not belong to the selected course/group.'], 422);
             }
 
             $typeExists = $this->db('ca_library_resource_types')->where('id', (int) $request->input('resource_type_id'))->exists();
             if (! $typeExists) {
+                Log::error('CaLibrary adminSaveMaterial resource type validation failed', ['resource_type_id' => $request->input('resource_type_id')]);
                 return response()->json(['status' => false, 'message' => 'Resource type not found.'], 422);
             }
 
@@ -358,6 +381,7 @@ class CaLibraryController extends Controller
                 'subject_id'       => (int) $request->input('subject_id'),
                 'resource_type_id' => (int) $request->input('resource_type_id'),
                 'exam_attempt'     => $request->input('exam_attempt'),
+                'medium'           => $request->input('medium') ?: 'English',
                 'title'            => $request->input('title'),
                 'is_active'        => $request->boolean('is_active', true),
                 'updated_at'       => now(),

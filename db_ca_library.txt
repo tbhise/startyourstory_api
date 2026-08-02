@@ -123,3 +123,17 @@ ALTER TABLE `ca_library`.`ca_test_submissions`
 ADD COLUMN `terms_accepted_at` TIMESTAMP NULL AFTER `submitted_at`;
 
 -----------------------------------------------------------------
+
+-- Study material language medium (Laravel migration 2026_08_02_000001).
+-- Allowed values come from config/ca_library.php `mediums` (English | Hindi).
+-- NOT NULL DEFAULT 'English' so every pre-existing row backfills to English.
+
+ALTER TABLE `ca_library`.`ca_library_study_materials`
+ADD COLUMN `medium` VARCHAR(20) NOT NULL DEFAULT 'English' AFTER `exam_attempt`,
+ADD INDEX `idx_clm_medium` (`medium`);
+
+-- ROLLBACK:
+-- ALTER TABLE `ca_library`.`ca_library_study_materials`
+-- DROP INDEX `idx_clm_medium`, DROP COLUMN `medium`;
+
+-----------------------------------------------------------------

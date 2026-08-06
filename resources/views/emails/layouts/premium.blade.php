@@ -34,6 +34,9 @@
             .h1-sm         { font-size: 24px !important; line-height: 32px !important; }
             .cta-pad       { padding: 20px 18px !important; }
             .foot-col      { padding: 0 0 18px 0 !important; }
+            /* Multi-column card text shrinks to fit 3–4 across on desktop; once the
+               columns stack there is room again, so bump it back to a readable size. */
+            .txt-up        { font-size: 12.5px !important; line-height: 19px !important; }
         }
 
         /* ── Dark mode (Apple Mail, Outlook apps via data-ogsc) ───────────── */
@@ -85,7 +88,7 @@
 
                     {{-- ════════════════════ HEADER (reusable) ════════════════════ --}}
                     <tr>
-                        <td class="header-pad" style="background-color:#1D4ED8;border-radius:14px 14px 0 0;padding:20px 24px;">
+                        <td class="header-pad" style="background-color:#1D4ED8;border-radius:16px 16px 0 0;padding:20px 24px;">
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                                 <tr>
                                     {{-- Logo + brand --}}
@@ -130,7 +133,7 @@
 
                     {{-- ════════════════════ FOOTER (reusable) ════════════════════ --}}
                     <tr>
-                        <td class="footer-pad" style="background-color:#0B2E6B;border-radius:0 0 14px 14px;padding:26px 28px 18px;">
+                        <td class="footer-pad" style="background-color:#0B2E6B;border-radius:0 0 16px 16px;padding:26px 28px 18px;">
 
                             {{-- 4 columns: brand / quick links / company / follow --}}
                             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -188,7 +191,7 @@
                                 <tr>
                                     <td align="center">
                                         <p style="margin:0;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:11.5px;color:#B9CBEF;line-height:18px;">
-                                            &#9993;&nbsp; <a href="mailto:contact@startyourstory.in" style="color:#B9CBEF;">contact@startyourstory.in</a>
+                                            &#9993;&nbsp; <a href="mailto:info@startyourstory.in" style="color:#B9CBEF;">info@startyourstory.in</a>
                                             &nbsp;&nbsp;|&nbsp;&nbsp;
                                             &#127760;&nbsp; <a href="https://www.startyourstory.in" style="color:#B9CBEF;">www.startyourstory.in</a>
                                         </p>

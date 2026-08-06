@@ -52,11 +52,14 @@ Route::get('/e/click/{emailLog}', function (\App\Models\EmailLog $emailLog) {
 
     // Each campaign template declares where its CTA lands; anything else (and any
     // unknown/legacy template key) falls back to the original /login destination.
+    // Marketing sends (marketing_contacts) have no campaign row, so their CTA is
+    // resolved from the Mail class recorded in email_logs.template_name.
     $base = rtrim(config('app.frontend_url', 'https://startyourstory.in'), '/');
     try {
         $target = $campaign
             ? \App\Services\Campaign\CampaignTemplateRegistry::ctaUrlFor($campaign->campaign_type)
-            : $base . '/login';
+            : (\App\Services\Marketing\MarketingTemplateRegistry::ctaUrlForTemplateName($emailLog->template_name)
+                ?? $base . '/login');
     } catch (\InvalidArgumentException) {
         $target = $base . '/login';
     }

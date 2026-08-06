@@ -3521,3 +3521,39 @@ ALTER TABLE `email_logs`
 -- ROLLBACK:
 -- ALTER TABLE `campaigns`  DROP COLUMN `subject`;
 -- ALTER TABLE `email_logs` DROP COLUMN `opened_at`, DROP COLUMN `open_count`;
+
+
+## ═══════════════════════════════════════════════════════════════════════════════
+## 2026-08-06 — Marketing Contacts (backend-only marketing audience)
+## ═══════════════════════════════════════════════════════════════════════════════
+## Standalone repository of firms that are NOT registered on Start Your Story,
+## used only as the audience for Artisan-triggered marketing sends
+## (`marketing:import`, `marketing:send`). No admin UI, no frontend, no API route.
+##
+## Deliberately unrelated to `users` / `firm_profiles`: no foreign key, no account,
+## no login — these contacts exist only to receive marketing email. Nothing else
+## in the schema changes: the sends reuse `email_logs` (campaign_id stays NULL) and
+## the existing click/open tracking columns, so this is a pure single-table add.
+##
+## Migration: database/migrations/2026_08_06_000001_create_marketing_contacts_table.php
+##   php artisan migrate --path=database/migrations/2026_08_06_000001_create_marketing_contacts_table.php
+
+-- `email` is UNIQUE so re-running an import is idempotent (repeats are reported as
+-- duplicates, never inserted). `last_emailed_at` is stamped when an email is QUEUED
+-- for the contact; the delivery outcome lives in email_logs.status.
+CREATE TABLE `marketing_contacts` (
+  `id`              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `firm_name`       VARCHAR(255) NOT NULL,
+  `email`           VARCHAR(255) NOT NULL,
+  `phone`           VARCHAR(20)  NULL,
+  `status`          ENUM('active','inactive') NOT NULL DEFAULT 'active',  -- send audience = active
+  `last_emailed_at` TIMESTAMP NULL,
+  `created_at`      TIMESTAMP NULL,
+  `updated_at`      TIMESTAMP NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `marketing_contacts_email_unique` (`email`),
+  KEY `idx_marketing_contacts_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ROLLBACK:
+-- DROP TABLE IF EXISTS `marketing_contacts`;

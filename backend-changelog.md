@@ -6408,3 +6408,285 @@ Legacy 3-key re-engagement preview still renders unchanged.
 Revert the files above, delete `CampaignTemplateRegistry.php`, and run the ROLLBACK
 SQL in `db_changes.txt`. The pixel and the click-redirect change are both
 backward-compatible, so a partial revert cannot break existing emails.
+
+---
+
+## 2026-08-06 — Marketing Contacts: backend-only marketing audience + `marketing:*` commands
+
+~400 CA firms that are NOT registered on Start Your Story needed to receive
+marketing email. They have no account, so no existing audience query reaches them
+and the admin Campaign module (which filters registered `users`) cannot target
+them. This adds the missing audience table plus two Artisan commands, and nothing
+else: **no admin UI, no frontend, no API route, no new mail pipeline.** Every email
+goes out through the existing stack — `email_logs` → `DispatchMailJob` (queue) →
+`EmailSenderResolver` → `markSent()/markFailed()`, with the same signed
+`email.click` / `email.open` tracking the campaigns use.
+
+### Added — `marketing_contacts` table
+`firm_name`, unique `email`, nullable `phone`, `status` (active|inactive),
+`last_emailed_at`, timestamps. No FK to `users`/`firm_profiles` — these contacts
+are not accounts. Unique `email` makes a re-import idempotent. Query-builder access
+only (`DB::table('marketing_contacts')`), per project convention; no model added.
+
+### Added — `app/Services/Marketing/MarketingTemplateRegistry.php`
+Single source of truth for the marketing emails that exist. Per template: `label`,
+`description`, `subject`, sender `purpose`, `mail_class` (→ `email_logs.template_name`)
+and the `cta_path` its tracked click lands on. One entry registered:
+`technology-solutions`.
+
+`ctaUrlForTemplateName()` is the reverse lookup used by the click route (marketing
+sends have no `campaigns` row). Adding a future template (Academy Launch, Premium
+Plans, Resume Builder, Feature Announcement, …) = one Mailable + one Blade view +
+one entry here and its arm in `make()`; the command, the mailer, the dev preview and
+the click redirect all pick it up unchanged.
+
+Kept separate from `CampaignTemplateRegistry` on purpose: that one serves the admin
+Campaign builder over registered users; this one has no admin surface.
+
+### Added — `app/Services/Marketing/MarketingMailer.php`
+All the logic behind `marketing:send` — template resolution, audience query, limit,
+dry run, test mode, queueing and the `last_emailed_at` stamp. The log row is created
+before the Mailable because the signed click/open URLs need its id (same ordering
+`ReEngagementCampaignService` uses). Streams the audience with `lazyById` when
+unlimited; one bad contact never aborts a run (invalid addresses skipped, exceptions
+caught, logged and counted). `last_emailed_at` is stamped when the email is QUEUED —
+the delivery outcome lives in `email_logs.status`.
+
+### Added — `app/Mail/TechnologySolutionsMail.php` + `resources/views/emails/marketing/technology-solutions.blade.php`
+Cold-outreach mail for CA firms: website / mobile app / custom web app / AI
+automation, plus the redesign-and-maintenance list, a "Get a Free Consultation" CTA
+and `info@startyourstory.in`. Extends the shared `emails.layouts.premium` layout, so
+header, footer, branding, button styles and dark mode are NOT duplicated. All copy
+lives in the Blade view — the mailer, the registry and the command carry none of it.
+The greeting uses the contact's `firm_name`, falling back to "Dear Sir/Madam,".
+
+NOT the same mail as `TechnologySolutionsLaunchMail`, which stays exactly as it was:
+that one is the admin Campaign announcement to firms already on the platform (different
+subject, different audience, different copy). Reusing it would have coupled a campaign
+template to cold outreach and broken the admin dropdown's meaning.
+
+The subject is passed INTO the Mailable (constructor → `envelope()`), never via
+`->subject()` afterwards: `Mailable::ensureEnvelopeIsHydrated()` re-applies the
+envelope subject at delivery time, so an outside `->subject()` on a Mailable that
+defines `envelope()` is silently discarded.
+
+### Added — `php artisan marketing:import <file>`
+CSV → `marketing_contacts`. Header row with `firm_name,email,phone` in any order
+(aliases: firm|name|company · email · phone|mobile); a headerless file is read
+positionally. Validates the email, lower-cases it, skips duplicates (existing rows
+AND repeats inside the file) and invalid rows, never stops on a bad row, and prints
+`Rows read / Imported / Skipped (Duplicates + Invalid)`. Over-long values are trimmed
+to the column width (firm_name 255, phone 20); an email over 255 chars is rejected
+rather than truncated into a wrong address. Sample file:
+`storage/app/marketing_contacts.sample.csv`.
+
+### Added — `php artisan marketing:send <template>`
+`--test=addr` (one [TEST] email, contacts untouched, untracked CTA + no open pixel so
+QA never pollutes metrics, run inline so the outcome is known), `--limit=N`,
+`--dry-run` (count + sample, queues nothing), `--force` (skip the full-audience
+confirmation — same guard as the feature-release campaign commands). The command holds
+no business logic: it validates options, hands the template key to `MarketingMailer`
+and prints the progress callback.
+
+### Changed — `routes/web.php` (`GET /e/click/{emailLog}`)
+The redirect resolved its target from `campaigns.campaign_type`, so a marketing click
+(no campaign row) would have landed on `/login`. It now falls back to
+`MarketingTemplateRegistry::ctaUrlForTemplateName($emailLog->template_name)` before
+`/login`. Both pre-existing branches are unchanged — verified below.
+
+### Changed — `app/Http/Controllers/Dev/MailPreviewController.php`
+Marketing templates are appended to the existing `/dev/emails` registry from
+`MarketingTemplateRegistry::all()` under a new "Marketing" group
+(`/dev/emails/marketing-technology-solutions`), so they get the existing preview,
+light/dark modes and test-send with no duplicate preview infrastructure — and a
+future template appears without touching this controller.
+
+### DB
+`marketing_contacts` only. `email_logs` needed no change: marketing sends leave
+`campaign_id` NULL and reuse the existing click/open columns.
+See `db_changes.txt` (2026-08-06) and
+`database/migrations/2026_08_06_000001_create_marketing_contacts_table.php`.
+
+### Verified (local, `MAIL_MAILER=log`, `QUEUE_CONNECTION=database`)
+`php -l` clean on every touched file. Migration applied; columns/indexes match the spec.
+Import of an 11-row messy CSV → imported 6, duplicates 1 (in-file repeat), invalid 3
+(missing firm_name, malformed email, empty email); blank line ignored, email
+lower-cased, 24-char phone trimmed to 20, correct line numbers, exit 1 on an
+unreadable file. Re-import → imported 0, duplicates 7. Headerless + absolute-path
+file → 2 imported, first row NOT eaten. Unknown template key → error listing the
+available keys. Dry run → 8 active, correct sample; `--dry-run --limit=3` → 3.
+`--test` → `email_logs` row `[TEST] …`, `sender_identity=marketing`,
+`From: StartYourStory <info@startyourstory.in>`, status `sent`, zero tracking URLs in
+the body, no contact row touched. `--limit=2` → 2 `DispatchMailJob` rows in
+`queue_jobs` carrying signed click + open URLs; worker → both `email_logs` `sent`;
+`last_emailed_at` stamped on exactly those 2. Full `--force` run → 6 queued, the 2
+`inactive` contacts excluded and unstamped. Non-interactive without `--force` →
+aborted, nothing queued. Empty audience → guarded. Signed click → 302 to
+`/technology-solutions#contact` with `click_count=1`; open pixel → 1×1 GIF with
+`open_count=1`. Regression: a campaign email_log still redirects via
+`CampaignTemplateRegistry` and bumps `campaigns.clicked_count`; a non-campaign,
+non-marketing log still falls back to `/login`. `/dev/emails` lists the Marketing
+group and the preview renders with the shared header/footer, all content blocks and
+no tracking pixel. All test rows, logs and queue entries were deleted afterwards.
+
+### Not implemented (deliberately)
+- **Unsubscribe / suppression list**: still nothing in the codebase (flagged on
+  2026-07-31 and now more relevant — this is cold outreach). `status='inactive'` is
+  the only opt-out, and it is set manually.
+- **No UI anywhere**: contacts are managed by SQL + `marketing:import`; there is no
+  admin screen, API endpoint or frontend change.
+
+### Rollback
+Delete `app/Services/Marketing/`, `app/Mail/TechnologySolutionsMail.php`,
+`resources/views/emails/marketing/`, the two commands and the migration; revert the
+`routes/web.php` and `MailPreviewController` hunks; run the ROLLBACK SQL in
+`db_changes.txt`. The click-route change is additive (marketing lookup only runs when
+there is no campaign), so reverting it cannot break existing emails.
+
+---
+
+## 2026-08-06 (design pass) — Technology Solutions marketing email rebuilt to the approved reference
+
+The marketing mail body was rebuilt to match the supplied design reference. Backend
+untouched: same template key (`technology-solutions`), same subject, same
+`MarketingMailer` → `email_logs` → `DispatchMailJob` pipeline, same click/open
+tracking. Only the Blade view, one new partial, one Mailable variable and one
+mobile CSS utility changed.
+
+### Changed — `resources/views/emails/marketing/technology-solutions.blade.php`
+Rebuilt as: greeting → headline with brand rule → 3 intro paragraphs → **Our
+Technology Services** (4 bordered cards, one row) → **Already Have a Website?**
+(tinted card, 8 items in 2 columns) → **Why Choose Start Your Story?** (4 columns
+with hairline dividers) → **More Than Just Technology** (3 colour-tinted platform
+cards + closing line) → primary CTA (solid blue, white button) → secondary CTA
+(green, "Register Your Firm") → sign-off + contact row.
+
+Repeating blocks are driven by `@php` arrays (`$services`, `$upgrades`, `$reasons`,
+`$platform`) instead of duplicated markup, so copy is edited in one place. Still
+100% table-based, inline-styled, `dm-*` dark-mode classes throughout, and every
+multi-column row carries `stack-card` / `stack-col` / `gap-col` so it collapses on
+mobile. Header, footer, branding, palette and dark-mode CSS still come entirely
+from `emails.layouts.premium` — nothing was duplicated or forked.
+
+### Added — `resources/views/emails/partials/section-title.blade.php`
+Centred blue section heading with short flanking rules, used 3× here (and reusable
+by future marketing emails). The label cell has no fixed width and no `nowrap`: the
+table gives it the space left over by the two 64px rules, so it stays on one line on
+desktop and wraps — instead of forcing the email wider than the screen — on a narrow
+phone, where the rules are hidden via the layout's existing `hide-sm`.
+
+### Changed — `app/Mail/TechnologySolutionsMail.php`
+Passes `registerUrl` (`{frontend}/register?type=firm`) to the view for the secondary
+CTA. Deliberately **untracked**: the signed click route redirects to the template's
+single `cta_path`, so a second tracked link would land on the wrong page. Tracking a
+second CTA would need a target parameter on `/e/click` — not in scope here.
+
+### Changed — `resources/views/emails/layouts/premium.blade.php`
+One additive mobile utility in the existing `max-width: 700px` media query:
+`.txt-up` bumps the small 3–4-across card text back to 12.5px once the columns stack.
+No existing email uses the class, so no other template's rendering changes.
+
+### Deviations from the reference (deliberate, both unavoidable)
+1. **The two illustrations are omitted** (hero device mock-up, gauge/shield next to
+   "Already Have a Website?"). The project has no illustration assets — only
+   favicons — and inventing vector art in table HTML would be fragile in Outlook.
+   Those two blocks are full-width text instead, with the section heading centred.
+   Drop PNGs on the CDN and they can be added as a right-hand `<td>` in each block.
+2. **Icons are emoji glyphs** (🌐 📱 💻 🤖 👥 `</>` 📈 🎧 🎯 ⭐ 📅 👤) in rounded tint
+   tiles, matching the existing campaign templates, rather than the reference's custom
+   vector icons — same reason. They render in colour in Gmail/Apple Mail and
+   monochrome in older Outlook.
+
+### Verified (Chrome via Puppeteer, real rendered output at 4 viewport/theme combos)
+Screenshots taken at 800px and 390px, light and dark: desktop shows 4 service cards
+in one row, 4 "why choose" columns with dividers, 3 platform cards in a row, both CTAs
+side-by-side; mobile stacks every row, buttons go full width, section rules hide and
+card text bumps to 12.5px. Dark mode flips panel, cards and tinted blocks via the
+layout's `dm-*` classes; platform-card inks were moved to mid-tones (#059669 /
+#7C3AED / #EA580C) so they stay legible on both the light tint and the dark card.
+
+Horizontal overflow measured, not eyeballed: at a 320px viewport the document
+`scrollWidth` was 341px (a `nowrap` section heading, since fixed); after the fix it is
+exactly 320px in both themes, while two existing templates measured 320px throughout —
+so no template, new or old, overflows.
+
+End-to-end through the real pipeline: `marketing:send --limit=1` → queued →
+`queue:work` → `email_logs` `sent`, with the signed `/e/click` CTA, the `/e/open`
+pixel, the untracked register link and every section present in the delivered HTML.
+All 34 `/dev/emails` templates still render 200 with no exceptions after the layout
+change. Test rows, the test email_log and the `last_emailed_at` stamp it left were all
+reverted.
+
+---
+
+## 2026-08-06 (consistency pass) — one design system for the marketing email + footer address + internal CC
+
+Follow-up to the design pass: spacing and hierarchy were right but the components
+still carried five different paddings, three border treatments and a mix of radii,
+so the email read as assembled rather than designed. No layout or content changed.
+
+### Changed — container tokens (marketing email + `card-grid` partial)
+One set of values now drives every container:
+
+| token | value |
+|---|---|
+| container radius | **16px** (was a 12/14/16 mix) |
+| button radius | 10px (both buttons) |
+| icon tile | **always a circle** — 60px cards · 52px rows · 46/44px CTAs (the platform tile was a 14px rounded square) |
+| padding | 28px 26px full-width blocks · 30px 24px 2-up cards (was 22/24, 26/28, 30/24, 30/28, 32/30) |
+| border | white cards only (#E5E7EB) — tinted and solid blocks are defined by their fill |
+| sibling gap | 16px · section gap 46px |
+| button metrics | identical: 13.5px/800, 15px 22px padding, 10px radius |
+
+`emails/layouts/premium.blade.php` header/footer corners moved 14px → 16px so the
+outer shell shares the container radius. That is a 2px cosmetic change to all 30
+templates on the premium layout and nothing else.
+
+### Changed — `resources/views/emails/layouts/premium.blade.php` (footer address)
+The shared footer showed `contact@startyourstory.in`. It now shows
+`info@startyourstory.in`, so every template on this layout displays one address.
+`app/Http/Controllers/API/PublicController.php` still uses `contact@` as the
+ADMIN_EMAIL fallback for inbound contact-form routing — that is a recipient, not a
+displayed address, and was left alone. `emails/layouts/app.blade.php` (legacy,
+extended by zero templates) still shows `support@` and was not touched.
+
+### Removed — duplicate contact block
+The sign-off carried its own `info@ | startyourstory.in` row above the footer. It is
+gone; the footer is the single place this email shows contact information. The
+sign-off is now a plain full-width block, which also removed the `nowrap` cells that
+were the earlier narrow-screen overflow risk.
+
+### Added — internal CC on `TechnologySolutionsMail` only
+`Envelope(cc: ['contact@startyourstory.in'])`. It lives on the Mailable, not in the
+sending code, so it applies to bulk, `--test` and dev-preview sends alike without
+`MarketingMailer` knowing about it. The address is never rendered in the body.
+
+**Two consequences worth knowing:** a CC is visible to the recipient in their mail
+client (use `bcc:` instead if the copy must be invisible), and a full run puts one
+copy per recipient in that inbox — 427 at the current audience size.
+
+### Changed — Outlook-safety of the new gaps (from an internal review pass)
+- The three platform cards moved into one wrapper table with real spacer `<tr>`s, and
+  an explicit spacer row now separates the two CTA blocks. A `margin` on a `<table>`
+  is unreliable in Outlook's Word engine; if it were dropped, adjacent tinted blocks
+  would have butted together into one two-tone slab.
+- Icon and button tables carry `align="center"` as well as `margin:0 auto`, which
+  Word ignores.
+- Card grid cells are `48%` + a 16px gutter (was 49% + 49% + 16px, which over-
+  constrained a 612px row and silently squeezed the declared gutter to ~12px).
+- The grid's spacer row is `hide-sm`: once the cards stack, `stack-card` supplies the
+  gap, so without it the stacked rhythm went 10px / 26px / 10px.
+
+### Verified
+All 34 `/dev/emails` templates render 200; an unrelated template (welcome-student)
+shows `info@` and no `contact@`. Rendered-HTML audit: 14 containers + both shell
+corners at 16px, icon tiles all radius = size/2 (true circles), buttons 10px, two
+padding values. Both buttons measured at 1 line and no horizontal overflow at
+320/390/480/700/800px. Real send through the queue pipeline: `Cc: contact@startyourstory.in`
+present in the delivered headers, `contact@` appearing **zero** times in the body,
+`info@` in the footer. Test log rows removed afterwards; contacts untouched (427,
+none stamped).
+
+### Screenshots
+`storage/app/email-previews/` — `before-*` (pre-refinement) and `after-*`
+(desktop/mobile, light/dark) plus `after-narrow-320.png`.

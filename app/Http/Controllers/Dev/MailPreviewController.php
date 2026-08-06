@@ -28,6 +28,7 @@ use App\Mail\ReferralPayoutRequestMail;
 use App\Mail\StudentFeatureReleaseMail;
 use App\Mail\SupportTicketClosedMail;
 use App\Mail\TechnologySolutionsLaunchMail;
+use App\Services\Marketing\MarketingTemplateRegistry;
 use App\Contracts\Mail\HasEmailPurpose;
 use App\Enums\EmailPurpose;
 use App\Jobs\DispatchMailJob;
@@ -270,7 +271,31 @@ class MailPreviewController extends Controller
                 'desc'  => 'Support ticket resolved',
                 'make'  => fn () => new SupportTicketClosedMail($candidate, 'SYS-2026-00042', 'Payments & Wallet', 'The failed recharge of ₹500 has been refunded to your original payment method.'),
             ],
+
+            // ── Marketing (Artisan-only, marketing_contacts audience) ────────
+            ...$this->marketingPreviews($firm),
         ];
+    }
+
+    /**
+     * Every template in MarketingTemplateRegistry, previewable + test-sendable
+     * here like any other email. Generated from the registry, so a new marketing
+     * template shows up without touching this controller.
+     *
+     * @return array<string, array{group: string, desc: string, make: \Closure(): Mailable}>
+     */
+    private function marketingPreviews(string $firm): array
+    {
+        $out = [];
+        foreach (MarketingTemplateRegistry::all() as $key => $t) {
+            $out["marketing-{$key}"] = [
+                'group' => 'Marketing',
+                'desc'  => $t['label'] . ' — ' . $t['description'],
+                'make'  => fn () => MarketingTemplateRegistry::make($key, ['firm_name' => $firm]),
+            ];
+        }
+
+        return $out;
     }
 
     public function index()

@@ -101,9 +101,9 @@ class MarketingMailer
     }
 
     /** How many contacts a send would target, before --limit. */
-    public function activeCount(): int
+    public function activeCount(bool $onlyNotEmailed = false): int
     {
-        return $this->baseQuery()->count();
+        return $this->baseQuery($onlyNotEmailed)->count();
     }
 
     /**
@@ -111,13 +111,13 @@ class MarketingMailer
      *
      * @return array{template:string,subject:string,active_count:int,would_send:int,sample:array<int,array<string,mixed>>}
      */
-    public function dryRun(string $templateKey, ?int $limit = null): array
+    public function dryRun(string $templateKey, ?int $limit = null, bool $onlyNotEmailed = false): array
     {
         $template = MarketingTemplateRegistry::get($templateKey);
 
-        $active = $this->activeCount();
+        $active = $this->activeCount($onlyNotEmailed);
 
-        $sample = $this->baseQuery()
+        $sample = $this->baseQuery($onlyNotEmailed)
             ->orderBy('id')
             ->limit(min(self::SAMPLE_LIMIT, $limit ?? self::SAMPLE_LIMIT))
             ->get()

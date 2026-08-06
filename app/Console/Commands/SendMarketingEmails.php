@@ -38,11 +38,18 @@ class SendMarketingEmails extends Command
 
     protected $description = 'Queue a marketing email (from MarketingTemplateRegistry) to the active marketing_contacts audience.';
 
+    /** Seconds between emails when --delay is not given (= 180/hour). */
+    private const DEFAULT_DELAY = 20;
+
     public function handle(MarketingMailer $mailer): int
     {
         $template = (string) $this->argument('template');
         $test     = $this->option('test');
         $limit    = $this->option('limit') !== null ? max(1, (int) $this->option('limit')) : null;
+        $fresh    = (bool) $this->option('not-emailed');
+        // Paced by DEFAULT: an unthrottled 400-address run is what gets a domain
+        // rate-limited or spam-foldered. --delay=0 is an explicit opt-out.
+        $delay = $this->option('delay') !== null ? max(0, (int) $this->option('delay')) : self::DEFAULT_DELAY;
 
         // ── Validate the template key up front ───────────────────────────────
         try {
@@ -79,10 +86,10 @@ class SendMarketingEmails extends Command
 
         // ── Dry run: report + sample, queue nothing ──────────────────────────
         if ($this->option('dry-run')) {
-            $report = $mailer->dryRun($template, $limit);
+            $report = $mailer->dryRun($template, $limit, $fresh);
 
             $this->line('[DRY-RUN] No emails will be queued.');
-            $this->info("[INFO] Active contacts: {$report['active_count']}");
+            $this->info("[INFO] Audience: {$report['active_count']}" . ($fresh ? ' never-emailed contact(s)' : ' active contact(s)'));
             if ($limit !== null) {
                 $this->info("[INFO] --limit={$limit} → would send to the first {$limit}");
             }
@@ -91,20 +98,26 @@ class SendMarketingEmails extends Command
                 array_map(fn ($c) => array_values($c), $report['sample'])
             );
             $this->info("[DONE] Dry run — {$report['would_send']} email(s) would be queued.");
+            $this->line('       Pacing:   ' . $this->pacing($report['would_send'], $delay));
 
             return self::SUCCESS;
         }
 
         // ── Full-audience guard ──────────────────────────────────────────────
-        $total = $mailer->activeCount();
+        $total = $mailer->activeCount($fresh);
 
         if ($total === 0) {
-            $this->warn('[ABORTED] No active marketing contacts. Import some with `marketing:import` first.');
+            $this->warn($fresh
+                ? '[ABORTED] Every active contact has already been emailed. Drop --not-emailed to send again.'
+                : '[ABORTED] No active marketing contacts. Import some with `marketing:import` first.');
             return self::SUCCESS;
         }
 
+        $planned = $limit !== null ? min($limit, $total) : $total;
+        $this->line('       Pacing:   ' . $this->pacing($planned, $delay));
+
         if ($limit === null && !$this->option('force')) {
-            if (!$this->confirm("Queue '{$meta['label']}' for ALL {$total} active marketing contacts?")) {
+            if (!$this->confirm("Queue '{$meta['label']}' for ALL {$total} contacts?")) {
                 $this->warn('[ABORTED] Nothing queued. Use --force to skip this prompt.');
                 return self::FAILURE;
             }
@@ -118,7 +131,7 @@ class SendMarketingEmails extends Command
                 'skipped' => $this->warn("[SKIP] {$who} — {$note}"),
                 'failed'  => $this->error("[FAIL] {$who} — {$note}"),
             };
-        });
+        }, $delay, $fresh);
 
         $this->newLine();
         $this->info(sprintf(
@@ -129,7 +142,26 @@ class SendMarketingEmails extends Command
             $stats['failed'],
         ));
         $this->line('Delivery happens via the queue worker (DispatchMailJob); check email_logs for per-recipient status.');
+        if ($delay > 0) {
+            $this->line("The worker must stay up for the whole window — the {$delay}s spacing lives in the queue (available_at), not in this command.");
+        }
 
         return $stats['failed'] > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /** Human summary of how long a paced run takes, and at what hourly rate. */
+    private function pacing(int $count, int $delay): string
+    {
+        if ($delay === 0) {
+            return "NO delay — all {$count} email(s) hit SMTP as fast as the worker can go (spam/rate-limit risk).";
+        }
+
+        $seconds = max(0, $count - 1) * $delay;
+        $perHour = (int) floor(3600 / $delay);
+        $window  = $seconds >= 3600
+            ? sprintf('%dh %dm', intdiv($seconds, 3600), intdiv($seconds % 3600, 60))
+            : sprintf('%dm', (int) ceil($seconds / 60));
+
+        return "{$delay}s apart (~{$perHour}/hour) → {$count} email(s) over ~{$window}.";
     }
 }

@@ -6690,3 +6690,45 @@ none stamped).
 ### Screenshots
 `storage/app/email-previews/` — `before-*` (pre-refinement) and `after-*`
 (desktop/mobile, light/dark) plus `after-narrow-320.png`.
+
+---
+
+## 2026-08-06 (throttle) — `marketing:send` is paced by default + repeatable daily batches
+
+`MarketingMailer::send()` dispatched every `DispatchMailJob` with no delay, so a
+427-contact run queued 427 jobs at once and the worker pushed them all at SMTP
+back-to-back (~1–3/sec, the whole list in minutes). That is the classic pattern for
+tripping a provider's hourly cap and for landing in spam. There was no throttle
+anywhere in the mail stack — no `delay()`, no `RateLimited` middleware, no sleep.
+
+### Changed — `app/Services/Marketing/MarketingMailer.php`
+`send()` takes `$delaySeconds` and `$onlyNotEmailed`. The Nth successfully queued
+email is dispatched with an `N × delay` offset, so the pacing lives in the queue's own
+`available_at` column: the command returns immediately and the spacing survives a
+worker restart. No sleep, no long-running process. Skipped rows do not consume a time
+slot, so a run with invalid addresses still paces the mail that actually goes out.
+
+`baseQuery()`, `activeCount()` and `dryRun()` take `$onlyNotEmailed`, which filters to
+`last_emailed_at IS NULL`.
+
+### Changed — `php artisan marketing:send`
+- `--delay=N` — seconds between emails. **Defaults to 20** (~180/hour). `--delay=0`
+  restores the old unthrottled behaviour as an explicit opt-out.
+- `--not-emailed` — only contacts never emailed. This is what makes `--limit` safe to
+  repeat: without it, a second `--limit=100` run re-sends to the same first 100.
+- Both the dry run and the real run print the pacing up front, e.g.
+  `20s apart (~180/hour) → 427 email(s) over ~2h 22m.`
+- After queueing, the command notes that the worker must stay up for the whole window.
+
+### Verified
+Dry runs: default → `20s apart (~180/hour) → 427 email(s) over ~2h 22m`; `--delay=0` →
+explicit risk warning; `--limit=100 --not-emailed` → 100 over ~33m. Queue mechanism
+checked with four throwaway jobs addressed to `example.invalid` (reserved, unroutable):
+`available_at` came out at +0s / +20s / +40s / +60s from `created_at`, confirming the
+stagger reaches the database queue. Throwaway jobs deleted; contacts untouched (427,
+none stamped).
+
+### Operational note
+`MAIL_MAILER` is now `smtp` (smtp.hostinger.com), not `log` — `marketing:send` delivers
+for real. Check the plan's hourly send limit before the first full run and set `--delay`
+so the resulting rate stays under it.

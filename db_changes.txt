@@ -3557,3 +3557,8 @@ CREATE TABLE `marketing_contacts` (
 
 -- ROLLBACK:
 -- DROP TABLE IF EXISTS `marketing_contacts`;
+
+
+
+
+-- php artisan marketing:send technology-solutions --delay=10 --limit=100 --not-emailed
